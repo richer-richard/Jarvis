@@ -1859,6 +1859,17 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Please send your Talent Show performance details", result["summary_messages"][0]["snippet"])
         self.assertEqual(result["summary_messages"][0]["body_source"], "parsed_message_source")
 
+    def test_outlook_parser_keeps_mail_unicode_line_separators_inside_message_row(self):
+        parsed = jarvis_tools._parse_outlook_newest_output(
+            "INBOX_COUNT\t3\tSCANNED\t3\tUNREAD\t0\tSELECTION\tlatest\n"
+            "MESSAGE\tMichaela\tTalent Show collection\tToday\tread\t"
+            "Dear Leo,\u2028Please send Talent Show details by June 15.\t/tmp/message_1.eml\n"
+        )
+
+        self.assertEqual(len(parsed["messages"]), 1)
+        self.assertIn("Please send Talent Show details", parsed["messages"][0]["snippet"])
+        self.assertEqual(parsed["messages"][0]["_source_path"], "/tmp/message_1.eml")
+
     def test_email_check_summarizes_parsed_body_not_greeting_preview(self):
         mail_result = {
             "status": "checked",

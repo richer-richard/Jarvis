@@ -4483,7 +4483,7 @@ end writeSourceFile
 
 on cleanText(rawValue)
     set textValue to rawValue as text
-    set AppleScript's text item delimiters to {{return, linefeed, tab}}
+    set AppleScript's text item delimiters to {{return, linefeed, tab, character id 8232, character id 8233}}
     set parts to text items of textValue
     set AppleScript's text item delimiters to " "
     set cleanedValue to parts as text
@@ -4581,7 +4581,7 @@ def _outlook_newest_applescript(limit: int, scan_limit: int) -> str:
     return f'''
 on cleanText(rawValue)
     set textValue to rawValue as text
-    set AppleScript's text item delimiters to {{return, linefeed, tab}}
+    set AppleScript's text item delimiters to {{return, linefeed, tab, character id 8232, character id 8233}}
     set parts to text items of textValue
     set AppleScript's text item delimiters to " "
     set cleanedValue to parts as text
@@ -4678,7 +4678,7 @@ def _parse_outlook_newest_output(output: str) -> dict[str, Any]:
     unread_count = 0
     selection_mode = ""
     messages: list[dict[str, str]] = []
-    for line in output.splitlines():
+    for line in output.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         parts = line.split("\t")
         if len(parts) >= 4 and parts[0] == "INBOX_COUNT":
             try:
