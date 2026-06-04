@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# Local runtime artifacts
+runtime/
+
+# Local build and QA output
+output/
+.playwright-cli/
+
+# Local Git-layout migration backups
+.git-backups/
+
+# OS metadata
+.DS_Store

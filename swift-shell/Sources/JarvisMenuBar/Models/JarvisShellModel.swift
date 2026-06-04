@@ -1,0 +1,1854 @@
+import AppKit
+import Foundation
+import JarvisClient
+
+@MainActor
+final class JarvisShellModel: ObservableObject {
+    @Published var command: String = "status"
+    @Published private(set) var connection: String = "Checking"
+    @Published private(set) var state: String = "Idle"
+    @Published private(set) var tool: String = "No tool"
+    @Published private(set) var resultText: String = "{}"
+    @Published private(set) var confirmation: Confirmation?
+    @Published private(set) var auditText: String = "Audit not loaded"
+    @Published private(set) var codexText: String = "Codex not checked"
+    @Published private(set) var workerText: String = "Worker not checked"
+    @Published private(set) var verificationText: String = "Verification not checked"
+    @Published private(set) var modeText: String = "Mode not checked"
+    @Published private(set) var isPaused: Bool = false
+    @Published private(set) var permissionText: String = "Permissions not checked"
+    @Published private(set) var permissions: [PermissionReadiness] = []
+    @Published private(set) var isBusy: Bool = false
+    @Published private(set) var chatExportText: String = "Chat JSON ready"
+    @Published private(set) var messages: [ChatMessage] = [
+        ChatMessage(
+            role: .jarvis,
+            text: "I am online as the first local Jarvis prototype. Type a command, ask for status, or tell me to check your email."
+        )
+    ]
+
+    private let client: JarvisClient
+    private let workerSupervisor: JarvisWorkerSupervisor
+    private var lastHealthDiagnostics: [String: Any] = [:]
+    private var lastReadinessDiagnostics: [String: Any] = [:]
+    private var lastCommandDiagnostics: [String: Any] = [:]
+    private var monitoredCodexJobs: Set<String> = []
+    private var activeTimerTasks: [String: Task<Void, Never>] = [:]
+    private static let smokeTestPrompts = [
+        "hello Jarvis",
+        "tell me a short joke",
+        "Write five short bullets about making Jarvis feel fast.",
+        "latency status",
+        "model status",
+        "elevation status",
+        "memory status",
+        "remote worker status",
+        "capabilities status",
+        "voice status",
+        "tts status",
+        "test status",
+        "safety status",
+        "what time is it",
+        "what date is it",
+        "battery status",
+        "storage status",
+        "set a timer for 5 seconds",
+        "timer status",
+        "cancel timers",
+        "volume up",
+        "sound down",
+        "play current",
+        "play current song",
+        "play next",
+        "play previous",
+        "brightness up",
+        "say exactly: Jarvis local exact route OK",
+        "Hey Jarvis, check the time",
+        "Hey Jarvis run sudo whoami",
+        "ask Codex to say exactly: Jarvis Codex smoke test OK",
+        "ask Codex to review this project",
+        "codex jobs",
+        "codex speed status",
+        "permissions status",
+        "screen status",
+        "hotkey status",
+        "wake status",
+        "Jarvis launch status",
+        "email backend status",
+        "check my email and summarize the newest email in my inbox",
+        "read the visible Outlook screen with OCR",
+        "Then click Copy Chat JSON and paste it back to Codex if anything looks wrong.",
+    ]
+
+    var dashboardURL: URL {
+        client.baseURL
+    }
+
+    init(client: JarvisClient? = nil) {
+        let resolvedClient = client ?? (try? JarvisClient.fromEnvironment()) ?? JarvisClient(baseURL: URL(string: "http://127.0.0.1:8765")!)
+        self.client = resolvedClient
+        self.workerSupervisor = JarvisWorkerSupervisor(client: resolvedClient)
+    }
+
+    func refresh() {
+        Task {
+            await refreshNow()
+        }
+    }
+
+    func startWorkerMonitoring() {
+        workerSupervisor.startMonitoring { [weak self] status in
+            guard let self else {
+                return
+            }
+            workerText = status.description
+            if status.isReady {
+                connection = "Online"
+                if case .started = status, !isBusy {
+                    state = "Worker restarted"
+                    Task {
+                        await self.refreshNow()
+                    }
+                }
+            } else {
+                connection = "Offline"
+                if !isBusy {
+                    state = "Worker unavailable"
+                }
+            }
+        }
+    }
+
+    func stopWorkerMonitoring() {
+        workerSupervisor.stopMonitoring()
+        workerSupervisor.stopStartedWorker()
+    }
+
+    func submitCurrentCommand() {
+        submit(command)
+    }
+
+    func pasteFromClipboard() {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            chatExportText = "Clipboard empty"
+            return
+        }
+        command = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        chatExportText = "Pasted"
+    }
+
+    func submit(_ commandText: String) {
+        let trimmed = commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        command = trimmed
+        messages.append(ChatMessage(role: .user, text: trimmed))
+
+        Task {
+            await runCommand(trimmed)
+        }
+    }
+
+    func copyChatHistoryJSON() {
+        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let bundleBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let payload: [String: Any] = [
+            "schema": "jarvis.chat.debug.v1",
+            "exported_at": ISO8601DateFormatter().string(from: Date()),
+            "app": [
+                "name": "Jarvis",
+                "version": bundleVersion,
+                "build": bundleBuild,
+                "base_url": dashboardURL.absoluteString,
+                "connection": connection,
+                "state": state,
+                "tool": tool,
+                "mode": modeText,
+                "worker": workerText,
+                "codex": codexText,
+                "verification": verificationText,
+                "permission_summary": permissionText,
+                "fast_model": lastHealthDiagnostics["fast_model"] ?? NSNull(),
+                "worker_runtime": lastHealthDiagnostics["runtime"] ?? NSNull(),
+            ],
+            "diagnostics": [
+                "health": lastHealthDiagnostics,
+                "readiness": lastReadinessDiagnostics,
+                "permissions": Self.permissionDiagnostics(permissions),
+                "last_response": lastCommandDiagnostics,
+            ],
+            "current_command": command,
+            "last_result_text": resultText,
+            "messages": messages.map { message in
+                var item: [String: Any] = [
+                    "id": message.id.uuidString,
+                    "role": message.role.rawValue,
+                    "text": message.text,
+                ]
+                if let detail = message.detail, !detail.isEmpty {
+                    item["detail"] = detail
+                }
+                return item
+            },
+        ]
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw ShellModelError.exportFailed("Could not encode chat JSON as UTF-8.")
+            }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            chatExportText = "Copied \(messages.count) messages"
+            state = "Copied"
+        } catch {
+            chatExportText = "Copy failed"
+            messages.append(ChatMessage(role: .jarvis, text: "I could not copy the chat JSON: \(error)"))
+        }
+    }
+
+    func copySmokeTestPrompts() {
+        let text = Self.smokeTestPrompts.enumerated()
+            .map { index, prompt in "\(index + 1). \(prompt)" }
+            .joined(separator: "\n")
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        chatExportText = "Copied \(Self.smokeTestPrompts.count) tests"
+        state = "Copied"
+    }
+
+    private func refreshNow() async {
+        await refreshPermissionReadiness()
+        let startup = await workerSupervisor.ensureRunning()
+        workerText = startup.description
+        guard startup.isReady else {
+            connection = "Offline"
+            auditText = "Audit unavailable"
+            codexText = "Worker unavailable"
+            return
+        }
+
+        do {
+            let health = try await client.health()
+            connection = health.ok ? "Online" : "Issue"
+            codexText = health.status.codex.version ?? "Codex CLI not found"
+            lastHealthDiagnostics = Self.healthDiagnostics(from: health)
+            if let mode = health.mode {
+                applyMode(mode)
+            } else {
+                await refreshMode()
+            }
+            if let runtime = health.status.runtime {
+                workerText = "\(startup.description) | pid \(runtime.pid), uptime \(Self.formatUptime(runtime.uptimeSeconds))"
+            }
+
+            let audit = try await client.auditStatus()
+            auditText = "\(audit.eventCount) events, \(audit.byteSizeHuman), \(audit.retentionDays)d retention, cap \(audit.maxBytesHuman)"
+            let readiness = try await client.readiness()
+            verificationText = Self.formatVerification(readiness.verification)
+            lastReadinessDiagnostics = Self.readinessDiagnostics(from: readiness)
+        } catch {
+            connection = "Offline"
+            auditText = "Audit unavailable"
+            codexText = "Worker unavailable"
+            verificationText = "Verification unavailable"
+        }
+    }
+
+    func togglePause() {
+        Task {
+            isBusy = true
+            state = isPaused ? "Resuming" : "Pausing"
+            do {
+                let startup = await workerSupervisor.ensureRunning()
+                workerText = startup.description
+                guard startup.isReady else {
+                    throw ShellModelError.workerUnavailable(startup.description)
+                }
+                let mode = try await client.setPaused(!isPaused, reason: "Swift shell toggle.")
+                applyMode(mode)
+                state = mode.paused ? "Paused" : "Ready"
+                messages.append(ChatMessage(role: .system, text: mode.paused ? "Jarvis command execution is paused." : "Jarvis command execution is live."))
+                await refreshNow()
+            } catch {
+                state = "Error"
+                resultText = "Jarvis mode error:\n\(error)"
+                messages.append(ChatMessage(role: .jarvis, text: "I could not change pause mode: \(error)"))
+            }
+            isBusy = false
+        }
+    }
+
+    private func refreshPermissionReadiness() async {
+        let snapshot = await JarvisPermissionService.snapshot()
+        permissions = snapshot
+        permissionText = JarvisPermissionService.summary(snapshot)
+    }
+
+    private func refreshMode() async {
+        do {
+            applyMode(try await client.mode())
+        } catch {
+            modeText = "Mode unavailable"
+            isPaused = false
+        }
+    }
+
+    private func applyMode(_ mode: ModeResponse) {
+        isPaused = mode.paused
+        modeText = mode.paused ? "Paused" : "Live"
+        if mode.paused {
+            state = "Paused"
+        }
+    }
+
+    private func runCommand(_ commandText: String) async {
+        isBusy = true
+        state = "Thinking"
+        confirmation = nil
+        tool = "Planning"
+        let placeholderId = appendWorkingMessage(for: commandText)
+        let progressTask = startProgressNudges(for: commandText, placeholderId: placeholderId)
+        defer {
+            progressTask.cancel()
+            isBusy = false
+        }
+
+        do {
+            if Self.shouldUseNativeHotKeyStatus(commandText) {
+                runNativeHotKeyStatus(commandText, placeholderId: placeholderId)
+                return
+            }
+
+            if Self.shouldUseNativeTTSStatus(commandText) {
+                runNativeTTSStatus(commandText, placeholderId: placeholderId)
+                return
+            }
+
+            if Self.shouldUseNativeVoiceStatus(commandText) {
+                await runNativeVoiceStatus(commandText, placeholderId: placeholderId)
+                return
+            }
+
+            if Self.shouldUseNativeTestStatus(commandText) {
+                runNativeTestStatus(commandText, placeholderId: placeholderId)
+                return
+            }
+
+            if Self.shouldUseNativePermissionStatus(commandText) {
+                await runNativePermissionStatus(commandText, placeholderId: placeholderId)
+                return
+            }
+
+            if Self.shouldUseNativeScreenStatus(commandText) {
+                await runNativeScreenStatus(commandText, placeholderId: placeholderId)
+                return
+            }
+
+            let startup = await workerSupervisor.ensureRunning()
+            workerText = startup.description
+            guard startup.isReady else {
+                throw ShellModelError.workerUnavailable(startup.description)
+            }
+            let response: CommandResponse
+            if Self.shouldUseNativeOutlookRead(commandText) {
+                response = try await runNativeOutlookRead(commandText)
+            } else if Self.shouldUseWorkerMailRead(commandText) {
+                response = try await runWorkerMailRead(commandText)
+            } else {
+                var streamedReply = ""
+                response = try await client.sendStreaming(command: commandText) { delta in
+                    streamedReply += delta
+                    self.replaceMessage(
+                        id: placeholderId,
+                        with: ChatMessage(
+                            id: placeholderId,
+                            role: .jarvis,
+                            text: streamedReply,
+                            detail: "Streaming"
+                        )
+                    )
+                }
+            }
+            tool = response.tool ?? "unknown"
+            confirmation = response.confirmation
+            state = response.confirmation?.required == true ? "Approval" : "Ready"
+            resultText = render(response)
+            lastCommandDiagnostics = Self.commandDiagnostics(from: response)
+            replaceMessage(
+                id: placeholderId,
+                with:
+                ChatMessage(
+                    id: placeholderId,
+                    role: .jarvis,
+                    text: assistantReply(for: response),
+                    detail: chatDetail(for: response)
+                )
+            )
+            startCodexJobMonitorIfNeeded(from: response)
+            updateTimerMirrorsIfNeeded(from: response)
+            await refreshNow()
+        } catch {
+            state = "Error"
+            tool = "No tool"
+            resultText = "Jarvis worker error:\n\(error)"
+            lastCommandDiagnostics = [
+                "status": "error",
+                "command": commandText,
+                "error": "\(error)",
+            ]
+            replaceMessage(
+                id: placeholderId,
+                with: ChatMessage(id: placeholderId, role: .jarvis, text: "I hit a worker error: \(error)")
+            )
+        }
+    }
+
+    private func runNativeHotKeyStatus(_ commandText: String, placeholderId: UUID) {
+        state = "Ready"
+        tool = "hotkey.native_status"
+        let shortcut = JarvisHotKeyService.defaultShortcut.displayName
+        let reply = [
+            "Keyboard shortcut: \(shortcut).",
+            "Press it to open or focus the Jarvis panel.",
+            "This is the reliable wake path for now. Real Hey Jarvis microphone wake-word listening is not active yet.",
+        ].joined(separator: "\n")
+        resultText = [
+            "Command: \(commandText)",
+            "Tool: hotkey.native_status",
+            "Executed: true",
+            "Summary: Read native hotkey status.",
+            "Shortcut: \(shortcut)",
+        ].joined(separator: "\n")
+        lastCommandDiagnostics = [
+            "command": commandText,
+            "tool": "hotkey.native_status",
+            "summary": "Read native hotkey status.",
+            "executed": true,
+            "shortcut": shortcut,
+            "voice_wake_active": false,
+        ]
+        replaceMessage(
+            id: placeholderId,
+            with: ChatMessage(
+                id: placeholderId,
+                role: .jarvis,
+                text: reply,
+                detail: "Read native hotkey status."
+            )
+        )
+    }
+
+    private func runNativePermissionStatus(_ commandText: String, placeholderId: UUID) async {
+        state = "Checking Permissions"
+        tool = "permissions.native_status"
+        let snapshot = await JarvisPermissionService.snapshot()
+        permissions = snapshot
+        permissionText = JarvisPermissionService.summary(snapshot)
+        let reply = Self.permissionStatusReply(snapshot)
+        let target = Self.permissionTargetDiagnostics()
+        resultText = [
+            "Command: \(commandText)",
+            "Tool: permissions.native_status",
+            "Executed: true",
+            "Summary: Read native permission status.",
+            "Permission target: \(target["path"] ?? "unknown")",
+            "Bundle ID: \(target["bundle_id"] ?? "unknown")",
+            permissionText,
+        ].joined(separator: "\n")
+        lastCommandDiagnostics = [
+            "command": commandText,
+            "tool": "permissions.native_status",
+            "summary": "Read native permission status.",
+            "executed": true,
+            "permission_target": target,
+            "permissions": Self.permissionDiagnostics(snapshot),
+        ]
+        replaceMessage(
+            id: placeholderId,
+            with: ChatMessage(
+                id: placeholderId,
+                role: .jarvis,
+                text: reply,
+                detail: "Read native permission status."
+            )
+        )
+        state = "Ready"
+    }
+
+    private func runNativeScreenStatus(_ commandText: String, placeholderId: UUID) async {
+        state = "Checking Screen"
+        tool = "screen.native_status"
+        let snapshot = await JarvisPermissionService.snapshot()
+        permissions = snapshot
+        permissionText = JarvisPermissionService.summary(snapshot)
+        let screen = snapshot.first(where: { $0.id == "screen-recording" })
+        let target = Self.permissionTargetDiagnostics()
+        let ready = screen?.isReady == true
+        let reply = [
+            "Screen status:",
+            "- Screen Recording: \(screen?.state ?? "Unknown"). \(screen?.detail ?? "No Screen Recording status available.")",
+            "- Native visible OCR: \(ready ? "available when Outlook is visible" : "blocked until Screen Recording is granted to this app").",
+            "- Permission target: \(target["path"] ?? "unknown")",
+            "- Bundle ID: \(target["bundle_id"] ?? "unknown")",
+            "This did not capture the screen, run OCR, or store an image.",
+        ].joined(separator: "\n")
+        resultText = [
+            "Command: \(commandText)",
+            "Tool: screen.native_status",
+            "Executed: true",
+            "Summary: Read native screen status.",
+            "Screen Recording: \(screen?.state ?? "Unknown")",
+            "Native OCR available: \(ready)",
+            "Permission target: \(target["path"] ?? "unknown")",
+            "Captured screen: false",
+        ].joined(separator: "\n")
+        lastCommandDiagnostics = [
+            "command": commandText,
+            "tool": "screen.native_status",
+            "summary": "Read native screen status.",
+            "executed": true,
+            "permission_target": target,
+            "screen_recording": screen?.state ?? "Unknown",
+            "native_ocr_available": ready,
+            "captured_screen": false,
+            "stored_screenshot": false,
+        ]
+        replaceMessage(
+            id: placeholderId,
+            with: ChatMessage(
+                id: placeholderId,
+                role: .jarvis,
+                text: reply,
+                detail: "Read native screen status."
+            )
+        )
+        state = "Ready"
+    }
+
+    private func runNativeTTSStatus(_ commandText: String, placeholderId: UUID) {
+        state = "Ready"
+        tool = "tts.native_status"
+        let sayPath = Self.sayExecutablePath()
+        let voices = sayPath == nil ? [] : Self.sayVoiceNames(sayPath: sayPath!)
+        let available = sayPath != nil
+        var reply = [
+            "TTS status:",
+            "- macOS say: \(available ? "available at \(sayPath!)" : "not available").",
+            "- Explicit speech commands: \(available ? "available" : "not available") for `speak ...`, `say out loud ...`, and `read ... loud ...`.",
+            "- Automatic spoken replies: off.",
+        ]
+        if !voices.isEmpty {
+            reply.append("- Voices detected: \(voices.count). Examples: \(voices.prefix(5).joined(separator: ", ")).")
+        }
+        reply.append("This did not play audio, record audio, or request microphone/Speech Recognition permission.")
+        resultText = [
+            "Command: \(commandText)",
+            "Tool: tts.native_status",
+            "Executed: true",
+            "Summary: Read native TTS status.",
+            "say path: \(sayPath ?? "missing")",
+            "Voice count: \(voices.count)",
+            "Automatic TTS: false",
+            "Played audio: false",
+        ].joined(separator: "\n")
+        lastCommandDiagnostics = [
+            "command": commandText,
+            "tool": "tts.native_status",
+            "summary": "Read native TTS status.",
+            "executed": true,
+            "say_path": sayPath as Any,
+            "explicit_tts_available": available,
+            "automatic_tts_enabled": false,
+            "played_audio": false,
+            "voice_count": voices.count,
+            "sample_voices": Array(voices.prefix(8)),
+        ]
+        replaceMessage(
+            id: placeholderId,
+            with: ChatMessage(
+                id: placeholderId,
+                role: .jarvis,
+                text: reply.joined(separator: "\n"),
+                detail: "Read native TTS status."
+            )
+        )
+    }
+
+    private func runNativeVoiceStatus(_ commandText: String, placeholderId: UUID) async {
+        state = "Checking Voice"
+        tool = "voice.native_status"
+        let snapshot = await JarvisPermissionService.snapshot()
+        permissions = snapshot
+        permissionText = JarvisPermissionService.summary(snapshot)
+        let microphone = snapshot.first(where: { $0.id == "microphone" })
+        let speech = snapshot.first(where: { $0.id == "speech-recognition" })
+        let shortcut = JarvisHotKeyService.defaultShortcut.displayName
+        let reply = [
+            "Voice status:",
+            "- Microphone: \(microphone?.state ?? "Unknown"). \(microphone?.detail ?? "No microphone status available.")",
+            "- Speech Recognition: \(speech?.state ?? "Unknown"). \(speech?.detail ?? "No speech-recognition status available.")",
+            "- Keyboard wake/focus: \(shortcut).",
+            "- Typed wake simulation: available for Hey Jarvis, OK Jarvis, and Okay Jarvis.",
+            "- Background Hey Jarvis microphone listener: not active yet.",
+            "- Speech-to-text command transcription: not built yet.",
+            "- TTS: explicit local `speak ...` / `say out loud ...` commands exist; automatic spoken replies are not enabled.",
+            "This did not record audio, transcribe audio, or request new permissions.",
+        ].joined(separator: "\n")
+        resultText = [
+            "Command: \(commandText)",
+            "Tool: voice.native_status",
+            "Executed: true",
+            "Summary: Read native voice status.",
+            "Microphone: \(microphone?.state ?? "Unknown")",
+            "Speech Recognition: \(speech?.state ?? "Unknown")",
+            "Voice wake active: false",
+        ].joined(separator: "\n")
+        lastCommandDiagnostics = [
+            "command": commandText,
+            "tool": "voice.native_status",
+            "summary": "Read native voice status.",
+            "executed": true,
+            "permissions": Self.permissionDiagnostics(snapshot),
+            "keyboard_shortcut": shortcut,
+            "typed_wake_simulation_available": true,
+            "microphone_wake_available": false,
+            "speech_to_text_available": false,
+            "automatic_tts_enabled": false,
+        ]
+        replaceMessage(
+            id: placeholderId,
+            with: ChatMessage(
+                id: placeholderId,
+                role: .jarvis,
+                text: reply,
+                detail: "Read native voice status."
+            )
+        )
+        state = "Ready"
+    }
+
+    private func runNativeTestStatus(_ commandText: String, placeholderId: UUID) {
+        state = "Ready"
+        tool = "tests.native_status"
+        let count = Self.smokeTestPrompts.count
+        let preview = Self.smokeTestPrompts.prefix(6).joined(separator: ", ")
+        let reply = [
+            "Test status: Copy Tests currently has \(count) prompts.",
+            "Click Copy Tests to put the full smoke-test set on the clipboard.",
+            "First prompts: \(preview).",
+            "Private tests are still the email and visible-OCR prompts; paste Copy Chat JSON back to Codex if anything looks wrong.",
+        ].joined(separator: "\n")
+        resultText = [
+            "Command: \(commandText)",
+            "Tool: tests.native_status",
+            "Executed: true",
+            "Summary: Read native test status.",
+            "Copy Tests count: \(count)",
+        ].joined(separator: "\n")
+        lastCommandDiagnostics = [
+            "command": commandText,
+            "tool": "tests.native_status",
+            "summary": "Read native test status.",
+            "executed": true,
+            "smoke_test_count": count,
+            "smoke_test_prompts": Self.smokeTestPrompts,
+        ]
+        replaceMessage(
+            id: placeholderId,
+            with: ChatMessage(
+                id: placeholderId,
+                role: .jarvis,
+                text: reply,
+                detail: "Read native test status."
+            )
+        )
+    }
+
+    private func updateTimerMirrorsIfNeeded(from response: CommandResponse) {
+        guard response.tool == "quick.local_control",
+              let object = response.result?.objectValue else {
+            return
+        }
+
+        let action = object["action"]?.stringValue ?? ""
+        if action == "timer.cancel" {
+            for task in activeTimerTasks.values {
+                task.cancel()
+            }
+            activeTimerTasks.removeAll()
+            return
+        }
+
+        guard action == "timer",
+              object["status"]?.stringValue == "timer_started",
+              let timerId = object["timer_id"]?.stringValue,
+              let durationSeconds = object["duration_seconds"]?.intValue,
+              durationSeconds > 0 else {
+            return
+        }
+
+        activeTimerTasks[timerId]?.cancel()
+        activeTimerTasks[timerId] = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(durationSeconds) * 1_000_000_000)
+            } catch {
+                return
+            }
+            self?.completeTimerMirror(timerId: timerId, durationSeconds: durationSeconds)
+        }
+    }
+
+    private func completeTimerMirror(timerId: String, durationSeconds: Int) {
+        activeTimerTasks.removeValue(forKey: timerId)
+        messages.append(
+            ChatMessage(
+                role: .jarvis,
+                text: "Timer finished: \(Self.formatDuration(durationSeconds)).",
+                detail: "Local timer"
+            )
+        )
+        chatExportText = "Timer finished"
+    }
+
+    private func startCodexJobMonitorIfNeeded(from response: CommandResponse) {
+        guard response.tool == "codex.job",
+              let object = response.result?.objectValue,
+              object["status"]?.stringValue == "running",
+              let jobId = object["job_id"]?.stringValue,
+              !jobId.isEmpty,
+              !monitoredCodexJobs.contains(jobId) else {
+            return
+        }
+
+        monitoredCodexJobs.insert(jobId)
+        Task {
+            await monitorCodexJob(jobId)
+        }
+    }
+
+    private func monitorCodexJob(_ jobId: String) async {
+        defer {
+            monitoredCodexJobs.remove(jobId)
+        }
+
+        for attempt in 1...72 {
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            } catch {
+                return
+            }
+
+            do {
+                let response = try await client.send(command: "codex job \(jobId)")
+                let status = response.result?.objectValue?["status"]?.stringValue ?? "unknown"
+                if status == "running" {
+                    if attempt % 6 == 0 {
+                        chatExportText = "Codex job running"
+                    }
+                    continue
+                }
+
+                tool = response.tool ?? "codex.job"
+                resultText = render(response)
+                lastCommandDiagnostics = Self.commandDiagnostics(from: response)
+                messages.append(
+                    ChatMessage(
+                        role: .jarvis,
+                        text: "Codex job \(jobId) finished:\n\(assistantReply(for: response))",
+                        detail: chatDetail(for: response)
+                    )
+                )
+                chatExportText = "Codex job finished"
+                await refreshNow()
+                return
+            } catch {
+                if attempt % 6 == 0 {
+                    chatExportText = "Codex job check failed"
+                }
+            }
+        }
+
+        messages.append(
+            ChatMessage(
+                role: .jarvis,
+                text: "Codex job \(jobId) is still running after 6 minutes. Ask `codex job \(jobId)` for the latest status.",
+                detail: "Codex job monitor stopped"
+            )
+        )
+    }
+
+    private func appendWorkingMessage(for commandText: String) -> UUID {
+        let message = ChatMessage(
+            role: .jarvis,
+            text: Self.workingReply(for: commandText),
+            detail: "Started"
+        )
+        messages.append(message)
+        return message.id
+    }
+
+    private func startProgressNudges(for commandText: String, placeholderId: UUID) -> Task<Void, Never> {
+        let nudges = Self.progressReplies(for: commandText)
+        return Task { [weak self] in
+            for nudge in nudges {
+                do {
+                    try await Task.sleep(nanoseconds: nudge.delayNanoseconds)
+                } catch {
+                    return
+                }
+                await MainActor.run {
+                    guard let self, self.isBusy else {
+                        return
+                    }
+                    self.replaceMessage(
+                        id: placeholderId,
+                        with: ChatMessage(
+                            id: placeholderId,
+                            role: .jarvis,
+                            text: nudge.text,
+                            detail: "Working"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private func replaceMessage(id: UUID, with replacement: ChatMessage) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else {
+            messages.append(replacement)
+            return
+        }
+        messages[index] = replacement
+    }
+
+    private func runNativeOutlookRead(_ commandText: String) async throws -> CommandResponse {
+        let mode = try await client.mode()
+        applyMode(mode)
+        guard !mode.paused else {
+            return try await client.send(command: commandText)
+        }
+
+        state = "Reading Outlook"
+        tool = "native.vision_ocr"
+        do {
+            let capture = try await JarvisNativeOutlookReader.readVisibleOutlookText()
+            return try await client.summarizeVisibleOutlookText(
+                command: commandText,
+                text: capture.text,
+                diagnostics: capture.diagnostics
+            )
+        } catch {
+            return try await client.summarizeVisibleOutlookText(
+                command: commandText,
+                text: "",
+                diagnostics: JarvisNativeOutlookReader.failureDiagnostics(for: error)
+            )
+        }
+    }
+
+    private func runWorkerMailRead(_ commandText: String) async throws -> CommandResponse {
+        state = "Checking Mail"
+        tool = "outlook.visible_summary"
+        return try await client.send(command: commandText)
+    }
+
+    private func assistantReply(for response: CommandResponse) -> String {
+        if let confirmation = response.confirmation, confirmation.required {
+            var lines = [confirmation.title]
+            if let message = confirmation.message {
+                lines.append(message)
+            }
+            if let phrase = confirmation.exactPhrase {
+                lines.append("To approve this later, type exactly: \(phrase)")
+            }
+            return lines.joined(separator: "\n")
+        }
+
+        if response.tool == "outlook.visible_summary" {
+            return outlookReply(from: response.result)
+        }
+
+        if let reply = response.result?.objectValue?["reply"]?.stringValue {
+            return reply
+        }
+
+        switch response.tool {
+        case "system.status":
+            return "I checked the local worker. Jarvis is online and the status details are available below."
+        case "files.search":
+            return "I searched the project files and updated the result details."
+        case "screenshot.capability":
+            return "I checked screen-capture capability. This prototype does not store screenshots by default."
+        case "codex.delegate":
+            return "I prepared a Codex delegation plan. I did not run Codex yet."
+        case "browser.open_url":
+            return "I prepared a browser action plan. I did not open a webpage yet."
+        case "policy.pause":
+            return "Jarvis is paused, so I did not run that command."
+        default:
+            return response.summary ?? "Done."
+        }
+    }
+
+    private func chatDetail(for response: CommandResponse) -> String? {
+        guard let object = response.result?.objectValue else {
+            return response.summary
+        }
+
+        var parts: [String] = []
+        if let backend = object["backend"]?.stringValue, !backend.isEmpty,
+           let model = object["model"]?.stringValue, !model.isEmpty {
+            parts.append("\(Self.backendLabel(backend)) \(model)")
+        } else if let model = object["model"]?.stringValue, !model.isEmpty {
+            parts.append(model)
+        } else if let backend = object["email_summary_backend"]?.stringValue, !backend.isEmpty {
+            if let model = object["email_summary_model"]?.stringValue, !model.isEmpty {
+                parts.append("Email summary: \(Self.backendLabel(backend)) \(model)")
+            } else {
+                parts.append("Email summary: \(Self.backendLabel(backend))")
+            }
+        }
+
+        let timing = object["duration_human"]?.stringValue
+            ?? object["email_summary_duration_human"]?.stringValue
+            ?? object["duration_seconds"]?.doubleValue.map { String(format: "%.1fs", $0) }
+        if let timing, !timing.isEmpty {
+            parts.append("\(Self.timingLabel(for: response.tool)): \(timing)")
+        }
+
+        let firstVisible = object["first_visible_token_seconds"]?.doubleValue
+            ?? object["first_token_seconds"]?.doubleValue
+        if let firstVisible {
+            parts.append(String(format: "First visible: %.1fs", firstVisible))
+        }
+
+        if !parts.isEmpty {
+            return parts.joined(separator: " | ")
+        }
+        return response.summary
+    }
+
+    private func outlookReply(from result: JSONValue?) -> String {
+        guard let object = result?.objectValue else {
+            return "I tried to check Outlook, but the worker did not return a readable email summary."
+        }
+
+        let status = object["status"]?.stringValue ?? "unknown"
+        if status == "checked" {
+            let rows = object["messages"]?.arrayValue?.compactMap(\.objectValue) ?? []
+            if rows.isEmpty {
+                return "I checked Outlook, but I could not read any inbox messages from the route this prototype can access."
+            }
+
+            let scanned = object["scanned_count"]?.intValue ?? rows.count
+            let source = object["source"]?.stringValue ?? "unknown"
+            if source.contains("ocr") {
+                var lines = [object["reply"]?.stringValue ?? "I read the visible Outlook window locally with OCR."]
+                for row in rows {
+                    if let snippet = row["snippet"]?.stringValue, !snippet.isEmpty {
+                        lines.append(snippet)
+                    }
+                }
+                if let warning = Self.injectionWarning(from: object) {
+                    lines.append(warning)
+                }
+                lines.append("This stayed local. I did not send the email or screenshot to a model.")
+                return lines.joined(separator: "\n")
+            }
+            let mailbox = Self.mailboxLabel(for: source)
+            let unreadCount = object["unread_count"]?.intValue ?? rows.filter {
+                ($0["read_state"]?.stringValue ?? "").lowercased() == "unread"
+            }.count
+            let selectionMode = object["selection_mode"]?.stringValue ?? (unreadCount > 0 ? "unread" : "latest")
+            var lines = [
+                Self.mailSelectionIntro(
+                    mailbox: mailbox,
+                    scanned: scanned,
+                    unreadCount: unreadCount,
+                    selectedCount: rows.count,
+                    selectionMode: selectionMode
+                )
+            ]
+            if let emailSummary = object["email_summary"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !emailSummary.isEmpty {
+                let fallbackUsed = object["email_summary_fallback_used"]?.boolValue == true
+                let quality = object["email_summary_quality"]?.stringValue ?? ""
+                if quality == "metadata_only" {
+                    lines.append("Metadata summary:")
+                } else if fallbackUsed {
+                    lines.append("Fallback summary:")
+                } else {
+                    lines.append("Summary:")
+                }
+                lines.append(emailSummary)
+                if let warning = Self.injectionWarning(from: object) {
+                    lines.append(warning)
+                }
+                if object["email_summary_local_only"]?.boolValue == true {
+                    if fallbackUsed,
+                       let configuredBackend = object["email_summary_backend"]?.stringValue,
+                       let effectiveBackend = object["email_summary_effective_backend"]?.stringValue,
+                       !configuredBackend.isEmpty,
+                       !effectiveBackend.isEmpty,
+                       configuredBackend.lowercased() != effectiveBackend.lowercased() {
+                        lines.append("\(Self.backendLabel(configuredBackend)) was unavailable, so this fallback stayed local through \(Self.backendLabel(effectiveBackend)). I did not send the email to Groq or Codex.")
+                    } else if let backend = object["email_summary_effective_backend"]?.stringValue, !backend.isEmpty {
+                        lines.append("This summary stayed local through \(Self.backendLabel(backend)). I did not send the email to Groq or Codex.")
+                    } else {
+                        lines.append("This summary stayed local. I did not send the email to Groq or Codex.")
+                    }
+                }
+                return lines.joined(separator: "\n")
+            }
+            for (index, row) in rows.enumerated() {
+                let sender = row["sender"]?.stringValue ?? "Unknown sender"
+                let subject = row["subject"]?.stringValue ?? "(no subject)"
+                let received = row["received"]?.stringValue ?? ""
+                let readState = row["read_state"]?.stringValue ?? "unknown"
+                let snippet = row["snippet"]?.stringValue ?? ""
+                let suffix = received.isEmpty ? "" : " · \(received)"
+                lines.append("\(index + 1). \(sender): \(subject)\(suffix) · \(readState)")
+                if !snippet.isEmpty {
+                    lines.append("Summary: \(snippet)")
+                }
+            }
+            if let warning = Self.injectionWarning(from: object) {
+                lines.append(warning)
+            }
+            lines.append("This is local \(mailbox) metadata/snippet reading. I did not send the email to a model.")
+            return lines.joined(separator: "\n")
+        }
+
+        var lines = [object["reply"]?.stringValue ?? "I could not complete the Outlook check yet."]
+        if let error = object["error"]?.stringValue, !error.isEmpty {
+            lines.append("Error: \(error)")
+        }
+        if status == "screen_capture_failed",
+           let worker = object["worker_process"]?.objectValue {
+            let bundle = worker["python_app_bundle"]?.stringValue
+            let executable = worker["python_executable"]?.stringValue
+            let target = bundle ?? executable
+            if let target, !target.isEmpty {
+                lines.append("Permission target: \(target)")
+            }
+        }
+        if status == "native_capture_failed" {
+            if let preflight = object["screen_access_preflight"]?.boolValue {
+                lines.append("Screen preflight: \(preflight ? "granted" : "not granted")")
+            }
+            if let bundle = object["app_bundle_path"]?.stringValue, !bundle.isEmpty {
+                lines.append("App bundle: \(bundle)")
+            }
+            if let bundleID = object["bundle_identifier"]?.stringValue, !bundleID.isEmpty {
+                lines.append("Bundle ID: \(bundleID)")
+            }
+        }
+        let nextSteps = object["next_steps"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        if !nextSteps.isEmpty {
+            lines.append("Next:")
+            for step in nextSteps {
+                lines.append("- \(step)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func injectionWarning(from object: [String: JSONValue]) -> String? {
+        guard let scan = object["injection_scan"]?.objectValue,
+              scan["status"]?.stringValue == "flagged" else {
+            return nil
+        }
+        let labels = scan["findings"]?.arrayValue?
+            .compactMap { $0.objectValue?["label"]?.stringValue }
+            .filter { !$0.isEmpty } ?? []
+        if labels.isEmpty {
+            return "Warning: this email text matched Jarvis prompt-injection rules. I treated it as untrusted content, not instructions."
+        }
+        return "Warning: this email text matched Jarvis prompt-injection rules: \(labels.joined(separator: ", ")). I treated it as untrusted content, not instructions."
+    }
+
+    private static func mailSelectionIntro(
+        mailbox: String,
+        scanned: Int,
+        unreadCount: Int,
+        selectedCount: Int,
+        selectionMode: String
+    ) -> String {
+        if selectionMode == "unread" {
+            if unreadCount > selectedCount {
+                return "I checked \(mailbox), scanned \(scanned) recent messages, and found \(unreadCount) unread. I am showing the newest \(selectedCount)."
+            }
+            if selectedCount == 1 {
+                return "I checked \(mailbox), scanned \(scanned) recent messages, and found 1 unread message."
+            }
+            return "I checked \(mailbox), scanned \(scanned) recent messages, and found \(selectedCount) unread messages."
+        }
+        return "I checked \(mailbox), scanned \(scanned) recent messages, and found no unread messages, so I selected the newest inbox email."
+    }
+
+    private func render(_ response: CommandResponse) -> String {
+        var lines: [String] = []
+        lines.append("Command: \(response.command ?? command)")
+        lines.append("Tool: \(response.tool ?? "unknown")")
+        lines.append("Executed: \(response.executed.map(String.init) ?? "unknown")")
+        lines.append("Summary: \(response.summary ?? "No summary")")
+        let timingLabel = Self.timingLabel(for: response.tool)
+        if let timing = response.result?.objectValue?["duration_human"]?.stringValue, !timing.isEmpty {
+            lines.append("\(timingLabel): \(timing)")
+        } else if let seconds = response.result?.objectValue?["duration_seconds"]?.doubleValue {
+            lines.append(String(format: "\(timingLabel): %.1fs", seconds))
+        }
+        let firstVisibleTokenSeconds = response.result?.objectValue?["first_visible_token_seconds"]?.doubleValue
+            ?? response.result?.objectValue?["first_token_seconds"]?.doubleValue
+        if let firstVisibleTokenSeconds {
+            lines.append(String(format: "First visible text: %.1fs", firstVisibleTokenSeconds))
+        }
+
+        if let assessment = response.assessment {
+            lines.append("")
+            lines.append("Risk: \(assessment.riskLabel) (\(assessment.riskLevel))")
+            lines.append("Decision: \(assessment.decision)")
+            if !assessment.reasons.isEmpty {
+                lines.append("Reasons:")
+                for reason in assessment.reasons {
+                    lines.append("- \(reason)")
+                }
+            }
+        }
+
+        if let confirmation = response.confirmation, confirmation.required {
+            lines.append("")
+            lines.append("Confirmation: \(confirmation.title) [\(confirmation.kind)]")
+            if let exactPhrase = confirmation.exactPhrase {
+                lines.append("Exact phrase: \(exactPhrase)")
+            }
+        }
+
+        if let auditEventId = response.auditEventId {
+            lines.append("")
+            lines.append("Audit event: \(auditEventId)")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private static func formatUptime(_ seconds: Double) -> String {
+        let totalSeconds = max(0, Int(seconds.rounded()))
+        let minutes = totalSeconds / 60
+        let remainingSeconds = totalSeconds % 60
+        if minutes > 0 {
+            return "\(minutes)m \(remainingSeconds)s"
+        }
+        return "\(remainingSeconds)s"
+    }
+
+    private static func formatDuration(_ seconds: Int) -> String {
+        if seconds < 60 {
+            return "\(seconds) second\(seconds == 1 ? "" : "s")"
+        }
+        if seconds < 3600 {
+            let minutes = seconds / 60
+            let remainingSeconds = seconds % 60
+            var text = "\(minutes) minute\(minutes == 1 ? "" : "s")"
+            if remainingSeconds > 0 {
+                text += " \(remainingSeconds) second\(remainingSeconds == 1 ? "" : "s")"
+            }
+            return text
+        }
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        var text = "\(hours) hour\(hours == 1 ? "" : "s")"
+        if minutes > 0 {
+            text += " \(minutes) minute\(minutes == 1 ? "" : "s")"
+        }
+        return text
+    }
+
+    private static func formatVerification(_ verification: VerificationSummary?) -> String {
+        guard let verification, verification.available else {
+            return "Verification not available"
+        }
+        let state = verification.ok == true ? "passed" : "failed"
+        let passed = verification.passed ?? 0
+        let total = verification.total ?? 0
+        let age = verification.ageHuman.map { ", \($0) old" } ?? ""
+        return "Verification \(state) \(passed)/\(total)\(age)"
+    }
+
+    private static func healthDiagnostics(from health: HealthResponse) -> [String: Any] {
+        var payload: [String: Any] = [
+            "ok": health.ok,
+            "project_root": health.status.projectRoot,
+            "python": health.status.python,
+            "platform": health.status.platform,
+            "machine": health.status.machine,
+            "codex": [
+                "path": jsonOrNull(health.status.codex.path),
+                "version": jsonOrNull(health.status.codex.version),
+            ],
+        ]
+        if let runtime = health.status.runtime {
+            payload["runtime"] = runtimeDiagnostics(runtime)
+        }
+        if let timers = health.status.timers {
+            payload["timers"] = [
+                "active_count": jsonOrNull(timers.activeCount),
+            ]
+        }
+        if let codexJobs = health.status.codexJobs {
+            payload["codex_jobs"] = [
+                "tracked_count": jsonOrNull(codexJobs.trackedCount),
+                "running_count": jsonOrNull(codexJobs.runningCount),
+                "latest_job_id": jsonOrNull(codexJobs.latestJobId),
+                "latest_status": jsonOrNull(codexJobs.latestStatus),
+            ]
+        }
+        if let fastModel = health.status.fastModel {
+            payload["fast_model"] = fastModelDiagnostics(fastModel)
+        }
+        if let mode = health.mode {
+            payload["mode"] = modeDiagnostics(mode)
+        }
+        return payload
+    }
+
+    private static func readinessDiagnostics(from readiness: ReadinessResponse) -> [String: Any] {
+        var payload: [String: Any] = [
+            "ok": readiness.ok,
+            "generated_at": readiness.generatedAt,
+            "tools": [
+                "available": readiness.tools.available,
+                "total": readiness.tools.total,
+                "unavailable_ids": readiness.tools.unavailableIds,
+            ],
+            "self_check": [
+                "ok": readiness.selfCheck.ok,
+                "passed": readiness.selfCheck.passed,
+                "total": readiness.selfCheck.total,
+                "failed": readiness.selfCheck.failed,
+            ],
+            "audit": [
+                "event_count": readiness.audit.eventCount,
+                "byte_size_human": readiness.audit.byteSizeHuman,
+                "retention_days": readiness.audit.retentionDays,
+                "max_bytes_human": readiness.audit.maxBytesHuman,
+                "raw_audio_or_screenshots": readiness.audit.rawAudioOrScreenshots,
+            ],
+            "notes": readiness.notes,
+        ]
+        if let runtime = readiness.worker.runtime {
+            payload["worker_runtime"] = runtimeDiagnostics(runtime)
+        }
+        if let verification = readiness.verification {
+            payload["verification"] = verificationDiagnostics(verification)
+        }
+        return payload
+    }
+
+    private static func permissionDiagnostics(_ permissions: [PermissionReadiness]) -> [[String: Any]] {
+        permissions.map { permission in
+            [
+                "id": permission.id,
+                "label": permission.label,
+                "state": permission.state,
+                "detail": permission.detail,
+                "is_ready": permission.isReady,
+            ]
+        }
+    }
+
+    private static func commandDiagnostics(from response: CommandResponse) -> [String: Any] {
+        var payload: [String: Any] = [
+            "command": jsonOrNull(response.command),
+            "tool": jsonOrNull(response.tool),
+            "summary": jsonOrNull(response.summary),
+            "executed": jsonOrNull(response.executed),
+            "audit_event_id": jsonOrNull(response.auditEventId),
+        ]
+        if let result = response.result {
+            payload["result"] = result.anyValue
+        }
+        if let assessment = response.assessment {
+            payload["assessment"] = [
+                "risk_level": assessment.riskLevel,
+                "risk_label": assessment.riskLabel,
+                "decision": assessment.decision,
+                "requires_confirmation": assessment.requiresConfirmation,
+                "requires_typed_confirmation": assessment.requiresTypedConfirmation,
+                "blocked": assessment.blocked,
+                "reasons": assessment.reasons,
+            ]
+        }
+        if let confirmation = response.confirmation {
+            payload["confirmation"] = [
+                "required": confirmation.required,
+                "kind": confirmation.kind,
+                "title": confirmation.title,
+                "message": jsonOrNull(confirmation.message),
+                "exact_phrase": jsonOrNull(confirmation.exactPhrase),
+                "prototype_note": jsonOrNull(confirmation.prototypeNote),
+            ]
+        }
+        return payload
+    }
+
+    private static func runtimeDiagnostics(_ runtime: RuntimeStatus) -> [String: Any] {
+        [
+            "pid": runtime.pid,
+            "cwd": runtime.cwd,
+            "source": runtime.source,
+            "started_at": runtime.startedAt,
+            "uptime_seconds": runtime.uptimeSeconds,
+        ]
+    }
+
+    private static func fastModelDiagnostics(_ fastModel: FastModelStatus) -> [String: Any] {
+        [
+            "backend": jsonOrNull(fastModel.backend),
+            "model": jsonOrNull(fastModel.model),
+            "available": jsonOrNull(fastModel.available),
+            "fallback_enabled": jsonOrNull(fastModel.fallbackEnabled),
+            "fallback_backend": jsonOrNull(fastModel.fallbackBackend),
+            "fallback_model": jsonOrNull(fastModel.fallbackModel),
+            "timeout_seconds": jsonOrNull(fastModel.timeoutSeconds),
+            "max_tokens": jsonOrNull(fastModel.maxTokens),
+            "groq_key_configured": jsonOrNull(fastModel.groqKeyConfigured),
+            "groq_base_url": jsonOrNull(fastModel.groqBaseUrl),
+            "ollama_path": jsonOrNull(fastModel.ollamaPath),
+            "ollama_base_url": jsonOrNull(fastModel.ollamaBaseUrl),
+        ]
+    }
+
+    private static func modeDiagnostics(_ mode: ModeResponse) -> [String: Any] {
+        [
+            "paused": mode.paused,
+            "reason": mode.reason,
+            "updated_at": mode.updatedAt,
+            "commands_enabled": mode.commandsEnabled,
+        ]
+    }
+
+    private static func verificationDiagnostics(_ verification: VerificationSummary) -> [String: Any] {
+        [
+            "available": verification.available,
+            "path": jsonOrNull(verification.path),
+            "ok": jsonOrNull(verification.ok),
+            "passed": jsonOrNull(verification.passed),
+            "total": jsonOrNull(verification.total),
+            "generated_at": jsonOrNull(verification.generatedAt),
+            "age_seconds": jsonOrNull(verification.ageSeconds),
+            "age_human": jsonOrNull(verification.ageHuman),
+        ]
+    }
+
+    private static func jsonOrNull<T>(_ value: T?) -> Any {
+        value ?? NSNull()
+    }
+
+    private static func timingLabel(for tool: String?) -> String {
+        switch tool {
+        case "codex.delegate", "codex.job", "conversation.codex":
+            return "Codex time"
+        case "conversation.fast_local":
+            return "Fast model time"
+        case "quick.local_control":
+            return "Local command time"
+        default:
+            return "Tool time"
+        }
+    }
+
+    private static func backendLabel(_ backend: String) -> String {
+        switch backend.lowercased() {
+        case "groq":
+            return "Groq"
+        case "ollama":
+            return "Ollama"
+        default:
+            return backend
+        }
+    }
+
+    private static func permissionStatusReply(_ permissions: [PermissionReadiness]) -> String {
+        let target = permissionTargetDiagnostics()
+        var lines = [
+            "Permission target: \(target["path"] ?? "unknown")",
+            "Bundle ID: \(target["bundle_id"] ?? "unknown")",
+            "Permissions: \(JarvisPermissionService.summary(permissions))",
+        ]
+        for permission in permissions {
+            lines.append("- \(permission.label): \(permission.state). \(permission.detail)")
+        }
+        let missing = permissions.filter { !$0.isReady }
+        if !missing.isEmpty {
+            lines.append("Missing: \(missing.map(\.label).joined(separator: ", ")).")
+            lines.append("Use System Settings > Privacy & Security to grant missing permissions to the current Jarvis app.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func permissionTargetDiagnostics() -> [String: String] {
+        [
+            "path": Bundle.main.bundleURL.path,
+            "bundle_id": Bundle.main.bundleIdentifier ?? "unknown",
+        ]
+    }
+
+    private static func sayExecutablePath() -> String? {
+        let candidates = [
+            "/usr/bin/say",
+            "/bin/say",
+            "/opt/homebrew/bin/say",
+            "/usr/local/bin/say",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private static func sayVoiceNames(sayPath: String) -> [String] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: sayPath)
+        process.arguments = ["-v", "?"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return []
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        var names: [String] = []
+        for line in text.split(separator: "\n") {
+            guard let first = line.split(separator: " ").first else {
+                continue
+            }
+            let name = String(first)
+            if !names.contains(name) {
+                names.append(name)
+            }
+        }
+        return names
+    }
+
+    private static func workingReply(for commandText: String) -> String {
+        let lower = commandText.lowercased()
+        if lower.contains("hotkey") || lower.contains("shortcut") {
+            return "Sure. Let me check the shortcut..."
+        }
+        if lower.contains("tts") || lower.contains("text-to-speech") || lower.contains("speech output") || lower.contains("spoken repl") {
+            return "Sure. Let me check speech output..."
+        }
+        if lower.contains("voice") || lower.contains("speech") || lower.contains("microphone") || lower.contains("tts") || lower.contains("stt") {
+            return "Sure. Let me check voice readiness..."
+        }
+        if lower.contains("test") || lower.contains("smoke") {
+            return "Sure. Let me check the test list..."
+        }
+        if lower.contains("screen status") || lower.contains("screen capture status") || lower.contains("screenshot status") || lower.contains("ocr status") {
+            return "Sure. Let me check screen readiness..."
+        }
+        if lower.contains("permission") || lower.contains("screen recording") || lower.contains("accessibility") {
+            return "Sure. Let me check permissions..."
+        }
+        if lower.contains("email") || lower.contains("mail") || lower.contains("outlook") {
+            return "Sure. Let me check your email..."
+        }
+        if lower.contains("codex") || lower.contains("code") || lower.contains("review") || lower.contains("debug") {
+            return "Sure. I am handing this to Codex. This can take a while..."
+        }
+        if lower.contains("status") {
+            return "Sure. Let me check status..."
+        }
+        if lower.contains("screenshot") || lower.contains("screen") {
+            return "Sure. Let me check the screen route..."
+        }
+        return "Sure. I am working on it..."
+    }
+
+    private static func progressReplies(for commandText: String) -> [(delayNanoseconds: UInt64, text: String)] {
+        let lower = commandText.lowercased()
+        if lower.contains("email") || lower.contains("mail") || lower.contains("outlook") {
+            return [
+                (4_000_000_000, "Still checking your inbox. Wait a sec..."),
+                (10_000_000_000, "This is taking longer than usual; I am still trying the local mail routes."),
+            ]
+        }
+        if lower.contains("codex") || lower.contains("code") || lower.contains("review") || lower.contains("debug") {
+            return [
+                (5_000_000_000, "Codex work can take a bit. I am still on it..."),
+                (20_000_000_000, "Still waiting for the deeper work to finish."),
+            ]
+        }
+        return [
+            (5_000_000_000, "Still working. Wait a sec..."),
+        ]
+    }
+
+    static func shouldUseWorkerMailRead(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        guard mentionsMail(lower), !hasBlockedMailAction(lower), !hasVisualMailCue(lower) else {
+            return false
+        }
+        let readCues = [
+            "check",
+            "describe",
+            "extract",
+            "get",
+            "give",
+            "latest",
+            "newest",
+            "read",
+            "scan",
+            "show",
+            "summarize",
+            "summary",
+            "what",
+        ]
+        return readCues.contains(where: { lower.contains($0) }) || lower.contains("inbox")
+    }
+
+    static func shouldUseNativeHotKeyStatus(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        guard lower.contains("hotkey") || lower.contains("shortcut") || lower.contains("keyboard wake") else {
+            return false
+        }
+        let mutationCues = [
+            "assign",
+            "change",
+            "configure",
+            "edit",
+            "rebind",
+            "set",
+            "update",
+        ]
+        guard !mutationCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let statusCues = [
+            "status",
+            "check",
+            "show",
+            "what",
+            "which",
+            "keyboard",
+            "shortcut",
+            "hotkey",
+        ]
+        return statusCues.contains(where: { lower.contains($0) })
+    }
+
+    static func shouldUseNativeTTSStatus(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        let ttsCues = [
+            "tts",
+            "text-to-speech",
+            "text to speech",
+            "speech output",
+            "spoken reply",
+            "spoken replies",
+            "speak status",
+            "can you speak",
+            "voice output",
+        ]
+        guard ttsCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let mutationCues = [
+            "enable",
+            "turn on",
+            "always speak",
+            "auto speak",
+            "automatic speech",
+            "say out loud ",
+        ]
+        guard !mutationCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let statusCues = [
+            "available",
+            "can",
+            "check",
+            "ready",
+            "show",
+            "status",
+            "what",
+            "which",
+        ]
+        return statusCues.contains(where: { lower.contains($0) })
+    }
+
+    static func shouldUseNativeVoiceStatus(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        let voiceCues = [
+            "voice",
+            "speech",
+            "microphone wake",
+            "voice input",
+            "voice output",
+            "speech-to-text",
+            "speech to text",
+            "stt",
+            "tts",
+        ]
+        guard voiceCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let mutationCues = [
+            "allow",
+            "ask",
+            "change",
+            "configure",
+            "enable",
+            "grant",
+            "request",
+            "set",
+            "start",
+            "turn on",
+        ]
+        guard !mutationCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let statusCues = [
+            "available",
+            "check",
+            "ready",
+            "show",
+            "status",
+            "what",
+            "which",
+        ]
+        return statusCues.contains(where: { lower.contains($0) })
+    }
+
+    static func shouldUseNativeTestStatus(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        let testCues = [
+            "copy tests",
+            "smoke test",
+            "smoke tests",
+            "test list",
+            "test prompts",
+            "test status",
+            "what should i test",
+            "what to test",
+        ]
+        guard testCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let mutationCues = [
+            "change",
+            "delete",
+            "edit",
+            "remove",
+            "set",
+            "update",
+        ]
+        guard !mutationCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let statusCues = [
+            "check",
+            "copy",
+            "list",
+            "show",
+            "status",
+            "what",
+        ]
+        return statusCues.contains(where: { lower.contains($0) })
+    }
+
+    static func shouldUseNativeScreenStatus(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        let screenCues = [
+            "screen status",
+            "screen capture status",
+            "screenshot status",
+            "ocr status",
+            "native ocr status",
+            "screen readiness",
+        ]
+        guard screenCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let mutationCues = [
+            "capture",
+            "read the visible",
+            "scan",
+            "take",
+        ]
+        guard !mutationCues.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let statusCues = [
+            "check",
+            "ready",
+            "readiness",
+            "show",
+            "status",
+            "what",
+            "which",
+        ]
+        return statusCues.contains(where: { lower.contains($0) })
+    }
+
+    static func shouldUseNativePermissionStatus(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        guard lower.contains("permission")
+            || lower.contains("screen recording")
+            || lower.contains("accessibility")
+            || lower.contains("microphone")
+            || lower.contains("speech recognition")
+            || lower.contains("notification") else {
+            return false
+        }
+        let statusCues = [
+            "status",
+            "check",
+            "show",
+            "list",
+            "diagnostic",
+            "diagnostics",
+            "why",
+            "ready",
+            "granted",
+        ]
+        return statusCues.contains(where: { lower.contains($0) })
+    }
+
+    static func shouldUseNativeOutlookRead(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        guard mentionsMail(lower) else {
+            return false
+        }
+        if hasBlockedMailAction(lower) {
+            return false
+        }
+        guard hasVisualMailCue(lower) else {
+            return false
+        }
+        let readCues = [
+            "check",
+            "describe",
+            "extract",
+            "read",
+            "scan",
+            "what",
+            "summarize",
+            "summary",
+        ]
+        return readCues.contains(where: { lower.contains($0) }) || lower.contains("ocr")
+    }
+
+    private static func mentionsMail(_ lower: String) -> Bool {
+        lower.contains("outlook") || lower.contains("email") || lower.contains("mail") || lower.contains("inbox")
+    }
+
+    private static func hasBlockedMailAction(_ lower: String) -> Bool {
+        let blockedActions = [
+            "send",
+            "reply",
+            "forward",
+            "delete",
+            "archive",
+            "move",
+            "draft",
+            "download",
+            "attachment",
+            "attach",
+            "mark",
+            "junk",
+            "unsubscribe",
+        ]
+        return blockedActions.contains(where: { lower.contains($0) })
+    }
+
+    private static func hasVisualMailCue(_ lower: String) -> Bool {
+        let visualCues = [
+            "visible",
+            "screen",
+            "screenshot",
+            "ocr",
+            "window",
+            "frontmost",
+            "front-most",
+            "read the screen",
+            "read visible",
+            "on screen",
+        ]
+        return visualCues.contains(where: { lower.contains($0) })
+    }
+
+    private static func shouldTryNativeMailFallback(_ response: CommandResponse) -> Bool {
+        guard response.confirmation?.required != true,
+              response.tool == "outlook.visible_summary",
+              let object = response.result?.objectValue else {
+            return false
+        }
+        let status = object["status"]?.stringValue ?? ""
+        let source = object["source"]?.stringValue ?? ""
+        if status != "checked" {
+            return true
+        }
+        return source == "screen_ocr" || source == "fallback_failed"
+    }
+
+    private static func nativeMailFallbackIsUseful(_ response: CommandResponse) -> Bool {
+        guard response.tool == "outlook.visible_summary",
+              let object = response.result?.objectValue else {
+            return false
+        }
+        return object["status"]?.stringValue == "checked"
+    }
+
+    private static func mailboxLabel(for source: String) -> String {
+        switch source {
+        case "apple_mail":
+            return "Apple Mail"
+        case "sqlite":
+            return "Outlook local database"
+        default:
+            return "Outlook"
+        }
+    }
+}
+
+enum ShellModelError: Error, CustomStringConvertible {
+    case workerUnavailable(String)
+    case exportFailed(String)
+
+    var description: String {
+        switch self {
+        case .workerUnavailable(let message):
+            return message
+        case .exportFailed(let message):
+            return message
+        }
+    }
+}
+
+struct ChatMessage: Identifiable, Equatable {
+    let id: UUID
+    let role: ChatRole
+    let text: String
+    let detail: String?
+
+    init(id: UUID = UUID(), role: ChatRole, text: String, detail: String? = nil) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.detail = detail
+    }
+}
+
+enum ChatRole: String, Equatable {
+    case user
+    case jarvis
+    case system
+}
