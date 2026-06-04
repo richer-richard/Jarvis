@@ -20,7 +20,6 @@ import urllib.error
 import urllib.request
 import ctypes
 import ctypes.util
-import email
 import html
 import uuid
 from email import policy
@@ -2336,7 +2335,7 @@ def _email_summary_prompt(
     blocks: list[str] = []
     used = 0
     for index, message in enumerate(messages[:5], start=1):
-        snippet = _clean_local_field(message.get("snippet") or "")[:message_budget]
+        snippet = _clean_email_prompt_text(message.get("snippet") or "", message_budget)
         body_label = "Body" if message.get("body_source") == "parsed_message_source" else "Body preview"
         block = (
             f"Message {index}\n"
@@ -2425,6 +2424,15 @@ def _clean_email_summary_output(text: str) -> str:
     if not lines:
         return ""
     return "\n".join(lines[:6])[:900].strip()
+
+
+def _clean_email_prompt_text(value: Any, max_chars: int) -> str:
+    text = "" if value is None else str(value)
+    text = text.replace("\x00", " ")
+    text = re.sub(r"[ \t\f\v]+", " ", text)
+    text = re.sub(r" *[\r\n]+ *", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()[:max(0, max_chars)]
 
 
 def _email_summary_reply(mailbox: str, selection_text: str, summary: dict[str, Any]) -> str:
