@@ -33,6 +33,7 @@ from .tools import (
     run_read_only_shell,
     safety_status,
     screenshot_capability,
+    source_access_status,
     start_codex_delegate_job,
     system_status,
     tts_status,
@@ -136,6 +137,8 @@ class Planner:
             return self._result(text, "diagnostics.elevation", "Read Jarvis elevation routing status.", assessment, elevation_status(), True)
         if _looks_like_memory_status(lower):
             return self._result(text, "diagnostics.memory", "Read Jarvis memory design status without reading chat history.", assessment, memory_status(), True)
+        if _looks_like_source_access_status(lower):
+            return self._result(text, "diagnostics.source_access", "Read Jarvis source access status.", assessment, source_access_status(), True)
         if _looks_like_tts_status(lower):
             return self._result(text, "diagnostics.tts", "Read local TTS status.", assessment, tts_status(), True)
         if _looks_like_screen_status(lower):
@@ -253,6 +256,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.latency", assessment, True)
         if _looks_like_fast_model_status(lower):
             return self._preview_result(text, "diagnostics.fast_model", assessment, True)
+        if _looks_like_source_access_status(lower):
+            return self._preview_result(text, "diagnostics.source_access", assessment, True)
         if _looks_like_tts_status(lower):
             return self._preview_result(text, "diagnostics.tts", assessment, True)
         if _looks_like_screen_status(lower):
@@ -511,6 +516,27 @@ def _looks_like_memory_status(lower: str) -> bool:
     mutation_cues = ("sync now", "copy now", "upload", "delete", "erase", "export all")
     return (
         any(cue in lower for cue in memory_cues)
+        and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_source_access_status(lower: str) -> bool:
+    source_cues = (
+        "source access",
+        "source status",
+        "source lock",
+        "repo access",
+        "repo status",
+        "git access",
+        "git visibility",
+        "patch artifact",
+        "hardened patch",
+    )
+    status_cues = ("status", "check", "show", "explain", "why", "access", "visibility", "locked")
+    mutation_cues = ("commit", "push", "pull", "reset", "delete", "remove", "apply", "write")
+    return (
+        any(cue in lower for cue in source_cues)
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
     )

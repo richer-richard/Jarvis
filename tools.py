@@ -103,6 +103,33 @@ FILE_SEARCH_EXCLUDED_DIRS = {
 }
 
 
+def _safe_getcwd() -> tuple[str | None, str | None]:
+    try:
+        return os.getcwd(), None
+    except OSError as error:
+        return None, str(error)
+
+
+def _path_access_status(path: Path) -> dict[str, Any]:
+    try:
+        stat = path.stat()
+        return {
+            "path": str(path),
+            "accessible": True,
+            "is_dir": path.is_dir(),
+            "mtime": stat.st_mtime,
+            "error": None,
+        }
+    except OSError as error:
+        return {
+            "path": str(path),
+            "accessible": False,
+            "is_dir": False,
+            "mtime": None,
+            "error": str(error),
+        }
+
+
 def tool_registry() -> dict[str, Any]:
     """Return the current typed-tool surface exposed to the planner."""
     codex_path = _find_executable("codex")
@@ -259,6 +286,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Explains the proposed Jarvis memory system without reading or syncing chat history.",
             },
             {
+                "id": "diagnostics.source_access",
+                "label": "Source Access Status",
+                "mode": "execute",
+                "risk": "read_only_metadata",
+                "available": True,
+                "description": "Reports project-root, Git metadata, source write-open, running bundle, and hardened patch-artifact status without changing source files.",
+            },
+            {
                 "id": "shell.read_only",
                 "label": "Read-only Shell",
                 "mode": "execute",
@@ -395,6 +430,8 @@ def system_status() -> dict[str, Any]:
     ollama_path = _find_executable("ollama")
     primary_fast_model_available = (FAST_MODEL_BACKEND == "ollama" and bool(ollama_path)) or (FAST_MODEL_BACKEND == "groq" and bool(GROQ_API_KEY))
     fallback_fast_model_available = FAST_MODEL_FALLBACK_ENABLED and FAST_MODEL_FALLBACK_BACKEND == "ollama" and bool(ollama_path)
+    cwd, cwd_error = _safe_getcwd()
+    project_root_status = _path_access_status(PROJECT_ROOT)
     return {
         "project_root": str(PROJECT_ROOT),
         "python": sys.version.split()[0],
@@ -402,10 +439,13 @@ def system_status() -> dict[str, Any]:
         "machine": platform.machine(),
         "runtime": {
             "pid": os.getpid(),
-            "cwd": os.getcwd(),
+            "cwd": cwd or "",
+            "cwd_available": cwd_error is None,
+            "cwd_error": cwd_error,
             "started_at": APP_STARTED_AT,
             "uptime_seconds": round(time.time() - APP_STARTED_AT, 3),
             "source": str(Path(__file__).resolve()),
+            "project_root_access": project_root_status,
         },
         "timers": {
             "active_count": _active_timer_count(),
@@ -660,7 +700,9 @@ def tts_status() -> dict[str, Any]:
 
 
 def launch_status() -> dict[str, Any]:
-    bundle_path = PROJECT_ROOT / "output" / "Jarvis.app"
+    running_bundle = _enclosing_app_bundle(Path(__file__).resolve())
+    bundle_path = Path(running_bundle) if running_bundle else PROJECT_ROOT / "output" / "Jarvis.app"
+    stable_bundle_path = PROJECT_ROOT / "output" / "Jarvis.app"
     launcher_path = PROJECT_ROOT / "scripts" / "open_jarvis.sh"
     metadata = _bundle_metadata(bundle_path)
     exists = bundle_path.exists()
@@ -671,6 +713,8 @@ def launch_status() -> dict[str, Any]:
         f"Open Jarvis with: {open_command}",
         f"Short launcher from the project folder: {launcher_command}",
     ]
+    if running_bundle:
+        reply_lines.append(f"Running bundle: {running_bundle}.")
     if metadata:
         version = metadata.get("version") or "unknown"
         build = metadata.get("build") or "unknown"
@@ -684,6 +728,9 @@ def launch_status() -> dict[str, Any]:
         "status": "available" if exists else "missing",
         "bundle_path": bundle_display,
         "bundle_exists": exists,
+        "running_bundle": running_bundle,
+        "stable_bundle_path": str(stable_bundle_path),
+        "stable_bundle_exists": stable_bundle_path.exists(),
         "open_command": open_command,
         "launcher_path": str(launcher_path),
         "launcher_exists": launcher_path.exists(),
@@ -742,7 +789,7 @@ def run_read_only_shell(command: str) -> dict[str, Any]:
             "returncode": None,
             "error": f"Command timed out after {SAFE_SHELL_TIMEOUT_SECONDS}s.",
         }
-    except FileNotFoundError as error:
+    except OSError as error:
         return {
             "executed": False,
             "assessment": assessment.to_dict(),
@@ -901,6 +948,7 @@ def capabilities_status() -> dict[str, Any]:
     launch = launch_status()
     wake = wake_status()
     email = email_backend_status()
+    source_access = source_access_status()
     status = system_status()
     fast_model = status.get("fast_model", {})
     codex = status.get("codex", {})
@@ -1012,13 +1060,22 @@ def capabilities_status() -> dict[str, Any]:
             "needs_leo": False,
             "open_command": launch.get("open_command"),
         },
+        {
+            "id": "source_access",
+            "status": "working" if source_access.get("status") == "checked" else "needs_attention",
+            "summary": source_access.get("reply"),
+            "test_prompt": "source access status",
+            "needs_leo": False,
+            "git_visible": source_access.get("git", {}).get("git_dir_exists"),
+            "locked_source_count": source_access.get("locked_source_count"),
+        },
     ]
     working = sum(1 for item in capabilities if item["status"] == "working")
     partial = sum(1 for item in capabilities if item["status"] == "partial")
     not_ready = sum(1 for item in capabilities if item["status"] in {"not_built", "unavailable", "missing", "needs_attention"})
     reply = (
         f"Capability status: {working} working, {partial} partial, {not_ready} not ready. "
-        "Working now includes typed chat, fast casual chat, latency status, Codex async delegation, and launch diagnostics. "
+        "Working now includes typed chat, fast casual chat, latency status, Codex async delegation, launch diagnostics, and source-access diagnostics. "
         "Partial work includes email, quick device controls, elevation routing, remote helper diagnostics, wake, TTS, and computer control. "
         "Not active yet: real microphone speech-to-text, memory summarization, and background wake-word listening. "
         "This diagnostic did not read email, screenshots, microphone audio, or files."
@@ -1317,6 +1374,164 @@ def memory_status() -> dict[str, Any]:
         "design": design,
         "phases": phases,
         "reply": reply,
+    }
+
+
+def source_access_status() -> dict[str, Any]:
+    """Explain whether this process can see and update the project source tree."""
+    running_bundle = _enclosing_app_bundle(Path(__file__).resolve())
+    source_candidates = [
+        PROJECT_ROOT / "jarvis" / "tools.py",
+        PROJECT_ROOT / "jarvis" / "server.py",
+        PROJECT_ROOT / "jarvis" / "audit.py",
+        PROJECT_ROOT / "jarvis" / "planner.py",
+        PROJECT_ROOT / "scripts" / "run_dashboard.py",
+    ]
+    git_candidates = [
+        PROJECT_ROOT / ".git",
+        PROJECT_ROOT / "jarvis" / ".git",
+    ]
+    patch_paths = [
+        Path.home() / "Library" / "Application Support" / "Jarvis" / "Jarvis-Hardened-SourceDiag-source.patch",
+        Path.home() / "Library" / "Application Support" / "Jarvis" / "Jarvis-Hardened-SourceDiag-runtime.patch",
+        Path.home() / "Library" / "Application Support" / "Jarvis" / "Jarvis-Hardened-Final.patch",
+    ]
+
+    project_root_status = _path_access_status(PROJECT_ROOT)
+    file_checks = [_source_file_access(path) for path in source_candidates]
+    locked_files = [check["path"] for check in file_checks if check.get("exists") and not check.get("open_for_update_ok")]
+    git_dirs = [_git_dir_status(path) for path in git_candidates]
+    visible_git_dirs = [check["path"] for check in git_dirs if check.get("exists")]
+    git_probes = [_git_status_probe(candidate) for candidate in (PROJECT_ROOT, PROJECT_ROOT / "jarvis")]
+    preferred_probe = next((probe for probe in git_probes if probe.get("status") == "ok"), git_probes[0] if git_probes else {})
+    patch_checks = [_patch_artifact_status(path) for path in patch_paths]
+    preferred_patch = next((check for check in patch_checks if check.get("exists")), patch_checks[0] if patch_checks else {})
+
+    source_state = "writable" if file_checks and not locked_files else "locked_or_unavailable"
+    git_state = "visible" if visible_git_dirs else "not_visible"
+    reply = (
+        f"Source access status: project root is "
+        f"{'accessible' if project_root_status.get('accessible') else 'not accessible'}, "
+        f"Git metadata is {git_state}, and source files are {source_state} to this Jarvis worker."
+    )
+    if visible_git_dirs:
+        reply += f" Git metadata visible at {', '.join(visible_git_dirs)}."
+    if locked_files:
+        reply += f" {len(locked_files)} source file(s) cannot be opened for update by this process."
+    if preferred_patch.get("exists"):
+        reply += f" Hardened patch artifact exists at {preferred_patch.get('path')} ({preferred_patch.get('bytes')} bytes)."
+    else:
+        reply += " Hardened patch artifact is missing."
+    return {
+        "tool": "diagnostics.source_access",
+        "executed": True,
+        "status": "checked",
+        "read_private_content": False,
+        "changed_files": False,
+        "project_root": project_root_status,
+        "git": {
+            "git_dir": str(git_candidates[0]),
+            "git_dir_exists": bool(visible_git_dirs),
+            "git_dirs": git_dirs,
+            "visible_git_dirs": visible_git_dirs,
+            "probe": preferred_probe,
+            "probes": git_probes,
+        },
+        "source_files": file_checks,
+        "locked_source_count": len(locked_files),
+        "running_bundle": running_bundle,
+        "stable_bundle": str(PROJECT_ROOT / "output" / "Jarvis.app"),
+        "patch_artifact": preferred_patch,
+        "patch_artifacts": patch_checks,
+        "reply": reply,
+    }
+
+
+def _git_dir_status(path: Path) -> dict[str, Any]:
+    status = _path_access_status(path)
+    return {
+        **status,
+        "exists": bool(status.get("accessible") and path.is_dir()),
+    }
+
+
+def _patch_artifact_status(path: Path) -> dict[str, Any]:
+    status = _path_access_status(path)
+    bytes_count = 0
+    if status.get("accessible"):
+        try:
+            bytes_count = path.stat().st_size
+        except OSError:
+            bytes_count = 0
+    return {
+        **status,
+        "exists": bool(status.get("accessible") and path.is_file()),
+        "bytes": bytes_count,
+    }
+
+
+def _source_file_access(path: Path) -> dict[str, Any]:
+    status = _path_access_status(path)
+    exists = False
+    open_update_ok = False
+    open_update_error = None
+    try:
+        exists = path.exists()
+    except OSError:
+        exists = False
+    if status.get("accessible") and path.is_file():
+        try:
+            with path.open("r+b"):
+                pass
+            open_update_ok = True
+        except OSError as error:
+            open_update_error = str(error)
+    return {
+        **status,
+        "exists": exists,
+        "open_for_update_ok": open_update_ok,
+        "open_for_update_error": open_update_error,
+    }
+
+
+def _git_status_probe(worktree: Path) -> dict[str, Any]:
+    git = _find_executable("git")
+    if not git:
+        return {
+            "worktree": str(worktree),
+            "available": False,
+            "status": "git_not_found",
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+        }
+    try:
+        completed = subprocess.run(
+            [git, "-C", str(worktree), "status", "--short"],
+            shell=False,
+            cwd="/",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "worktree": str(worktree),
+            "available": True,
+            "status": "probe_error",
+            "returncode": None,
+            "stdout": "",
+            "stderr": str(error),
+        }
+    return {
+        "worktree": str(worktree),
+        "available": True,
+        "status": "ok" if completed.returncode == 0 else "failed",
+        "returncode": completed.returncode,
+        "stdout": _text_tail(completed.stdout, 1200),
+        "stderr": _text_tail(completed.stderr, 1200),
     }
 
 
@@ -2870,11 +3085,14 @@ def _find_executable(name: str) -> str | None:
 
 def _worker_process_context() -> dict[str, Any]:
     executable = Path(sys.executable).resolve()
+    cwd, cwd_error = _safe_getcwd()
     return {
         "pid": os.getpid(),
         "python_executable": str(executable),
         "python_app_bundle": _enclosing_app_bundle(executable),
-        "cwd": os.getcwd(),
+        "cwd": cwd or "",
+        "cwd_available": cwd_error is None,
+        "cwd_error": cwd_error,
         "source": str(Path(__file__).resolve()),
     }
 
@@ -2946,7 +3164,19 @@ def _is_storage_status_request(lower: str) -> bool:
 
 
 def _storage_status() -> dict[str, Any]:
-    usage = shutil.disk_usage(PROJECT_ROOT)
+    try:
+        usage = shutil.disk_usage(PROJECT_ROOT)
+    except OSError as error:
+        return {
+            "tool": "quick.local_control",
+            "matched": True,
+            "status": "storage_unavailable",
+            "executed": False,
+            "action": "storage.status",
+            "path_checked": str(PROJECT_ROOT),
+            "error": str(error),
+            "reply": "I could not read storage status for the Jarvis project root right now.",
+        }
     used = usage.total - usage.free
     percent_used = (used / usage.total * 100.0) if usage.total else 0.0
     reply = (

@@ -54,7 +54,16 @@ class AuditLogger:
 
     def __init__(self, path: Path = AUDIT_LOG) -> None:
         self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.degraded = False
+        self.degraded_reason: str | None = None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            fallback = Path.home() / "Library" / "Application Support" / "Jarvis" / "runtime" / "audit" / "events.jsonl"
+            self.path = fallback
+            self.degraded = True
+            self.degraded_reason = str(error)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
 
     def record(
@@ -80,9 +89,12 @@ class AuditLogger:
             details=_redact_audit_value(details or {}),
         )
         with self._lock:
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
-            self.enforce_retention()
+            try:
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+                self.enforce_retention()
+            except OSError:
+                pass
         return event
 
     def recent(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -130,6 +142,8 @@ class AuditLogger:
         return {
             "path": str(self.path),
             "exists": exists,
+            "degraded": self.degraded,
+            "degraded_reason": self.degraded_reason,
             "event_count": event_count,
             "unreadable_lines": unreadable_lines,
             "byte_size": byte_size,

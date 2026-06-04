@@ -686,7 +686,10 @@ def run(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, start_paused: bool |
         )
     if not 1 <= int(port) <= 65535:
         raise ValueError("Jarvis dashboard port must be between 1 and 65535.")
-    PROJECT_ROOT.joinpath("runtime").mkdir(exist_ok=True)
+    try:
+        PROJECT_ROOT.joinpath("runtime").mkdir(exist_ok=True)
+    except OSError:
+        pass
     if start_paused is not None:
         STATE.configure_mode(
             paused=start_paused,
@@ -719,7 +722,14 @@ def _host_from_header(value: str) -> str:
 
 
 def _latest_verification_summary() -> dict[str, Any]:
-    reports = sorted(PROJECT_ROOT.joinpath("runtime", "verification").glob("verify-safe-*.json"))
+    try:
+        reports = sorted(PROJECT_ROOT.joinpath("runtime", "verification").glob("verify-safe-*.json"))
+    except OSError as error:
+        return {
+            "available": False,
+            "ok": False,
+            "error": str(error),
+        }
     if not reports:
         return {"available": False}
 
