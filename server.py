@@ -838,7 +838,7 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
     safe = {
         key: value
         for key, value in result.items()
-        if key not in {"messages", "reply", "stdout", "stderr", "injection_scan"}
+        if key not in {"messages", "reply", "email_summary", "stdout", "stderr", "injection_scan"}
     }
     injection_scan = result.get("injection_scan") if isinstance(result, dict) else None
     if isinstance(injection_scan, dict):
@@ -847,6 +847,7 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
         safe["injection_findings_count"] = len(findings) if isinstance(findings, list) else 0
     safe["message_count"] = len(messages) if isinstance(messages, list) else int(result.get("message_count") or 0)
     safe["private_message_details_omitted"] = True
+    safe["email_summary_omitted"] = "email_summary" in result
     return safe
 
 
