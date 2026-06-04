@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jarvis Prototype</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="command-panel" aria-labelledby="command-title">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">Jarvis</p>
+            <h1 id="command-title">Command Console</h1>
+          </div>
+          <div class="status-pills">
+            <span id="mode-pill" class="pill">Mode</span>
+            <span id="wake-pill" class="pill wake">Idle</span>
+            <span id="connection-pill" class="pill">Checking</span>
+          </div>
+        </header>
+
+        <div class="wake-strip" aria-live="polite">
+          <span id="wake-message">Press Cmd+K or Ctrl+K to wake Jarvis in this prototype.</span>
+          <div class="wake-actions">
+            <button id="wake-button" type="button">Wake</button>
+            <button id="mode-button" type="button">Pause</button>
+          </div>
+        </div>
+
+        <form id="command-form" class="command-form">
+          <label for="command-input">Command</label>
+          <div class="command-row">
+            <input
+              id="command-input"
+              name="command"
+              autocomplete="off"
+              spellcheck="true"
+              placeholder="status"
+            />
+            <button id="preview-button" type="button">Preview</button>
+            <button id="run-button" type="submit">Run</button>
+          </div>
+        </form>
+
+        <div class="quick-actions" aria-label="Quick actions">
+          <button data-command="status" type="button">Status</button>
+          <button data-command="check my Outlook email" type="button">Outlook</button>
+          <button data-command="screenshot capability" type="button">Screen</button>
+          <button data-command="shell: pwd" type="button">Shell</button>
+          <button data-command="ask Codex to review this project" type="button">Codex</button>
+        </div>
+
+        <section class="result-zone" aria-labelledby="result-title">
+          <div class="result-header">
+            <h2 id="result-title">Result</h2>
+            <span id="tool-pill" class="tool-pill">No tool</span>
+          </div>
+          <div id="confirmation-panel" class="confirmation-panel hidden" aria-live="polite">
+            <div>
+              <p id="confirmation-title" class="confirmation-title">Confirmation Required</p>
+              <p id="confirmation-message" class="confirmation-message"></p>
+              <p id="confirmation-note" class="confirmation-note"></p>
+            </div>
+            <div id="confirmation-phrase" class="confirmation-phrase"></div>
+          </div>
+          <pre id="result-output">{}</pre>
+        </section>
+      </section>
+
+      <aside class="side-panel" aria-label="Jarvis status">
+        <section class="status-block">
+          <div class="block-header">
+            <h2>Worker</h2>
+            <button id="load-health" type="button">Refresh</button>
+          </div>
+          <div id="worker-status" class="worker-status"></div>
+        </section>
+
+        <section class="status-block">
+          <div class="block-header">
+            <h2>Readiness</h2>
+            <button id="load-readiness" type="button">Refresh</button>
+          </div>
+          <div id="readiness-status" class="readiness-status"></div>
+        </section>
+
+        <section class="status-block">
+          <div class="block-header">
+            <h2>Preflight</h2>
+            <button id="load-preflight" type="button">Refresh</button>
+          </div>
+          <div id="preflight-status" class="preflight-status"></div>
+        </section>
+
+        <section class="status-block">
+          <div class="block-header">
+            <h2>Tools</h2>
+            <button id="load-tools" type="button">Load</button>
+          </div>
+          <div id="tool-list" class="tool-list"></div>
+        </section>
+
+        <section class="status-block">
+          <div class="block-header">
+            <h2>Self Check</h2>
+            <button id="run-self-check" type="button">Run</button>
+          </div>
+          <div id="self-checks" class="check-list"></div>
+        </section>
+
+        <section class="status-block">
+          <div class="block-header">
+            <h2>Policy</h2>
+            <button id="load-policy" type="button">Load</button>
+          </div>
+          <pre id="policy-output">{}</pre>
+        </section>
+
+        <section class="status-block">
+          <div class="block-header">
+            <h2>Audit</h2>
+            <button id="load-audit" type="button">Refresh</button>
+          </div>
+          <div id="audit-status" class="audit-status"></div>
+          <div id="audit-list" class="audit-list"></div>
+        </section>
+      </aside>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
