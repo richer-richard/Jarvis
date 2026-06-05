@@ -96,6 +96,11 @@ EMAIL_SUMMARY_MODEL = os.environ.get("JARVIS_EMAIL_SUMMARY_MODEL", FAST_MODEL_NA
 EMAIL_SUMMARY_TIMEOUT_SECONDS = env_int("JARVIS_EMAIL_SUMMARY_TIMEOUT_SECONDS", 8, minimum=2, maximum=30)
 EMAIL_SUMMARY_MAX_INPUT_CHARS = env_int("JARVIS_EMAIL_SUMMARY_MAX_INPUT_CHARS", 3200, minimum=500, maximum=12000)
 EMAIL_SUMMARY_MAX_TOKENS = env_int("JARVIS_EMAIL_SUMMARY_MAX_TOKENS", 180, minimum=48, maximum=512)
+TTS_AUTOMATIC_ENABLED = env_bool("JARVIS_TTS_AUTOMATIC_ENABLED", False)
+TTS_SPEAK_STATUS = env_bool("JARVIS_TTS_SPEAK_STATUS", False)
+TTS_VOICE = os.environ.get("JARVIS_TTS_VOICE", "Samantha").strip() or "Samantha"
+TTS_RATE = env_int("JARVIS_TTS_RATE", 152, minimum=80, maximum=280)
+TTS_MAX_CHARS = env_int("JARVIS_TTS_MAX_CHARS", 900, minimum=80, maximum=2400)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_BASE_URL = os.environ.get("JARVIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 GROQ_FAST_MODEL = os.environ.get("JARVIS_GROQ_MODEL", "llama-3.3-70b-versatile")

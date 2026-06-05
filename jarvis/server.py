@@ -26,7 +26,7 @@ from .config import (
 from .planner import Planner
 from .safety import classify_command, policy_summary
 from .self_check import run_self_checks
-from .tools import outlook_visible_text_summary, stream_fast_local_chat_events, system_status, tool_registry
+from .tools import outlook_visible_text_summary, speak_text_async, stream_fast_local_chat_events, system_status, tool_registry
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_VERIFICATION_AGE_SECONDS = 12 * 60 * 60
@@ -65,6 +65,7 @@ class JarvisServer:
                 },
             )
             data["audit_event_id"] = event.id
+            _attach_auto_speech(data, reason="final")
             return data
 
         planned = self.planner.handle(command)
@@ -83,6 +84,7 @@ class JarvisServer:
             },
         )
         data["audit_event_id"] = event.id
+        _attach_auto_speech(data, reason="final")
         return data
 
     def stream_command(self, command: str):
@@ -96,11 +98,13 @@ class JarvisServer:
         if preview.get("tool") != "conversation.fast_local":
             status_text = _stream_status_text(preview)
             if status_text:
+                speech = speak_text_async(status_text, reason="status")
                 yield {
                     "event": "status",
                     "data": {
                         "text": status_text,
                         "tool": preview.get("tool"),
+                        "speech": speech,
                     },
                 }
             yield {"event": "final", "data": self.command(command)}
@@ -157,6 +161,7 @@ class JarvisServer:
             },
         )
         data["audit_event_id"] = event.id
+        _attach_auto_speech(data, reason="final")
         yield {"event": "final", "data": data}
 
     def native_outlook_visible_text(
@@ -470,21 +475,54 @@ STATE = JarvisServer()
 def _stream_status_text(preview: dict[str, Any]) -> str:
     tool = str(preview.get("tool") or "")
     labels = {
-        "outlook.visible_summary": "Finding email skill...",
-        "diagnostics.email": "Finding email diagnostics skill...",
-        "screenshot.capability": "Finding screen skill...",
-        "browser.open_url": "Finding browser skill...",
-        "codex.job": "Finding Codex skill...",
-        "codex.delegate": "Finding Codex skill...",
-        "files.search": "Finding file search skill...",
-        "shell.read_only": "Finding read-only shell skill...",
-        "quick.local_control": "Finding local control skill...",
-        "system.status": "Finding system status skill...",
-        "policy.block": "Checking safety policy...",
-        "policy.confirmation": "Checking safety policy...",
-        "policy.strong_confirmation": "Checking safety policy...",
+        "outlook.visible_summary": "Sure. I'll check your email.",
+        "diagnostics.email": "Sure. I'll check the email setup.",
+        "screenshot.capability": "Sure. I'll check the screen setup.",
+        "browser.open_url": "Sure. I'll open that.",
+        "codex.job": "Sure. I'll check with Codex.",
+        "codex.delegate": "Sure. I'll check with Codex.",
+        "files.search": "Sure. I'll search your files.",
+        "shell.read_only": "Sure. I'll check that locally.",
+        "quick.local_control": "Sure. I'll handle that.",
+        "system.status": "Sure. I'll check Jarvis status.",
+        "policy.block": "Checking safety policy.",
+        "policy.confirmation": "Checking safety policy.",
+        "policy.strong_confirmation": "Checking safety policy.",
     }
-    return labels.get(tool, "Finding the right Jarvis skill...")
+    return labels.get(tool, "Sure. I'll check this.")
+
+
+def _attach_auto_speech(data: dict[str, Any], *, reason: str) -> None:
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return
+    if not _should_auto_speak(data):
+        return
+    if result.get("action") == "speech.say":
+        return
+    text = _speech_text_from_result(result) or str(data.get("summary") or "").strip()
+    speech = speak_text_async(text, reason=reason)
+    if speech.get("spoken") or speech.get("status") not in {"disabled", "empty"}:
+        data["speech"] = speech
+
+
+def _should_auto_speak(data: dict[str, Any]) -> bool:
+    tool = str(data.get("tool") or "")
+    return tool in {
+        "conversation.local",
+        "conversation.local_exact",
+        "conversation.fast_local",
+        "outlook.visible_summary",
+        "quick.local_control",
+    }
+
+
+def _speech_text_from_result(result: dict[str, Any]) -> str:
+    for key in ("reply", "email_summary"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 class RequestHandler(BaseHTTPRequestHandler):
