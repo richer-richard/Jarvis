@@ -764,6 +764,34 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["voice_count"], 2)
         self.assertIn("did not play audio", result["reply"])
 
+    def test_app_voice_defaults_enable_piper_status_speech_without_cli_default(self):
+        env = os.environ.copy()
+        env["JARVIS_ENV_FILE"] = "/dev/null"
+        env["JARVIS_APP_VOICE_DEFAULTS"] = "1"
+        for key in ("JARVIS_TTS_AUTOMATIC_ENABLED", "JARVIS_TTS_SPEAK_STATUS", "JARVIS_TTS_PROVIDER"):
+            env.pop(key, None)
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from jarvis.config import TTS_AUTOMATIC_ENABLED, TTS_SPEAK_STATUS, TTS_PROVIDER; "
+                    "print(f'{TTS_AUTOMATIC_ENABLED} {TTS_SPEAK_STATUS} {TTS_PROVIDER}')"
+                ),
+            ],
+            shell=False,
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "True True piper")
+
     def test_tts_status_reports_piper_when_configured(self):
         def fake_exists(self):
             return str(self) in {"/tmp/piper", "/tmp/ryan.onnx", "/tmp/ryan.onnx.json", "/tmp/espeak-ng-data", "/usr/bin/afplay"}
@@ -2108,6 +2136,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("email_summary", result)
         self.assertEqual(result["reply"], result["email_summary"])
         self.assertNotIn("I checked", result["reply"])
+        self.assertIn("duration_seconds", result)
+        self.assertIn("duration_human", result)
 
     def test_email_summary_uses_local_ollama(self):
         class FakeResponse:
@@ -2816,15 +2846,18 @@ class RuntimeSurfaceTests(unittest.TestCase):
             server = JarvisServer()
             server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
             with patch("jarvis.server.stream_fast_local_chat_events", return_value=fake_events), \
-                 patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock:
+                 patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock, \
+                 patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "status"}) as speak_mock:
                 events = list(server.stream_command("please check my email"))
 
         self.assertEqual([event["event"] for event in events], ["status", "final"])
         self.assertEqual(events[0]["data"]["text"], "Sure. I'll check your email.")
         self.assertEqual(events[0]["data"]["tool"], "outlook.visible_summary")
+        self.assertTrue(events[0]["data"]["speech"]["spoken"])
         self.assertEqual(events[-1]["data"]["tool"], "outlook.visible_summary")
         self.assertEqual(events[-1]["data"]["result"]["status"], "checked")
         self.assertEqual(mail_mock.call_args.kwargs["selection"], "latest")
+        speak_mock.assert_any_call("Sure. I'll check your email.", reason="status")
 
     def test_stream_command_passes_history_to_fast_chat_without_router_delay(self):
         fake_events = [

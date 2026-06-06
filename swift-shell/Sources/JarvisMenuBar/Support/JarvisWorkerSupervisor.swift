@@ -130,6 +130,18 @@ final class JarvisWorkerSupervisor {
         var environment = base
         environment["PYTHONUNBUFFERED"] = "1"
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        if environment["JARVIS_APP_VOICE_DEFAULTS"] == nil {
+            environment["JARVIS_APP_VOICE_DEFAULTS"] = "1"
+        }
+        if environment["JARVIS_TTS_AUTOMATIC_ENABLED"] == nil {
+            environment["JARVIS_TTS_AUTOMATIC_ENABLED"] = "1"
+        }
+        if environment["JARVIS_TTS_SPEAK_STATUS"] == nil {
+            environment["JARVIS_TTS_SPEAK_STATUS"] = "1"
+        }
+        if environment["JARVIS_TTS_PROVIDER"] == nil {
+            environment["JARVIS_TTS_PROVIDER"] = "piper"
+        }
         if let workspaceRoot = sourceWorkspaceRoot(),
            workspaceRoot.standardizedFileURL.path != projectRoot.standardizedFileURL.path {
             environment["JARVIS_WORKSPACE_ROOT"] = workspaceRoot.path

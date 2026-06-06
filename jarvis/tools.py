@@ -2672,6 +2672,13 @@ def outlook_read_only_check(
     original_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Try a bounded read-only unread-first inbox summary, preferring Apple Mail."""
+    command_started_at = time.monotonic()
+
+    def finish(result: dict[str, Any]) -> dict[str, Any]:
+        if "duration_seconds" not in result and "duration_human" not in result:
+            return {**result, **_duration_fields(command_started_at)}
+        return result
+
     safe_limit = max(1, min(int(limit), 25))
     scan_limit = max(safe_limit, OUTLOOK_MAX_SCAN_MESSAGES)
     clean_sender_query = _clean_email_filter_query(sender_query)
@@ -2714,7 +2721,7 @@ def outlook_read_only_check(
             selection_mode=selected_mode,
             unread_count=unread_count,
         )
-        return {
+        return finish({
             **base,
             "status": "checked",
             "reply": _email_summary_reply("Apple Mail", selection_text, summary),
@@ -2732,9 +2739,9 @@ def outlook_read_only_check(
             "email_body_source": "apple_mail_message_source" if mail_result.get("parsed_body_count") else "apple_mail_content_preview",
             **summary,
             "prototype_behavior": "Reads sender, subject, received time, read state, and Apple Mail body text locally when available; email summarization follows the configured model, and Ollama cloud models send the summary prompt to Ollama Cloud.",
-        }
+        })
     if clean_sender_query and mail_result.get("filter_applied"):
-        return {
+        return finish({
             **base,
             "status": "no_matching_messages",
             "reply": (
@@ -2752,13 +2759,13 @@ def outlook_read_only_check(
             "mail_status": mail_result.get("status", "empty"),
             "injection_scan": _messages_injection_scan([], "apple_mail"),
             "prototype_behavior": "Honors sender-filter constraints from the original prompt and refuses to summarize unrelated email when no matching message is found.",
-        }
+        })
     base["mail_status"] = mail_result.get("status")
     if mail_result.get("error"):
         base["mail_error"] = mail_result.get("error")
 
     if not app["available"]:
-        return {
+        return finish({
             **base,
             "status": "outlook_not_found",
             "reply": "I could not read Apple Mail and could not find Microsoft Outlook in the standard Applications folders.",
@@ -2766,14 +2773,14 @@ def outlook_read_only_check(
                 "If macOS asks for Automation permission, allow Jarvis or Terminal to control Mail.",
                 "Install Outlook or use `app Microsoft Outlook` to check the app path.",
             ],
-        }
+        })
     if OUTLOOK_USE_APPLESCRIPT and not osascript:
-        return {
+        return finish({
             **base,
             "status": "osascript_not_found",
             "reply": "I found Outlook, but macOS AppleScript tooling is unavailable.",
             "next_steps": ["Install or repair macOS command line tooling before enabling Outlook automation."],
-        }
+        })
 
     completed = None
     outlook_script_failure: dict[str, Any] | None = None
@@ -2793,13 +2800,13 @@ def outlook_read_only_check(
         except subprocess.TimeoutExpired:
             completed = None
         except OSError as error:
-            return {
+            return finish({
                 **base,
                 "status": "automation_error",
                 "reply": "I could not start the Outlook automation check.",
                 "error": str(error),
                 "next_steps": ["Open Outlook manually, then try the email command again."],
-            }
+            })
 
         if completed is not None and completed.returncode != 0:
             error_text = _text_tail(completed.stderr or completed.stdout, 1800)
@@ -2838,7 +2845,7 @@ def outlook_read_only_check(
     if not messages:
         mail_failed = mail_result.get("status") in {"needs_permission_or_scripting", "timeout", "automation_error", "osascript_not_found"}
         if outlook_script_failure:
-            return {
+            return finish({
                 **base,
                 "status": outlook_script_failure["status"],
                 "reply": "I could not read Apple Mail or Outlook inbox metadata yet. Outlook AppleScript was blocked, and the local Outlook database did not find messages. I did not use visible Outlook OCR for this normal email request because your Outlook start view does not expose the newest email body.",
@@ -2852,9 +2859,9 @@ def outlook_read_only_check(
                     "If macOS asks for Automation permission, allow Jarvis or Terminal to control Microsoft Outlook.",
                     "If you specifically want screen reading, ask: read the visible Outlook screen with OCR.",
                 ],
-            }
+            })
         if mail_failed or sqlite_result.get("status") == "disabled":
-            return {
+            return finish({
                 **base,
                 "status": mail_result.get("status") if mail_failed else "no_structured_email_route",
                 "reply": "I could not read Apple Mail inbox metadata yet, and the structured Outlook fallback did not return messages. I did not use visible Outlook OCR for this normal email request because your Outlook start view does not expose the newest email body.",
@@ -2868,7 +2875,7 @@ def outlook_read_only_check(
                     "If no prompt appears, quit and reopen Jarvis, then try the email command again.",
                     "If you specifically want screen reading, ask: read the visible Outlook screen with OCR.",
                 ],
-            }
+            })
         reply = "I could not read Apple Mail or structured Outlook inbox messages yet. I skipped visible Outlook OCR for this normal email request because Outlook's start view does not show the newest email body."
     elif source == "screen_ocr":
         reply = "I read the visible Outlook window locally with OCR. This fallback summarizes visible screen text rather than a guaranteed full inbox scan."
@@ -2886,7 +2893,7 @@ def outlook_read_only_check(
         )
         reply = _email_summary_reply("Outlook", selection_text, email_summary)
 
-    return {
+    return finish({
         **base,
         "status": "checked",
         "reply": reply,
@@ -2900,7 +2907,7 @@ def outlook_read_only_check(
         "injection_scan": _messages_injection_scan(messages, source),
         **email_summary,
         "prototype_behavior": "Reads sender, subject, received time, read state, and a short body preview locally; email summarization follows the configured model, and Ollama cloud models send the summary prompt to Ollama Cloud.",
-    }
+    })
 
 
 def _email_failure_reply(applescript_failure: dict[str, Any] | None, fallback_result: dict[str, Any]) -> str:
