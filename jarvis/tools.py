@@ -8006,17 +8006,30 @@ def _load_codex_daily_memory() -> dict[str, Any]:
         previous_summary = ""
         if isinstance(data, dict) and data.get("date"):
             previous_summary = _compile_codex_memory_summary(data)
-        return {
+        refreshed = {
             "schema": "jarvis.codex_daily_memory.v1",
             "date": today,
             "refreshed_at": time.time(),
             "previous_day_summary": previous_summary,
             "events": [],
         }
+        _write_codex_daily_memory(refreshed)
+        return refreshed
     events = data.get("events")
     if not isinstance(events, list):
         data["events"] = []
     return data
+
+
+def _write_codex_daily_memory(memory: dict[str, Any]) -> bool:
+    try:
+        CODEX_DAILY_MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = CODEX_DAILY_MEMORY_PATH.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(memory, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(CODEX_DAILY_MEMORY_PATH)
+        return True
+    except OSError:
+        return False
 
 
 def _record_codex_memory_event(kind: str, *, chat_name: str, prompt_summary: str, detail: str = "") -> None:
@@ -8036,13 +8049,7 @@ def _record_codex_memory_event(kind: str, *, chat_name: str, prompt_summary: str
     memory["events"] = events[-80:]
     memory["compiled_summary"] = _compile_codex_memory_summary(memory)
     memory["updated_at"] = time.time()
-    try:
-        CODEX_DAILY_MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = CODEX_DAILY_MEMORY_PATH.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(memory, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        temp_path.replace(CODEX_DAILY_MEMORY_PATH)
-    except OSError:
-        return
+    _write_codex_daily_memory(memory)
 
 
 def _compile_codex_memory_summary(memory: dict[str, Any]) -> str:

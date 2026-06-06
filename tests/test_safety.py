@@ -5236,10 +5236,14 @@ class RuntimeSurfaceTests(unittest.TestCase):
             )
             with patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory):
                 loaded = jarvis_tools._load_codex_daily_memory()
+            persisted = json.loads(memory.read_text(encoding="utf-8"))
 
         self.assertNotEqual(loaded["date"], yesterday)
         self.assertEqual(loaded["events"], [])
         self.assertIn("yesterday work", loaded["previous_day_summary"])
+        self.assertEqual(persisted["date"], loaded["date"])
+        self.assertEqual(persisted["events"], [])
+        self.assertIn("yesterday work", persisted["previous_day_summary"])
 
     def test_codex_daily_memory_snapshot_deduplicates_and_hides_session_ids(self):
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
