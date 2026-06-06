@@ -382,33 +382,24 @@ final class JarvisShellModel: ObservableObject {
             }
             let response: CommandResponse
             if Self.shouldUseNativeOutlookRead(commandText) {
-                let nativePlaceholderId = appendJarvisMessage(text: "Sure. I'll check what Outlook is showing.", detail: "Working")
+                _ = appendJarvisMessage(text: "Sure. I'll check what Outlook is showing.", detail: "Working")
                 response = try await runNativeOutlookRead(commandText)
-                placeholderId = nativePlaceholderId
             } else {
                 var streamedReply = ""
+                var lastStatusText = ""
                 response = try await client.sendStreaming(
                     command: commandText,
                     history: history,
                     onStatus: { status in
                         let statusText = status.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !statusText.isEmpty, streamedReply.isEmpty else {
+                        guard !statusText.isEmpty, streamedReply.isEmpty, statusText != lastStatusText else {
                             return
                         }
-                        let id = placeholderId ?? self.appendJarvisMessage(text: statusText, detail: "Working")
-                        placeholderId = id
+                        lastStatusText = statusText
+                        _ = self.appendJarvisMessage(text: statusText, detail: "Working")
                         if progressTask == nil {
-                            progressTask = self.startProgressNudges(for: commandText, placeholderId: id)
+                            progressTask = self.startProgressNudges(for: commandText)
                         }
-                        self.replaceMessage(
-                            id: id,
-                            with: ChatMessage(
-                                id: id,
-                                role: .jarvis,
-                                text: statusText,
-                                detail: "Working"
-                            )
-                        )
                     },
                     onDelta: { delta in
                         progressTask?.cancel()
@@ -900,6 +891,9 @@ final class JarvisShellModel: ObservableObject {
             if message.role == .user && text == current {
                 return nil
             }
+            if message.role == .jarvis, message.detail == "Working" {
+                return nil
+            }
             let role: String
             switch message.role {
             case .user:
@@ -913,7 +907,7 @@ final class JarvisShellModel: ObservableObject {
         }
     }
 
-    private func startProgressNudges(for commandText: String, placeholderId: UUID) -> Task<Void, Never> {
+    private func startProgressNudges(for commandText: String) -> Task<Void, Never> {
         let nudges = Self.progressReplies(for: commandText)
         return Task { [weak self] in
             for nudge in nudges {
@@ -926,10 +920,8 @@ final class JarvisShellModel: ObservableObject {
                     guard let self, self.isBusy else {
                         return
                     }
-                    self.replaceMessage(
-                        id: placeholderId,
-                        with: ChatMessage(
-                            id: placeholderId,
+                    self.messages.append(
+                        ChatMessage(
                             role: .jarvis,
                             text: nudge.text,
                             detail: "Working"
