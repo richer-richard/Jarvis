@@ -1852,6 +1852,8 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "files.search", "kind": "read_only", "description": "Search project filenames."},
         {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
         {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
+        {"id": "diagnostics.codex_chats", "kind": "read_only", "description": "Report configured Codex chats, default route, and daily memory without exposing session IDs."},
+        {"id": "codex.activity", "kind": "read_only", "description": "Show redacted recent Codex job activity without starting a new Codex request."},
         {"id": "codex.job", "kind": "async_deep_work", "description": "Delegate broad coding/project work to Codex."},
         {"id": "voice.stt_audition", "kind": "planned", "description": "Prepare a speech-recognition audition workflow."},
         {"id": "voice.stt_candidates", "kind": "read_only", "description": "List speech-recognition candidates and installed local engine evidence."},

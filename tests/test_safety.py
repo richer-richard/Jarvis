@@ -268,7 +268,7 @@ class SafetyPolicyTests(unittest.TestCase):
                 self.assertIn("Codex status", assessment.reasons[0])
 
     def test_codex_read_only_diagnostics_stay_read_only(self):
-        for command in ["codex chat status", "which default Codex chat are you using", "codex speed status"]:
+        for command in ["codex chat status", "which default Codex chat are you using", "codex speed status", "codex activity", "what is Codex doing"]:
             with self.subTest(command=command):
                 assessment = classify_command(command)
                 self.assertEqual(assessment.risk_level, 1)
@@ -340,6 +340,8 @@ class PlannerTests(unittest.TestCase):
             "screen status": "screenshot.capability",
             "codex chat status": "diagnostics.codex_chats",
             "which default Codex chat are you using": "diagnostics.codex_chats",
+            "codex activity": "codex.activity",
+            "what is Codex doing": "codex.activity",
             "codex speed status": "diagnostics.codex_speed",
             "codex jobs": "codex.job",
             "open browser https://example.com": "browser.open_url",
@@ -611,6 +613,37 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["called_fast_model"])
         context_mock.assert_called_once()
+
+    def test_tools_more_codex_activity_recommendation_previews_without_starting_codex(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "codex.activity",
+            "entities": {},
+            "reply": "Yes sir, checking Codex activity now.",
+        }
+        fake_activity = {
+            "tool": "codex.activity",
+            "status": "checked",
+            "executed": False,
+            "running_count": 1,
+            "jobs": [{"job_id": "codex-running", "phase": "running"}],
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.codex_activity_snapshot", return_value=fake_activity) as activity_mock, \
+             patch("jarvis.planner.start_codex_delegate_job") as start_mock:
+            result = Planner().handle_selected_tool("Show me whether Codex is working.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "codex.activity")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
+        self.assertEqual(result.result["next_tool_preview"]["preview"]["running_count"], 1)
+        activity_mock.assert_called_once_with()
+        start_mock.assert_not_called()
 
     def test_tools_more_preview_does_not_call_middle_model(self):
         intent = {"status": "completed", "selected_tool": "tools.more", "confidence": 0.8, "entities": {}}
@@ -1490,6 +1523,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("diagnostics.overnight", tool_ids)
         self.assertIn("diagnostics.model_context", tool_ids)
         self.assertIn("safety.injection_scan", tool_ids)
+        self.assertIn("diagnostics.codex_chats", tool_ids)
+        self.assertIn("codex.activity", tool_ids)
         self.assertIn("codex.delegate", tool_ids)
         self.assertIn("codex.job", tool_ids)
         self.assertIn("control.pause", tool_ids)
@@ -4317,7 +4352,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("17/17", policy_gate["detail"])
+        self.assertIn("19/19", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

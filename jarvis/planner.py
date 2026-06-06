@@ -15,6 +15,7 @@ from .tools import (
     app_status,
     browser_open_url_plan,
     capabilities_status,
+    codex_activity_snapshot,
     codex_chat_status,
     codex_speed_status,
     codex_job_status,
@@ -150,6 +151,16 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": [],
     },
     {
+        "tool": "diagnostics.codex_chats",
+        "description": "Report configured Codex chat names, purposes, default route, and daily Jarvis-to-Codex memory without exposing session IDs.",
+        "entities": [],
+    },
+    {
+        "tool": "codex.activity",
+        "description": "Read redacted recent async Codex job activity so Jarvis can show that Codex is working without starting a new Codex request.",
+        "entities": [],
+    },
+    {
         "tool": "codex.job",
         "description": "Start deeper Codex work for code, repo, debugging, build, implementation, or review tasks.",
         "entities": [],
@@ -251,6 +262,9 @@ class Planner:
             return self._result(text, "codex.job", "Checked Codex job status.", assessment, result, False)
         if _looks_like_codex_chat_status(lower):
             return self._result(text, "diagnostics.codex_chats", "Read Codex chat routing status.", assessment, codex_chat_status(), True)
+        if _looks_like_codex_activity_status(lower):
+            result = codex_activity_snapshot()
+            return self._result(text, "codex.activity", "Read Codex activity snapshot.", assessment, result, False)
         if _looks_like_codex_speed_status(lower):
             return self._result(text, "diagnostics.codex_speed", "Read local Codex speed status.", assessment, codex_speed_status(), True)
         if _looks_like_overnight_work_status(lower):
@@ -449,6 +463,8 @@ class Planner:
             return self._preview_result(text, "codex.job", assessment, False)
         if _looks_like_codex_chat_status(lower):
             return self._preview_result(text, "diagnostics.codex_chats", assessment, True)
+        if _looks_like_codex_activity_status(lower):
+            return self._preview_result(text, "codex.activity", assessment, True)
         if _looks_like_same_codex_reference(text):
             return self._preview_result(
                 text,
@@ -657,6 +673,15 @@ class Planner:
                 result = {**result, "next_tool_preview": next_preview}
             summary = "Prepared middle-layer tool plan." if result.get("status") == "planned" else "Tried middle-layer tool planning."
             return self._result(text, "tools.more", summary, assessment, result, False)
+        if selected_tool == "diagnostics.codex_chats":
+            if not execute:
+                return self._preview_result(text, "diagnostics.codex_chats", assessment, True, plan={"intent": intent})
+            return self._result(text, "diagnostics.codex_chats", "Read Codex chat routing status.", assessment, codex_chat_status(), True)
+        if selected_tool == "codex.activity":
+            if not execute:
+                return self._preview_result(text, "codex.activity", assessment, True, plan={"intent": intent})
+            result = codex_activity_snapshot()
+            return self._result(text, "codex.activity", "Read Codex activity snapshot.", assessment, result, False)
         if selected_tool == "codex.job":
             if _should_run_codex_synchronously(text.lower()):
                 if not execute:
@@ -804,6 +829,20 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
         }
     if recommended == "diagnostics.model_context":
         preview = model_context_status(text, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "diagnostics.codex_chats":
+        preview = codex_chat_status()
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "codex.activity":
+        preview = codex_activity_snapshot()
         return {
             "recommended_tool": recommended,
             "executed": False,
@@ -1447,6 +1486,28 @@ def _looks_like_codex_chat_status(lower: str) -> bool:
     mutation_cues = ("change", "switch", "set ", "delete", "remove", "rename", "edit")
     return (
         any(cue in lower for cue in chat_cues)
+        and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_codex_activity_status(lower: str) -> bool:
+    if "codex" not in lower:
+        return False
+    activity_cues = (
+        "codex activity",
+        "codex activities",
+        "codex progress",
+        "codex job activity",
+        "codex cli",
+        "codex running",
+        "what is codex doing",
+        "is codex working",
+    )
+    status_cues = ("status", "check", "show", "what", "which", "doing", "working", "running", "progress", "activity")
+    mutation_cues = ("start", "ask ", "send ", "run ", "use ", "delegate", "new job")
+    return (
+        any(cue in lower for cue in activity_cues)
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
     )
