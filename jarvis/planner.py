@@ -47,6 +47,7 @@ from .tools import (
     start_codex_delegate_job,
     stt_audition_status,
     stt_candidate_status,
+    stt_score_transcript,
     system_status,
     terminal_command_plan,
     tts_status,
@@ -92,6 +93,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "voice.stt_candidates",
         "description": "Report speech-recognition candidates and installed local engine evidence without recording audio.",
         "entities": [],
+    },
+    {
+        "tool": "voice.stt_score",
+        "description": "Score a provided or pasted speech-recognition transcript against a reference sentence without recording audio.",
+        "entities": ["reference", "transcript", "candidate_id", "first_result_ms", "final_result_ms", "human_score"],
+        "examples": [
+            'Yes sir, scoring that transcript now. \\tool({"tool":"voice.stt_score","entities":{"reference":"Hey Jarvis, check my email.","transcript":"hey jarvis check my email"}})',
+        ],
     },
     {
         "tool": "screenshot.capability",
@@ -350,6 +359,10 @@ class Planner:
             return self._result(text, "diagnostics.launch", "Read local Jarvis launch status.", assessment, launch_status(), True)
         if _looks_like_wake_status(lower):
             return self._result(text, "diagnostics.wake", "Read local Jarvis wake status.", assessment, wake_status(), True)
+        stt_score_payload = _extract_stt_score_payload(text)
+        if stt_score_payload is not None:
+            result = stt_score_transcript(**stt_score_payload)
+            return self._result(text, "voice.stt_score", "Scored speech-recognition transcript.", assessment, result, True)
         if _looks_like_stt_audition_status(lower):
             return self._result(text, "voice.stt_audition", "Read local STT audition status.", assessment, stt_audition_status(), True)
         if _looks_like_stt_candidate_status(lower):
@@ -503,6 +516,9 @@ class Planner:
             return self._preview_result(text, "diagnostics.launch", assessment, True)
         if _looks_like_wake_status(lower):
             return self._preview_result(text, "diagnostics.wake", assessment, True)
+        stt_score_payload = _extract_stt_score_payload(text)
+        if stt_score_payload is not None:
+            return self._preview_result(text, "voice.stt_score", assessment, True, plan={"planned_only": True, **stt_score_payload})
         if _looks_like_stt_audition_status(lower):
             return self._preview_result(text, "voice.stt_audition", assessment, True)
         if _looks_like_stt_candidate_status(lower):
@@ -590,6 +606,18 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "voice.stt_candidates", assessment, True, plan={"intent": intent})
             return self._result(text, "voice.stt_candidates", "Read speech-recognition candidate status.", assessment, stt_candidate_status(), True)
+        if selected_tool == "voice.stt_score":
+            payload = _stt_score_payload_from_entities(entities) or _extract_stt_score_payload(text) or {
+                "reference": "",
+                "transcript": "",
+                "candidate_id": _clean_optional_entity(entities.get("candidate_id")),
+                "first_result_ms": _positive_entity_int(entities.get("first_result_ms")),
+                "final_result_ms": _positive_entity_int(entities.get("final_result_ms")),
+                "human_score": _float_entity(entities.get("human_score")),
+            }
+            if not execute:
+                return self._preview_result(text, "voice.stt_score", assessment, True, plan={"intent": intent, **payload})
+            return self._result(text, "voice.stt_score", "Scored speech-recognition transcript.", assessment, stt_score_transcript(**payload), True)
         if selected_tool == "outlook.visible_summary":
             sender_query = _clean_optional_entity(entities.get("sender_query")) or _extract_email_sender_constraint(text)
             selection = (
@@ -827,6 +855,22 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "executed": False,
             "preview": {**preview, "executed": False, "planned_only": True},
         }
+    if recommended == "voice.stt_score":
+        payload = _stt_score_payload_from_entities(entities) or _extract_stt_score_payload(text)
+        preview = stt_score_transcript(**payload) if payload else {
+            "tool": "voice.stt_score",
+            "status": "missing_text",
+            "executed": False,
+            "recorded_audio": False,
+            "requested_microphone_permission": False,
+            "opened_browser": False,
+            "reply": "STT score needs both a reference sentence and a transcript.",
+        }
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
     if recommended == "diagnostics.model_context":
         preview = model_context_status(text, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS)
         return {
@@ -1058,6 +1102,69 @@ def _positive_entity_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _float_entity(value: Any) -> float | None:
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _stt_score_payload_from_entities(entities: dict[str, Any]) -> dict[str, Any] | None:
+    reference = _clean_optional_entity(entities.get("reference"))
+    transcript = _clean_optional_entity(entities.get("transcript"))
+    if not reference and not transcript:
+        return None
+    return {
+        "reference": reference or "",
+        "transcript": transcript or "",
+        "candidate_id": _clean_optional_entity(entities.get("candidate_id")),
+        "first_result_ms": _positive_entity_int(entities.get("first_result_ms")),
+        "final_result_ms": _positive_entity_int(entities.get("final_result_ms")),
+        "human_score": _float_entity(entities.get("human_score")),
+    }
+
+
+def _extract_stt_score_payload(text: str) -> dict[str, Any] | None:
+    cleaned = re.sub(r"\s+", " ", text.strip())
+    if not re.search(r"(?i)\b(?:stt|speech[- ]to[- ]text|speech recognition|voice recognition|transcript)\b", cleaned):
+        return None
+    body = re.sub(
+        r"(?i)^(?:score|check|compare|grade)\s+(?:the\s+)?(?:stt|speech[- ]to[- ]text|speech recognition|voice recognition)?\s*(?:transcript|result)?\s*:?\s*",
+        "",
+        cleaned,
+    ).strip()
+    if not body or body == cleaned:
+        return None
+    reference = ""
+    transcript = ""
+    candidate_id = None
+    match = re.search(r"(?i)\breference\s*:\s*(.+?)\s+\btranscript\s*:\s*(.+)$", body)
+    if match:
+        reference, transcript = match.group(1), match.group(2)
+    elif "=>" in body:
+        reference, transcript = body.split("=>", 1)
+    elif "->" in body:
+        reference, transcript = body.split("->", 1)
+    else:
+        return None
+    candidate_match = re.search(r"(?i)\bcandidate\s*:\s*([A-Za-z0-9_.-]+)", body)
+    if candidate_match:
+        candidate_id = candidate_match.group(1)
+    reference = re.sub(r"(?i)\bcandidate\s*:\s*[A-Za-z0-9_.-]+", "", reference).strip(" .\"'")
+    transcript = re.sub(r"(?i)\bcandidate\s*:\s*[A-Za-z0-9_.-]+", "", transcript).strip(" .\"'")
+    if not reference and not transcript:
+        return None
+    return {
+        "reference": reference,
+        "transcript": transcript,
+        "candidate_id": candidate_id,
+        "first_result_ms": None,
+        "final_result_ms": None,
+        "human_score": None,
+    }
 
 
 def _entity_truthy(value: Any) -> bool:

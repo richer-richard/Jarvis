@@ -227,6 +227,17 @@ STT_CANDIDATE_DEFINITIONS = [
         "notes": "Likely a better accuracy/latency tradeoff than tiny on this Mac.",
     },
     {
+        "id": "whisper-cpp-small-en",
+        "name": "whisper.cpp small.en",
+        "kind": "local_cli_future",
+        "accent_fit": "better_than_base",
+        "privacy": "local_after_install",
+        "expected_latency": "slower_local_but_still_possible",
+        "executables": ["whisper-cli", "whisper-cpp"],
+        "audition_mode": "future_local_audio_file_test",
+        "notes": "Useful as an accuracy check before choosing a local Whisper size.",
+    },
+    {
         "id": "vosk-small-en",
         "name": "Vosk small English",
         "kind": "local_python_future",
@@ -411,6 +422,14 @@ def tool_registry() -> dict[str, Any]:
                 "risk": "local_metadata",
                 "available": True,
                 "description": "Lists speech-recognition candidates, privacy/latency expectations, and installed local engine evidence without recording audio.",
+            },
+            {
+                "id": "voice.stt_score",
+                "label": "STT Transcript Score",
+                "mode": "read_only",
+                "risk": "local_text_only",
+                "available": True,
+                "description": "Scores a typed or pasted speech-recognition transcript against a reference sentence without recording audio.",
             },
             {
                 "id": "diagnostics.overnight",
@@ -1857,6 +1876,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "codex.job", "kind": "async_deep_work", "description": "Delegate broad coding/project work to Codex."},
         {"id": "voice.stt_audition", "kind": "planned", "description": "Prepare a speech-recognition audition workflow."},
         {"id": "voice.stt_candidates", "kind": "read_only", "description": "List speech-recognition candidates and installed local engine evidence."},
+        {"id": "voice.stt_score", "kind": "read_only", "description": "Score a pasted STT transcript against a reference sentence without recording audio."},
         {"id": "ui.overlay", "kind": "planned", "description": "Future visible Jarvis overlay/popup UI."},
         {"id": "memory.daily_summary", "kind": "planned", "description": "Future daily memory summary route."},
         {"id": "teams.assignment", "kind": "planned_private_workflow", "description": "Future Teams assignment workflow; never submit without confirmation."},
@@ -2302,6 +2322,107 @@ def _stt_executable_status(names: list[str]) -> list[dict[str, Any]]:
         path = _find_executable(name)
         results.append({"name": name, "path": path, "available": bool(path)})
     return results
+
+
+def _normalize_stt_text(value: Any) -> str:
+    text = str(value or "").lower()
+    text = text.replace("\u2018", "'").replace("\u2019", "'")
+    text = re.sub(r"[^a-z0-9'\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _stt_words(value: Any) -> list[str]:
+    normalized = _normalize_stt_text(value)
+    return normalized.split(" ") if normalized else []
+
+
+def _stt_levenshtein(left: list[str], right: list[str]) -> int:
+    previous = list(range(len(right) + 1))
+    for row_index, left_value in enumerate(left, start=1):
+        current = [row_index]
+        for column_index, right_value in enumerate(right, start=1):
+            cost = 0 if left_value == right_value else 1
+            current.append(
+                min(
+                    previous[column_index] + 1,
+                    current[column_index - 1] + 1,
+                    previous[column_index - 1] + cost,
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def stt_score_transcript(
+    reference: str,
+    transcript: str,
+    *,
+    candidate_id: str | None = None,
+    first_result_ms: int | None = None,
+    final_result_ms: int | None = None,
+    human_score: float | None = None,
+) -> dict[str, Any]:
+    """Score a provided transcript without recording audio."""
+    clean_reference = re.sub(r"\s+", " ", str(reference or "")).strip()
+    clean_transcript = re.sub(r"\s+", " ", str(transcript or "")).strip()
+    base = {
+        "tool": "voice.stt_score",
+        "executed": True,
+        "read_private_content": False,
+        "recorded_audio": False,
+        "requested_microphone_permission": False,
+        "opened_browser": False,
+        "installed_anything": False,
+        "sent_audio": False,
+        "candidate_id": _clean_local_field(candidate_id) or None,
+        "first_result_ms": first_result_ms,
+        "final_result_ms": final_result_ms,
+        "human_score": human_score,
+    }
+    if not clean_reference or not clean_transcript:
+        missing = []
+        if not clean_reference:
+            missing.append("reference")
+        if not clean_transcript:
+            missing.append("transcript")
+        return {
+            **base,
+            "status": "missing_text",
+            "missing": missing,
+            "reply": "STT score needs both a reference sentence and a recognized or pasted transcript.",
+        }
+
+    reference_words = _stt_words(clean_reference)
+    transcript_words = _stt_words(clean_transcript)
+    reference_chars = list(_normalize_stt_text(clean_reference).replace(" ", ""))
+    transcript_chars = list(_normalize_stt_text(clean_transcript).replace(" ", ""))
+    word_distance = _stt_levenshtein(reference_words, transcript_words)
+    char_distance = _stt_levenshtein(reference_chars, transcript_chars)
+    word_error_rate = (word_distance / len(reference_words)) if reference_words else 0.0
+    word_accuracy = max(0.0, 1.0 - word_error_rate)
+    char_accuracy = max(0.0, 1.0 - (char_distance / len(reference_chars))) if reference_chars else 0.0
+    reply = (
+        f"STT score: word accuracy {word_accuracy * 100:.1f}%, "
+        f"character accuracy {char_accuracy * 100:.1f}%, WER {word_error_rate:.3f}."
+    )
+    if first_result_ms is not None:
+        reply += f" First result {first_result_ms} ms."
+    if final_result_ms is not None:
+        reply += f" Final result {final_result_ms} ms."
+    return {
+        **base,
+        "status": "scored",
+        "reference": clean_reference[:500],
+        "transcript": clean_transcript[:500],
+        "reference_words": len(reference_words),
+        "transcript_words": len(transcript_words),
+        "word_distance": word_distance,
+        "char_distance": char_distance,
+        "word_error_rate": round(word_error_rate, 6),
+        "word_accuracy": round(word_accuracy, 6),
+        "character_accuracy": round(char_accuracy, 6),
+        "reply": reply,
+    }
 
 
 def stt_candidate_status() -> dict[str, Any]:
