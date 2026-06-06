@@ -36,6 +36,7 @@ for key in (
 
 from jarvis import tools as jarvis_tools
 from jarvis import piper_warm_worker
+from jarvis import self_check as jarvis_self_check
 from jarvis.audit import AuditLogger, redact_sensitive_text
 from jarvis.config import PROJECT_ROOT, env_bool, host_allowed
 from jarvis.injection import scan_untrusted_text
@@ -298,7 +299,6 @@ class PlannerTests(unittest.TestCase):
         cases = {
             "find README": "files.search",
             "app Safari": "app.availability",
-            "open app Safari": "app.availability",
             "check app Outlook": "app.availability",
             "screenshot capability": "screenshot.capability",
             "latency status": "diagnostics.latency",
@@ -349,6 +349,102 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.executed)
         self.assertEqual(result.result["job_id"], "codex-test")
         self.assertEqual(result.result["model"], "gpt-5.4-mini")
+
+    def test_app_open_command_routes_to_open_tool(self):
+        fake_result = {
+            "tool": "app.open",
+            "status": "opened",
+            "executed": True,
+            "app": "Microsoft Outlook",
+            "reply": "Opened Microsoft Outlook.",
+        }
+        with patch("jarvis.planner.app_open", return_value=fake_result) as open_mock:
+            result = Planner().handle("Open my Microsoft Outlook app on my screen.")
+
+        self.assertEqual(result.tool, "app.open")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["app"], "Microsoft Outlook")
+        open_mock.assert_called_once_with("Microsoft Outlook")
+
+    def test_app_open_preview_does_not_launch(self):
+        fake_plan = {
+            "tool": "app.open",
+            "status": "planned",
+            "executed": False,
+            "app": "Microsoft Outlook",
+            "planned_command": ["/usr/bin/open", "-a", "Microsoft Outlook"],
+        }
+        with patch("jarvis.planner.app_open", return_value=fake_plan) as open_mock:
+            result = Planner().preview("open Outlook please")
+
+        self.assertEqual(result.tool, "app.open")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["plan"]["app"], "Microsoft Outlook")
+        open_mock.assert_called_once_with("Outlook", execute=False)
+
+    def test_app_open_prefix_command_extracts_app_name(self):
+        fake_plan = {
+            "tool": "app.open",
+            "status": "planned",
+            "executed": False,
+            "app": "Safari",
+            "planned_command": ["/usr/bin/open", "-a", "Safari"],
+        }
+        with patch("jarvis.planner.app_open", return_value=fake_plan) as open_mock:
+            result = Planner().preview("open app Safari")
+
+        self.assertEqual(result.tool, "app.open")
+        self.assertEqual(result.result["plan"]["app"], "Safari")
+        open_mock.assert_called_once_with("Safari", execute=False)
+
+    def test_terminal_read_only_tool_uses_policy_gate(self):
+        fake_result = {
+            "executed": True,
+            "stdout": "ok\n",
+            "stderr": "",
+            "returncode": 0,
+        }
+        with patch("jarvis.planner.run_read_only_shell", return_value=fake_result) as shell_mock:
+            result = Planner().handle_selected_tool("run terminal command: date", "terminal.read_only", {"command": "date"})
+
+        self.assertEqual(result.tool, "terminal.read_only")
+        self.assertTrue(result.executed)
+        shell_mock.assert_called_once_with("date")
+
+    def test_terminal_plan_tool_does_not_execute_dangerous_command(self):
+        result = Planner().handle_selected_tool("plan terminal command: rm -rf /tmp/example", "terminal.plan", {"command": "rm -rf /tmp/example"})
+
+        self.assertEqual(result.tool, "policy.strong_confirmation")
+        self.assertFalse(result.executed)
+
+    def test_tools_more_route_calls_middle_planner_without_executing_tool(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.open",
+            "entities": {"app_name": "Microsoft Teams"},
+            "reply": "Yes sir, checking Teams now.",
+        }
+        history = [{"role": "user", "content": "We were discussing Teams homework."}]
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan) as more_mock:
+            result = Planner().handle_selected_tool("Go to Teams and find my newest Music assignment.", "tools.more", {}, history=history)
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["recommended_tool"], "app.open")
+        more_mock.assert_called_once_with("Go to Teams and find my newest Music assignment.", history=history)
+
+    def test_tools_more_preview_does_not_call_middle_model(self):
+        intent = {"status": "completed", "selected_tool": "tools.more", "confidence": 0.8, "entities": {}}
+        with patch("jarvis.planner.select_tool_intent", return_value=intent), \
+             patch("jarvis.planner.more_tools_plan") as more_mock:
+            result = Planner().preview("Plan a multi-app workflow for Teams assignments.")
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertTrue(result.result["plan"]["would_call_middle_model_if_run"])
+        more_mock.assert_not_called()
 
     def test_explicit_codex_request_bypasses_model_router(self):
         fake_result = {
@@ -568,8 +664,15 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(diagnostic.tool, "diagnostics.email")
         self.assertFalse(diagnostic.result["read_email_content"])
 
-        summary_intent = {"status": "completed", "selected_tool": "outlook.visible_summary", "confidence": 0.91, "entities": {}}
-        with patch("jarvis.planner.select_tool_intent", return_value=summary_intent), \
+        summary_request = {
+            "tool": "conversation.fast_local",
+            "status": "tool_requested",
+            "selected_tool": "outlook.visible_summary",
+            "status_text": "Yes sir, checking your email now.",
+            "entities": {},
+            "executed": True,
+        }
+        with patch("jarvis.planner.run_fast_local_chat", return_value=summary_request), \
              patch("jarvis.planner.outlook_read_only_check", return_value={"status": "checked"}):
             summary = Planner().handle("check my email and summarize the newest email in my inbox")
         self.assertEqual(summary.tool, "outlook.visible_summary")
@@ -1094,6 +1197,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("planner.preview", tool_ids)
         self.assertIn("system.status", tool_ids)
         self.assertIn("shell.read_only", tool_ids)
+        self.assertIn("terminal.plan", tool_ids)
+        self.assertIn("tools.more", tool_ids)
+        self.assertIn("app.open", tool_ids)
         self.assertIn("conversation.fast_local", tool_ids)
         self.assertIn("quick.local_control", tool_ids)
         self.assertIn("voice.wake_simulation", tool_ids)
@@ -1105,6 +1211,21 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("policy.pause", tool_ids)
         self.assertIn("policy.strong_confirmation", tool_ids)
         self.assertIn("Protected actions", registry["execution_boundary"])
+
+    def test_self_check_open_app_route_is_preview_only(self):
+        fake_plan = {
+            "tool": "app.open",
+            "status": "planned",
+            "executed": False,
+            "app": "Safari",
+            "planned_command": ["/usr/bin/open", "-a", "Safari"],
+        }
+        with patch("jarvis.planner.app_open", return_value=fake_plan) as open_mock:
+            result = jarvis_self_check.run_self_checks()
+
+        route_check = next(check for check in result["checks"] if check["name"] == "planner_open_app_routes")
+        self.assertTrue(route_check["passed"])
+        open_mock.assert_called_once_with("Safari", execute=False)
 
     def test_policy_summary_reports_shell_constraints(self):
         policy = policy_summary()
@@ -2248,6 +2369,77 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertTrue(result["available"])
         self.assertTrue(any(match.endswith("Safari.app") for match in result["matches"]))
+
+    def test_app_open_resolves_alias_and_uses_open_without_shell(self):
+        completed = subprocess.CompletedProcess(args=["open"], returncode=0, stdout="", stderr="")
+        with patch("jarvis.tools.app_availability", return_value={"app": "Microsoft Outlook", "available": True, "matches": ["/Applications/Microsoft Outlook.app"]}), \
+             patch("jarvis.tools._find_executable", return_value="/usr/bin/open"), \
+             patch("jarvis.tools.subprocess.run", return_value=completed) as run_mock:
+            result = jarvis_tools.app_open("Outlook")
+
+        self.assertEqual(result["status"], "opened")
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["app"], "Microsoft Outlook")
+        self.assertEqual(run_mock.call_args.args[0], ["/usr/bin/open", "-a", "Microsoft Outlook"])
+        self.assertFalse(run_mock.call_args.kwargs["shell"])
+
+    def test_terminal_command_plan_classifies_without_running(self):
+        safe = jarvis_tools.terminal_command_plan("git status")
+        dangerous = jarvis_tools.terminal_command_plan("rm -rf /tmp/example")
+
+        self.assertFalse(safe["executed"])
+        self.assertTrue(safe["would_execute_if_read_only_tool"])
+        self.assertFalse(dangerous["executed"])
+        self.assertFalse(dangerous["would_execute_if_read_only_tool"])
+        self.assertEqual(dangerous["assessment"]["risk_level"], 4)
+
+    def test_more_tools_plan_parses_middle_model_json_without_executing(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                payload = {
+                    "response": json.dumps(
+                        {
+                            "recommended_tool": "app.open",
+                            "confidence": 0.82,
+                            "entities": {"app_name": "Microsoft Teams"},
+                            "user_status": "Yes sir, checking Teams now.",
+                            "reason": "The user asked for a Teams workflow.",
+                            "safety": "Plan only.",
+                        }
+                    )
+                }
+                return json.dumps(payload).encode("utf-8")
+
+        history = [{"role": "assistant", "content": "We were discussing Music homework."}]
+        with patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"), \
+             patch("jarvis.tools._find_executable", return_value="/opt/homebrew/bin/ollama"), \
+             patch("jarvis.tools._ensure_ollama_server_running", return_value={"running": True, "status": "running", "autostarted": False}), \
+             patch("jarvis.tools.urllib.request.urlopen", return_value=FakeResponse()) as urlopen_mock:
+            result = jarvis_tools.more_tools_plan("Go to Teams and find my newest Music assignment.", history=history)
+
+        request = urlopen_mock.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(result["status"], "planned")
+        self.assertFalse(result["executed"])
+        self.assertTrue(result["uses_cloud_model"])
+        self.assertEqual(result["recommended_tool"], "app.open")
+        self.assertEqual(result["entities"]["app_name"], "Microsoft Teams")
+        self.assertIn("Teams", result["user_status"])
+        self.assertEqual(payload["model"], "gpt-oss:120b-cloud")
+        self.assertIn("Music homework", payload["prompt"])
+
+    def test_more_tools_plan_reports_missing_ollama(self):
+        with patch("jarvis.tools._find_executable", return_value=None):
+            result = jarvis_tools.more_tools_plan("Plan a multi-app workflow.")
+
+        self.assertEqual(result["status"], "ollama_not_found")
+        self.assertFalse(result["executed"])
 
     def test_private_content_plans_include_injection_scan_guard(self):
         outlook_plan = " ".join(outlook_read_only_plan()["steps"])

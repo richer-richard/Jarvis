@@ -52,6 +52,9 @@ from .config import (
     GROQ_BASE_URL,
     GROQ_FAST_MODEL,
     MAX_FILE_SEARCH_RESULTS,
+    MIDDLE_MODEL,
+    MIDDLE_MODEL_MAX_TOKENS,
+    MIDDLE_MODEL_TIMEOUT_SECONDS,
     OLLAMA_AUTOSTART,
     OLLAMA_BASE_URL,
     OLLAMA_STARTUP_TIMEOUT_SECONDS,
@@ -122,6 +125,29 @@ APP_SEARCH_DIRS = [
     Path("/System/Applications/Utilities"),
     Path.home() / "Applications",
 ]
+APP_NAME_ALIASES = {
+    "calendar": "Calendar",
+    "chrome": "Google Chrome",
+    "codex": "Codex",
+    "excel": "Microsoft Excel",
+    "finder": "Finder",
+    "google chrome": "Google Chrome",
+    "mail": "Mail",
+    "messages": "Messages",
+    "microsoft excel": "Microsoft Excel",
+    "microsoft outlook": "Microsoft Outlook",
+    "microsoft powerpoint": "Microsoft PowerPoint",
+    "microsoft teams": "Microsoft Teams",
+    "microsoft word": "Microsoft Word",
+    "notes": "Notes",
+    "outlook": "Microsoft Outlook",
+    "powerpoint": "Microsoft PowerPoint",
+    "safari": "Safari",
+    "system settings": "System Settings",
+    "teams": "Microsoft Teams",
+    "terminal": "Terminal",
+    "word": "Microsoft Word",
+}
 EXECUTABLE_CANDIDATE_PATHS = {
     "codex": [
         Path("/Applications/Codex.app/Contents/Resources/codex"),
@@ -367,6 +393,22 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Runs argv-only project-local reads and version checks; code runners, shell chaining, secret paths, secret-bearing filenames, and outside-project paths stop at policy gates.",
             },
             {
+                "id": "terminal.plan",
+                "label": "Terminal Command Plan",
+                "mode": "plan_only",
+                "risk": "read_only_policy_classification",
+                "available": True,
+                "description": "Classifies and explains a terminal command without running it.",
+            },
+            {
+                "id": "tools.more",
+                "label": "More Tools Planner",
+                "mode": "plan_only",
+                "risk": "opt_in_cloud_model_possible",
+                "available": bool(ollama_path),
+                "description": "Asks the configured middle model to choose from a broader tool catalog, returning a plan only.",
+            },
+            {
                 "id": "files.search",
                 "label": "File Search",
                 "mode": "execute",
@@ -381,6 +423,14 @@ def tool_registry() -> dict[str, Any]:
                 "risk": "read_only",
                 "available": True,
                 "description": "Checks whether a named macOS app bundle exists in standard app folders.",
+            },
+            {
+                "id": "app.open",
+                "label": "Open App",
+                "mode": "execute",
+                "risk": "local_app_launch",
+                "available": bool(_find_executable("open")),
+                "description": "Opens or focuses a named macOS app using the system open tool and a resolved app bundle name.",
             },
             {
                 "id": "voice.wake_simulation",
@@ -1557,6 +1607,182 @@ def run_read_only_shell(command: str) -> dict[str, Any]:
     }
 
 
+def terminal_command_plan(command: str) -> dict[str, Any]:
+    assessment = classify_shell_command(command)
+    allowed = is_shell_allowed(command)
+    return {
+        "tool": "terminal.plan",
+        "status": "safe_to_run_read_only" if allowed else "blocked_or_needs_confirmation",
+        "executed": False,
+        "command": command.strip(),
+        "would_execute_if_read_only_tool": allowed,
+        "assessment": assessment.to_dict(),
+        "reply": (
+            "That terminal command fits Jarvis's read-only allowlist."
+            if allowed
+            else "That terminal command is not safe for automatic execution; Jarvis should ask for confirmation or refuse depending on the policy."
+        ),
+    }
+
+
+def more_tools_plan(prompt: str, *, history: list[dict[str, str]] | None = None, model: str | None = None) -> dict[str, Any]:
+    """Ask the middle model for a broader tool plan without executing it."""
+    selected_model = (model or MIDDLE_MODEL).strip() or MIDDLE_MODEL
+    started_at = time.monotonic()
+    base = {
+        "tool": "tools.more",
+        "status": "unavailable",
+        "executed": False,
+        "model": selected_model,
+        "backend": "ollama",
+        "plan_only": True,
+        "called_cloud_model": _ollama_model_uses_cloud(selected_model),
+        "uses_cloud_model": _ollama_model_uses_cloud(selected_model),
+        "available_tools": _middle_tool_catalog_ids(),
+        "safety_note": "This middle layer plans only. Jarvis must route any recommended action back through a typed safe tool before execution.",
+    }
+    ollama_path = _find_executable("ollama")
+    if not ollama_path:
+        return {**base, "status": "ollama_not_found", **_duration_fields(started_at), "reply": "The middle planner is not available because Ollama was not found."}
+    ollama_server = _ensure_ollama_server_running(ollama_path)
+    if not ollama_server["running"]:
+        return {
+            **base,
+            "status": "ollama_server_unavailable",
+            "ollama_server": ollama_server,
+            **_duration_fields(started_at),
+            "reply": "The middle planner is not available because the Ollama server is not running.",
+        }
+    payload = {
+        "model": selected_model,
+        "prompt": _middle_tools_prompt(prompt, history=history),
+        "stream": False,
+        "format": "json",
+        "think": False,
+        "options": {
+            "num_predict": MIDDLE_MODEL_MAX_TOKENS,
+            "temperature": 0.2,
+            "top_p": 0.8,
+        },
+    }
+    request = urllib.request.Request(
+        f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=MIDDLE_MODEL_TIMEOUT_SECONDS) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except TimeoutError:
+        return {**base, "status": "timeout", "ollama_server": ollama_server, **_duration_fields(started_at), "reply": "The middle planner timed out."}
+    except urllib.error.URLError as error:
+        return {
+            **base,
+            "status": "ollama_error",
+            "error": str(error.reason if hasattr(error, "reason") else error),
+            "ollama_server": ollama_server,
+            **_duration_fields(started_at),
+            "reply": "The middle planner could not reach Ollama.",
+        }
+    except OSError as error:
+        return {**base, "status": "execution_error", "error": str(error), "ollama_server": ollama_server, **_duration_fields(started_at), "reply": "The middle planner failed before returning a plan."}
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = {}
+    parsed = _parse_middle_tools_response(str(data.get("response") or ""))
+    return {
+        **base,
+        **parsed,
+        "status": "planned",
+        "executed": False,
+        "ollama_server": ollama_server,
+        **_duration_fields(started_at),
+    }
+
+
+def _middle_tool_catalog_ids() -> list[str]:
+    return [tool["id"] for tool in _middle_tool_catalog()]
+
+
+def _middle_tool_catalog() -> list[dict[str, str]]:
+    return [
+        {"id": "app.open", "kind": "safe_execute", "description": "Open or focus a local macOS app."},
+        {"id": "app.availability", "kind": "read_only", "description": "Check whether a local app exists."},
+        {"id": "terminal.plan", "kind": "plan_only", "description": "Classify and explain a terminal command without running it."},
+        {"id": "terminal.read_only", "kind": "safe_execute_if_allowlisted", "description": "Run only read-only allowlisted terminal commands."},
+        {"id": "outlook.visible_summary", "kind": "private_read", "description": "Read and summarize local mailbox content."},
+        {"id": "browser.open_url", "kind": "plan_only", "description": "Prepare opening a browser URL."},
+        {"id": "files.search", "kind": "read_only", "description": "Search project filenames."},
+        {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
+        {"id": "codex.job", "kind": "async_deep_work", "description": "Delegate broad coding/project work to Codex."},
+        {"id": "voice.stt_audition", "kind": "planned", "description": "Prepare a speech-recognition audition workflow."},
+        {"id": "ui.overlay", "kind": "planned", "description": "Future visible Jarvis overlay/popup UI."},
+        {"id": "memory.daily_summary", "kind": "planned", "description": "Future daily memory summary route."},
+        {"id": "teams.assignment", "kind": "planned_private_workflow", "description": "Future Teams assignment workflow; never submit without confirmation."},
+    ]
+
+
+def _middle_tools_prompt(prompt: str, *, history: list[dict[str, str]] | None = None) -> str:
+    history_lines: list[str] = []
+    for item in (history or [])[-8:]:
+        role = _clean_local_field(item.get("role")) or "unknown"
+        text = _clean_local_field(item.get("text") if item.get("text") is not None else item.get("content"))[:500]
+        if text:
+            history_lines.append(f"{role}: {text}")
+    catalog = "\n".join(
+        f"- {tool['id']} ({tool['kind']}): {tool['description']}"
+        for tool in _middle_tool_catalog()
+    )
+    return (
+        "You are Jarvis's middle planning model. You are slower and smarter than the first chat model, "
+        "but you still do not execute tools. Choose the best next tool or say that ordinary chat is enough. "
+        "Visible Jarvis text may be spoken aloud, so keep user-facing wording natural and concise. "
+        "Never recommend sending, submitting, deleting, purchasing, changing settings, or exporting private data without explicit confirmation. "
+        "Return JSON only.\n\n"
+        "JSON schema: {\"recommended_tool\":\"tool.id or conversation.fast_local\",\"confidence\":0.0,\"entities\":{},\"user_status\":\"short natural status if a tool should run\",\"reason\":\"short\",\"safety\":\"short\"}\n\n"
+        "Available broader tools:\n"
+        f"{catalog}\n\n"
+        "Recent conversation:\n"
+        f"{chr(10).join(history_lines) if history_lines else '(none)'}\n\n"
+        f"Leo says:\n{prompt.strip()[:1600]}"
+    )
+
+
+def _parse_middle_tools_response(response_text: str) -> dict[str, Any]:
+    text = _strip_think_blocks(response_text).strip()
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if match:
+        text = match.group(0)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = {}
+    recommended = str(parsed.get("recommended_tool") or parsed.get("tool") or "conversation.fast_local").strip()
+    valid = set(_middle_tool_catalog_ids()) | {"conversation.fast_local"}
+    if recommended not in valid:
+        recommended = "conversation.fast_local"
+    try:
+        confidence = float(parsed.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    entities = parsed.get("entities")
+    if not isinstance(entities, dict):
+        entities = {}
+    user_status = re.sub(r"\s+", " ", str(parsed.get("user_status") or "")).strip()
+    return {
+        "recommended_tool": recommended,
+        "confidence": max(0.0, min(confidence, 1.0)),
+        "entities": {str(key): value for key, value in entities.items()},
+        "user_status": user_status[:180],
+        "reason": _clean_local_field(parsed.get("reason"))[:400],
+        "safety": _clean_local_field(parsed.get("safety"))[:400],
+        "reply": user_status or "I prepared a middle-layer plan.",
+    }
+
+
 def _text_tail(value: str | bytes | None, max_chars: int) -> str:
     if value is None:
         return ""
@@ -1601,7 +1827,7 @@ def find_files(query: str, root: str | None = None, limit: int = MAX_FILE_SEARCH
 
 
 def app_availability(app_name: str, search_dirs: list[Path] | None = None) -> dict[str, Any]:
-    name = app_name.strip().removesuffix(".app")
+    name = _resolve_app_name(app_name)
     directories = search_dirs or APP_SEARCH_DIRS
     matches: list[str] = []
     for directory in directories:
@@ -1620,6 +1846,82 @@ def app_availability(app_name: str, search_dirs: list[Path] | None = None) -> di
         if exact.exists():
             matches.append(str(exact))
     return {"app": name, "available": bool(matches), "matches": matches}
+
+
+def app_open(app_name: str, *, execute: bool = True) -> dict[str, Any]:
+    name = _resolve_app_name(app_name)
+    open_path = _find_executable("open") or "/usr/bin/open"
+    availability = app_availability(name)
+    base = {
+        "tool": "app.open",
+        "app": name,
+        "requested_app": re.sub(r"\s+", " ", str(app_name or "")).strip(),
+        "available": bool(availability.get("available")),
+        "matches": availability.get("matches", []),
+        "open_path": open_path,
+        "risk": "local_app_launch",
+        "safety_note": "Opening or focusing a local app is reversible and does not read app content by itself.",
+    }
+    if not availability.get("available") and name.lower() != "finder":
+        return {
+            **base,
+            "status": "app_not_found",
+            "executed": False,
+            "reply": f"I could not find {name} in the standard Applications folders.",
+        }
+    if not execute:
+        return {
+            **base,
+            "status": "planned",
+            "executed": False,
+            "planned_command": [open_path, "-a", name],
+            "reply": f"Would open {name}.",
+        }
+    started_at = time.monotonic()
+    try:
+        completed = subprocess.run(
+            [open_path, "-a", name],
+            shell=False,
+            cwd=PROJECT_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=6,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            **base,
+            "status": "timeout",
+            "executed": True,
+            **_duration_fields(started_at),
+            "reply": f"I tried to open {name}, but macOS did not return quickly.",
+        }
+    except OSError as error:
+        return {
+            **base,
+            "status": "open_unavailable",
+            "executed": False,
+            "error": str(error),
+            **_duration_fields(started_at),
+            "reply": f"I could not start the macOS open command for {name}.",
+        }
+    return {
+        **base,
+        "status": "opened" if completed.returncode == 0 else "open_failed",
+        "executed": completed.returncode == 0,
+        "returncode": completed.returncode,
+        "stderr": _text_tail(completed.stderr, 500),
+        **_duration_fields(started_at),
+        "reply": f"Opened {name}." if completed.returncode == 0 else f"I tried to open {name}, but macOS returned an error.",
+    }
+
+
+def _resolve_app_name(app_name: str) -> str:
+    raw = re.sub(r"\s+", " ", str(app_name or "")).strip()
+    name = raw.removesuffix(".app").strip(" .")
+    normalized = name.lower()
+    return APP_NAME_ALIASES.get(normalized, name)
 
 
 def screenshot_capability() -> dict[str, Any]:

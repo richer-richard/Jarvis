@@ -10,6 +10,7 @@ from .safety import DANGEROUS_SHELL_TOKENS, READ_ONLY_SHELL_COMMANDS, VERSION_ON
 from .wake import detect_wake_command
 from .tools import (
     app_availability,
+    app_open,
     browser_open_url_plan,
     capabilities_status,
     codex_chat_status,
@@ -23,6 +24,7 @@ from .tools import (
     launch_status,
     latest_latency_status,
     memory_status,
+    more_tools_plan,
     outlook_read_only_check,
     outlook_read_only_plan,
     prompt_injection_scan,
@@ -39,6 +41,7 @@ from .tools import (
     start_codex_continue_job,
     start_codex_delegate_job,
     system_status,
+    terminal_command_plan,
     tts_status,
     wake_status,
     wake_phrase_simulation,
@@ -79,6 +82,33 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": ["url"],
     },
     {
+        "tool": "app.open",
+        "description": "Open or focus a local macOS app when the user asks to launch, open, or bring up an app.",
+        "entities": ["app_name"],
+        "entity_details": {
+            "app_name": "The user-facing app name, such as Microsoft Outlook, Google Chrome, Microsoft Teams, Word, PowerPoint, Excel, Safari, Mail, Finder, or Codex.",
+        },
+        "examples": [
+            'Yes sir, opening Outlook now. \\tool({"tool":"app.open","entities":{"app_name":"Microsoft Outlook"}})',
+            'Yes sir, opening Teams now. \\tool({"tool":"app.open","entities":{"app_name":"Microsoft Teams"}})',
+        ],
+    },
+    {
+        "tool": "terminal.plan",
+        "description": "Classify and explain a terminal command without running it. Use when the user asks what command would be used or when safety is unclear.",
+        "entities": ["command"],
+    },
+    {
+        "tool": "terminal.read_only",
+        "description": "Run a terminal command only if it fits Jarvis's existing read-only shell allowlist. Never use for writes, deletes, installs, settings, sudo, network uploads, or secrets.",
+        "entities": ["command"],
+    },
+    {
+        "tool": "tools.more",
+        "description": "Ask Jarvis's smarter middle model for a broader plan when the first tool list is insufficient, especially for multi-app workflows, UI automation, future skills, or complex tasks that need more context before execution.",
+        "entities": [],
+    },
+    {
         "tool": "codex.job",
         "description": "Start deeper Codex work for code, repo, debugging, build, implementation, or review tasks.",
         "entities": [],
@@ -108,7 +138,14 @@ class PlannedResult:
 class Planner:
     """Small typed-tool planner until model routing is wired in."""
 
-    def handle_selected_tool(self, command: str, selected_tool: str, entities: dict[str, Any] | None = None) -> PlannedResult | None:
+    def handle_selected_tool(
+        self,
+        command: str,
+        selected_tool: str,
+        entities: dict[str, Any] | None = None,
+        *,
+        history: list[dict[str, str]] | None = None,
+    ) -> PlannedResult | None:
         text = command.strip()
         assessment = classify_command(text)
         if assessment.blocked:
@@ -152,7 +189,7 @@ class Planner:
             "entities": entities or {},
             "reason": "Selected by fast chat tool request.",
         }
-        return self._handle_model_intent(text, assessment, intent, execute=True)
+        return self._handle_model_intent(text, assessment, intent, execute=True, history=history)
 
     def handle(
         self,
@@ -266,11 +303,16 @@ class Planner:
             return self._result(text, "quick.local_control", summary, assessment, quick_result, bool(quick_result.get("executed")))
         if lower in {"status", "health", "check status", "jarvis status"}:
             return self._result(text, "system.status", "Collected local Jarvis status.", assessment, system_status(), True)
+        if _looks_like_browser_url_request(text):
+            return self._result(text, "browser.open_url", "Prepared browser-open plan.", assessment, browser_open_url_plan(_extract_url(text)), False)
+        app_open_name = _extract_app_open_name(text)
+        if app_open_name is not None:
+            result = app_open(app_open_name)
+            summary = "Opened local app." if result.get("status") == "opened" else "Tried to open local app."
+            return self._result(text, "app.open", summary, assessment, result, bool(result.get("executed")))
         app_name = _extract_app_name(text)
         if app_name is not None:
             return self._result(text, "app.availability", "Checked local app availability.", assessment, app_availability(app_name), True)
-        if _looks_like_browser_url_request(text):
-            return self._result(text, "browser.open_url", "Prepared browser-open plan.", assessment, browser_open_url_plan(_extract_url(text)), False)
         exact_reply = _extract_exact_reply(text)
         if exact_reply is not None and not _explicitly_asks_codex(lower):
             return self._result(
@@ -287,7 +329,7 @@ class Planner:
                 True,
             )
         if _explicitly_asks_codex(lower):
-            routed = self._handle_model_intent(text, assessment, _explicit_codex_intent(), execute=True)
+            routed = self._handle_model_intent(text, assessment, _explicit_codex_intent(), execute=True, history=history)
             if routed is not None:
                 return routed
         result = run_fast_local_chat(text, history=history, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS)
@@ -296,6 +338,7 @@ class Planner:
                 text,
                 str(result.get("selected_tool") or ""),
                 result.get("entities") if isinstance(result.get("entities"), dict) else {},
+                history=history,
             )
             if routed is not None:
                 return routed
@@ -401,10 +444,13 @@ class Planner:
                 bool(quick_result.get("executed")),
                 plan=quick_result,
             )
-        if _extract_app_name(text) is not None:
-            return self._preview_result(text, "app.availability", assessment, True)
         if _looks_like_browser_url_request(text):
             return self._preview_result(text, "browser.open_url", assessment, False, plan={"url": _extract_url(text)})
+        app_open_name = _extract_app_open_name(text)
+        if app_open_name is not None:
+            return self._preview_result(text, "app.open", assessment, True, plan=app_open(app_open_name, execute=False))
+        if _extract_app_name(text) is not None:
+            return self._preview_result(text, "app.availability", assessment, True)
         exact_reply = _extract_exact_reply(text)
         if exact_reply is not None and not _explicitly_asks_codex(lower):
             return self._preview_result(text, "conversation.local_exact", assessment, True)
@@ -426,6 +472,7 @@ class Planner:
         intent: dict[str, Any],
         *,
         execute: bool,
+        history: list[dict[str, str]] | None = None,
     ) -> PlannedResult | None:
         selected_tool = str(intent.get("selected_tool") or "conversation.fast_local")
         if selected_tool == "conversation.fast_local":
@@ -474,6 +521,40 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "browser.open_url", assessment, False, plan={"intent": intent, "url": url})
             return self._result(text, "browser.open_url", "Prepared browser-open plan.", assessment, browser_open_url_plan(url), False)
+        if selected_tool == "app.open":
+            app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_open_name(text) or _extract_app_name(text) or ""
+            if not execute:
+                return self._preview_result(text, "app.open", assessment, True, plan={"intent": intent, **app_open(app_name, execute=False)})
+            result = app_open(app_name)
+            summary = "Opened local app." if result.get("status") == "opened" else "Tried to open local app."
+            return self._result(text, "app.open", summary, assessment, result, bool(result.get("executed")))
+        if selected_tool == "terminal.plan":
+            command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
+            plan = terminal_command_plan(command)
+            return self._result(text, "terminal.plan", "Prepared terminal command plan.", assessment, plan, False)
+        if selected_tool == "terminal.read_only":
+            command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
+            if not execute:
+                return self._preview_result(text, "terminal.read_only", assessment, True, plan={"intent": intent, **terminal_command_plan(command)})
+            result = run_read_only_shell(command)
+            summary = "Ran read-only terminal command." if result.get("executed") else "Terminal command was not executed by policy."
+            return self._result(text, "terminal.read_only", summary, assessment, result, bool(result.get("executed")))
+        if selected_tool == "tools.more":
+            if not execute:
+                return self._preview_result(
+                    text,
+                    "tools.more",
+                    assessment,
+                    False,
+                    plan={
+                        "intent": intent,
+                        "plan_only": True,
+                        "would_call_middle_model_if_run": True,
+                    },
+                )
+            result = more_tools_plan(text, history=history)
+            summary = "Prepared middle-layer tool plan." if result.get("status") == "planned" else "Tried middle-layer tool planning."
+            return self._result(text, "tools.more", summary, assessment, result, False)
         if selected_tool == "codex.job":
             if _should_run_codex_synchronously(text.lower()):
                 if not execute:
@@ -578,6 +659,54 @@ def _clean_optional_entity(value: Any) -> str | None:
     if not text or text.lower() in {"null", "none", "unknown", "n/a"}:
         return None
     return text[:120]
+
+
+def _extract_app_open_name(text: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", text.strip())
+    if _extract_url(cleaned):
+        return None
+    match = re.match(
+        r"(?i)^(?:open|launch|start|bring up|show|focus|switch to)\s+(?:my\s+|the\s+)?(.+?)(?:\s+(?:app|application))?(?:\s+(?:on my screen|on screen|for me|now|please))?[.!?]?$",
+        cleaned,
+    )
+    if not match:
+        return None
+    app_name = re.sub(r"(?i)\s+(?:app|application)$", "", match.group(1)).strip(" .")
+    app_name = re.sub(r"(?i)^(?:app|application)\s+", "", app_name).strip(" .")
+    if not app_name:
+        return None
+    blocked = {
+        "browser",
+        "email",
+        "mailbox",
+        "inbox",
+        "website",
+        "url",
+        "link",
+    }
+    if app_name.lower() in blocked:
+        return None
+    return app_name[:120]
+
+
+def _extract_terminal_command_text(text: str) -> str:
+    stripped = text.strip()
+    lower = stripped.lower()
+    prefixes = (
+        "terminal:",
+        "shell:",
+        "run terminal command:",
+        "run terminal:",
+        "plan terminal command:",
+        "terminal command:",
+    )
+    for prefix in prefixes:
+        if lower.startswith(prefix):
+            return stripped[len(prefix) :].strip()
+    match = re.match(r"(?is)^run\s+(?:the\s+)?(?:terminal\s+)?command\s+(.+)$", stripped)
+    if match:
+        return match.group(1).strip()
+    return stripped
 
 
 def _extract_email_sender_constraint(text: str) -> str | None:
@@ -847,8 +976,11 @@ def _looks_like_screen_status(lower: str) -> bool:
     screen_cues = (
         "screen status",
         "screen capture status",
+        "screen capability",
         "screenshot status",
+        "screenshot capability",
         "ocr status",
+        "ocr capability",
         "native ocr status",
         "screen readiness",
     )
