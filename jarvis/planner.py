@@ -12,6 +12,7 @@ from .tools import (
     app_availability,
     app_list,
     app_open,
+    app_quit_plan,
     app_running,
     app_status,
     browser_open_url_plan,
@@ -139,6 +140,17 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         ],
     },
     {
+        "tool": "app.quit",
+        "description": "Prepare quitting a local macOS app when the user asks to close, quit, or force quit it. This always requires user confirmation and must not silently execute.",
+        "entities": ["app_name"],
+        "entity_details": {
+            "app_name": "The user-facing app name, such as Safari, Microsoft Outlook, Google Chrome, Microsoft Teams, Mail, Finder, or Codex.",
+        },
+        "examples": [
+            'Yes sir, I can prepare that, but quitting Safari needs confirmation. \\tool({"tool":"app.quit","entities":{"app_name":"Safari"}})',
+        ],
+    },
+    {
         "tool": "app.list",
         "description": "List local macOS apps Jarvis knows how to open, without launching or inspecting them.",
         "entities": [],
@@ -249,6 +261,9 @@ class Planner:
                     prototype_note="The prototype records this confirmation requirement but does not execute protected actions.",
                 ),
             )
+        if selected_tool == "app.quit":
+            app_name = _clean_optional_entity((entities or {}).get("app_name")) or _extract_app_quit_name(text) or _extract_app_name(text) or ""
+            return self._app_quit_confirmation_result(text, assessment, app_name)
         if assessment.requires_confirmation:
             return self._result(
                 text,
@@ -300,6 +315,9 @@ class Planner:
             return self._result(text, "diagnostics.codex_speed", "Read local Codex speed status.", assessment, codex_speed_status(), True)
         if _looks_like_overnight_work_status(lower):
             return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
+        app_quit_name = _extract_app_quit_name(text)
+        if app_quit_name is not None:
+            return self._app_quit_confirmation_result(text, assessment, app_quit_name)
         if assessment.requires_typed_confirmation:
             return self._result(
                 text,
@@ -471,6 +489,9 @@ class Planner:
             return self._preview_result(text, "policy.block", assessment, False)
         if _looks_like_overnight_work_status(lower):
             return self._preview_result(text, "diagnostics.overnight", assessment, True)
+        app_quit_name = _extract_app_quit_name(text)
+        if app_quit_name is not None:
+            return self._app_quit_confirmation_result(text, assessment, app_quit_name)
         if assessment.requires_typed_confirmation:
             return self._preview_result(
                 text,
@@ -704,6 +725,9 @@ class Planner:
             result = app_open(app_name)
             summary = "Opened local app." if result.get("status") == "opened" else "Tried to open local app."
             return self._result(text, "app.open", summary, assessment, result, bool(result.get("executed")))
+        if selected_tool == "app.quit":
+            app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_quit_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
+            return self._app_quit_confirmation_result(text, assessment, app_name)
         if selected_tool == "app.list":
             if not execute:
                 return self._preview_result(text, "app.list", assessment, True, plan={"intent": intent})
@@ -806,6 +830,25 @@ class Planner:
         return None
 
 
+    def _app_quit_confirmation_result(self, text: str, assessment: Any, app_name: str) -> PlannedResult:
+        plan = app_quit_plan(app_name)
+        return self._result(
+            text,
+            "app.quit",
+            "Quitting an app requires confirmation and was not executed.",
+            assessment,
+            plan,
+            False,
+            confirmation=_confirmation(
+                kind="standard",
+                title="Confirm App Quit",
+                message=f"Quit {plan.get('app') or app_name}? This may close windows or lose unsaved work.",
+                exact_phrase=None,
+                prototype_note="Jarvis prepared the quit plan only. No app was quit.",
+            ),
+        )
+
+
     def _result(
         self,
         command: str,
@@ -854,6 +897,14 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "recommended_tool": recommended,
             "executed": False,
             "preview": app_open(app_name, execute=False),
+        }
+    if recommended == "app.quit":
+        app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_quit_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
+        preview = app_quit_plan(app_name)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": preview,
         }
     if recommended == "app.list":
         preview = app_list(limit=40)
@@ -1016,6 +1067,26 @@ def _extract_app_open_name(text: str) -> str | None:
         "link",
     }
     if app_name.lower() in blocked:
+        return None
+    return app_name[:120]
+
+
+def _extract_app_quit_name(text: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", text.strip())
+    if _extract_url(cleaned):
+        return None
+    match = re.match(
+        r"(?i)^(?:quit|close|force\s+quit|exit)\s+(?:my\s+|the\s+)?(?:app\s+|application\s+)?(.+?)(?:\s+(?:app|application))?(?:\s+(?:for me|now|please))?[.!?]?$",
+        cleaned,
+    )
+    if not match:
+        return None
+    app_name = match.group(1).strip(" .")
+    app_name = re.sub(r"(?i)\s+(?:app|application)$", "", app_name).strip(" .")
+    app_name = re.sub(r"(?i)^(?:the|my)\s+", "", app_name).strip(" .")
+    if not app_name or app_name.lower() in {"window", "tab", "file", "document", "this", "that"}:
+        return None
+    if any(cue in app_name.lower() for cue in (" window", " tab", " file", " document")):
         return None
     return app_name[:120]
 

@@ -57,6 +57,7 @@ from jarvis.tools import (
     app_availability,
     app_list,
     app_running,
+    app_quit_plan,
     app_status,
     browser_open_url_plan,
     codex_chat_status,
@@ -118,6 +119,13 @@ class SafetyPolicyTests(unittest.TestCase):
         assessment = classify_shell_command("pwd")
         self.assertFalse(assessment.requires_confirmation)
         self.assertEqual(assessment.decision, "allowed")
+
+    def test_quit_app_requires_standard_confirmation(self):
+        assessment = classify_command("quit Safari")
+        self.assertTrue(assessment.requires_confirmation)
+        self.assertFalse(assessment.requires_typed_confirmation)
+        self.assertEqual(assessment.decision, "needs_confirmation")
+        self.assertIn("close or quit", assessment.reasons[0])
 
     def test_chained_shell_requires_typed_confirmation(self):
         assessment = classify_shell_command("ls && rm /tmp/example")
@@ -318,6 +326,8 @@ class PlannerTests(unittest.TestCase):
             "app status Outlook": "app.status",
             "what apps are running": "app.running",
             "show running apps": "app.running",
+            "quit app Safari": "app.quit",
+            "close Safari": "app.quit",
             "screenshot capability": "screenshot.capability",
             "latency status": "diagnostics.latency",
             "how do I open Jarvis": "diagnostics.launch",
@@ -414,6 +424,45 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.executed)
         self.assertEqual(result.result["plan"]["app"], "Microsoft Outlook")
         open_mock.assert_called_once_with("Outlook", execute=False)
+
+    def test_app_quit_command_requires_confirmation_without_quitting(self):
+        fake_plan = {
+            "tool": "app.quit",
+            "status": "needs_confirmation",
+            "executed": False,
+            "app": "Safari",
+            "requires_confirmation": True,
+            "quit_app": False,
+            "changed_state": False,
+        }
+        with patch("jarvis.planner.app_quit_plan", return_value=fake_plan) as quit_mock:
+            result = Planner().handle("quit app Safari")
+
+        self.assertEqual(result.tool, "app.quit")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.confirmation["kind"], "standard")
+        self.assertFalse(result.result["quit_app"])
+        self.assertFalse(result.result["changed_state"])
+        quit_mock.assert_called_once_with("Safari")
+
+    def test_app_quit_selected_tool_requires_confirmation_without_quitting(self):
+        fake_plan = {
+            "tool": "app.quit",
+            "status": "needs_confirmation",
+            "executed": False,
+            "app": "Microsoft Teams",
+            "requires_confirmation": True,
+            "quit_app": False,
+            "changed_state": False,
+        }
+        with patch("jarvis.planner.app_quit_plan", return_value=fake_plan) as quit_mock:
+            result = Planner().handle_selected_tool("close Teams", "app.quit", {"app_name": "Microsoft Teams"})
+
+        self.assertEqual(result.tool, "app.quit")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.confirmation["kind"], "standard")
+        self.assertFalse(result.result["quit_app"])
+        quit_mock.assert_called_once_with("Microsoft Teams")
 
     def test_app_open_prefix_command_extracts_app_name(self):
         fake_plan = {
@@ -600,6 +649,38 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["next_tool_preview"]["preview"]["focused_app"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["captured_screen"])
         running_mock.assert_called_once_with(limit=40)
+
+    def test_tools_more_app_quit_recommendation_previews_confirmation_only(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.quit",
+            "entities": {"app_name": "Safari"},
+            "reply": "Yes sir, I can prepare that, but quitting Safari needs confirmation.",
+        }
+        fake_quit = {
+            "tool": "app.quit",
+            "status": "needs_confirmation",
+            "executed": False,
+            "app": "Safari",
+            "requires_confirmation": True,
+            "quit_app": False,
+            "changed_state": False,
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.app_quit_plan", return_value=fake_quit) as quit_mock:
+            result = Planner().handle_selected_tool("Prepare an app-control plan.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "app.quit")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["requires_confirmation"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["quit_app"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["changed_state"])
+        quit_mock.assert_called_once_with("Safari")
 
     def test_tools_more_stt_candidate_recommendation_previews_without_audio(self):
         fake_plan = {
@@ -1772,6 +1853,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("app.open", tool_ids)
         self.assertIn("app.status", tool_ids)
         self.assertIn("app.running", tool_ids)
+        self.assertIn("app.quit", tool_ids)
         self.assertIn("conversation.fast_local", tool_ids)
         self.assertIn("quick.local_control", tool_ids)
         self.assertIn("voice.wake_simulation", tool_ids)
@@ -3036,6 +3118,31 @@ class RuntimeSurfaceTests(unittest.TestCase):
             self.assertEqual(call.args[0][0], "/usr/bin/pgrep")
             self.assertEqual(call.args[0][1], "-x")
             self.assertFalse(call.kwargs["shell"])
+
+    def test_app_quit_plan_requires_confirmation_without_quitting(self):
+        fake_status = {
+            "tool": "app.status",
+            "status": "running",
+            "available": True,
+            "running": True,
+            "matches": ["/Applications/Safari.app"],
+            "executable_names": ["Safari"],
+            "process_checks": [{"name": "Safari", "running": True, "pids": ["123"]}],
+        }
+        with patch("jarvis.tools.app_status", return_value=fake_status), \
+             patch("jarvis.tools._find_executable", return_value="/usr/bin/osascript"):
+            result = app_quit_plan("Safari")
+
+        self.assertEqual(result["tool"], "app.quit")
+        self.assertEqual(result["status"], "needs_confirmation")
+        self.assertFalse(result["executed"])
+        self.assertTrue(result["requires_confirmation"])
+        self.assertEqual(result["confirmation_kind"], "standard")
+        self.assertFalse(result["quit_app"])
+        self.assertFalse(result["changed_state"])
+        self.assertFalse(result["opened_app"])
+        self.assertIn("tell application \"Safari\" to quit", result["planned_script_preview"])
+        self.assertEqual(result["planned_command"], ["/usr/bin/osascript", "-e", 'tell application "Safari" to quit'])
 
     def test_app_open_resolves_alias_and_uses_open_without_shell(self):
         completed = subprocess.CompletedProcess(args=["open"], returncode=0, stdout="", stderr="")
@@ -4653,7 +4760,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("24/24", policy_gate["detail"])
+        self.assertIn("25/25", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

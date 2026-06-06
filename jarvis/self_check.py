@@ -82,6 +82,8 @@ def run_self_checks() -> dict[str, Any]:
     add("planner_app_list_executes", planner.handle("what apps can you open").tool == "app.list")
     add("planner_app_status_executes", planner.handle("is Safari running").tool == "app.status")
     add("planner_app_running_executes", planner.handle("what apps are running").tool == "app.running")
+    app_quit_result = planner.handle("quit app Safari").to_dict()
+    add("planner_app_quit_requires_confirmation", app_quit_result["tool"] == "app.quit" and app_quit_result["executed"] is False and app_quit_result["confirmation"]["kind"] == "standard")
     add("planner_model_context_routes", planner.handle("model inputs for hello Jarvis").tool == "diagnostics.model_context")
     add("planner_tool_catalog_routes", planner.handle("tool catalog status").tool == "diagnostics.tool_catalog")
     add("planner_permissions_routes", planner.handle("permissions status").tool == "diagnostics.permissions")
@@ -152,6 +154,7 @@ def run_self_checks() -> dict[str, Any]:
         "app.open",
         "app.status",
         "app.running",
+        "app.quit",
         "diagnostics.overnight",
         "diagnostics.model_context",
         "diagnostics.tool_catalog",

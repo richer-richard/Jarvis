@@ -640,6 +640,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Opens or focuses a named macOS app using the system open tool and a resolved app bundle name.",
             },
             {
+                "id": "app.quit",
+                "label": "Quit App",
+                "mode": "confirmation_required",
+                "risk": "reversible_app_control",
+                "available": bool(_find_executable("osascript")),
+                "description": "Prepares a confirmation-required plan for quitting a named macOS app; never closes apps silently.",
+            },
+            {
                 "id": "voice.wake_simulation",
                 "label": "Wake Phrase Simulation",
                 "mode": "execute",
@@ -1917,6 +1925,7 @@ def _middle_tool_catalog_ids() -> list[str]:
 def _middle_tool_catalog() -> list[dict[str, str]]:
     return [
         {"id": "app.open", "kind": "safe_execute", "description": "Open or focus a local macOS app."},
+        {"id": "app.quit", "kind": "confirmation_required", "description": "Prepare quitting a local app; never execute without user confirmation."},
         {"id": "app.list", "kind": "read_only", "description": "List known/discovered local apps before choosing what to open."},
         {"id": "app.status", "kind": "read_only", "description": "Check whether a named local app is available and appears to be running."},
         {"id": "app.running", "kind": "read_only", "description": "List known local apps and whether each appears to be running."},
@@ -2345,6 +2354,42 @@ def app_open(app_name: str, *, execute: bool = True) -> dict[str, Any]:
         "stderr": _text_tail(completed.stderr, 500),
         **_duration_fields(started_at),
         "reply": f"Opened {name}." if completed.returncode == 0 else f"I tried to open {name}, but macOS returned an error.",
+    }
+
+
+def app_quit_plan(app_name: str, search_dirs: list[Path] | None = None) -> dict[str, Any]:
+    name = _resolve_app_name(app_name)
+    osascript_path = _find_executable("osascript") or "/usr/bin/osascript"
+    status = app_status(name, search_dirs=search_dirs)
+    planned_script = f'tell application "{name}" to quit'
+    reply = (
+        f"Quitting {name} requires confirmation because it can close windows or lose unsaved work. "
+        "I did not quit anything."
+    )
+    return {
+        "tool": "app.quit",
+        "executed": False,
+        "status": "needs_confirmation",
+        "app": name,
+        "requested_app": re.sub(r"\s+", " ", str(app_name or "")).strip(),
+        "available": bool(status.get("available")),
+        "running": bool(status.get("running")),
+        "matches": list(status.get("matches") or []),
+        "executable_names": list(status.get("executable_names") or []),
+        "process_checks": list(status.get("process_checks") or []),
+        "osascript_path": osascript_path,
+        "planned_command": [osascript_path, "-e", planned_script],
+        "planned_script_preview": planned_script,
+        "requires_confirmation": True,
+        "confirmation_kind": "standard",
+        "read_private_content": False,
+        "opened_app": False,
+        "launched_app": False,
+        "focused_app": False,
+        "quit_app": False,
+        "changed_state": False,
+        "safety_note": "Quitting apps is not executed automatically because it may close unsaved work.",
+        "reply": reply,
     }
 
 

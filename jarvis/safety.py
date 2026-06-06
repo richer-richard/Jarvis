@@ -269,6 +269,9 @@ def classify_command(command: str) -> SafetyAssessment:
     if _looks_like_codex_job_status_query(text):
         reasons.append("Command checks local Codex status only.")
         return SafetyAssessment(1, RISK_LABELS[1], "allowed", False, False, False, reasons)
+    if _looks_like_app_quit_command(lower):
+        reasons.append("Command may close or quit a local app, which can lose unsaved work.")
+        return SafetyAssessment(3, RISK_LABELS[3], "needs_confirmation", True, False, False, reasons)
     high_risk_reasons = _external_or_sensitive_reasons(lower)
     if high_risk_reasons:
         reasons.extend(high_risk_reasons)
@@ -424,6 +427,12 @@ def is_shell_allowed(command: str) -> bool:
 
 def _matches_any(text: str, patterns: list[str]) -> bool:
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
+
+def _looks_like_app_quit_command(lower: str) -> bool:
+    if re.match(r"^(?:quit|close|force\s+quit|exit)\s+(?:my\s+|the\s+)?(?:app\s+|application\s+)?[a-z0-9][a-z0-9 ._-]{1,80}$", lower):
+        return not any(cue in lower for cue in (" window", " tab", " document", " file"))
+    return bool(re.match(r"^(?:quit|close|force\s+quit|exit)\s+(?:my\s+|the\s+)?[a-z0-9][a-z0-9 ._-]{1,80}\s+(?:app|application)$", lower))
 
 
 def _external_or_sensitive_reasons(text: str) -> list[str]:
