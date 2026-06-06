@@ -79,6 +79,7 @@ def run_self_checks() -> dict[str, Any]:
     add("planner_returns_confirmation_object", bool(blocked_result["confirmation"] and blocked_result["confirmation"]["kind"] == "typed"))
     add("planner_file_search_executes", planner.handle("find README").tool == "files.search")
     add("planner_app_check_executes", planner.handle("app Safari").tool == "app.availability")
+    add("planner_app_list_executes", planner.handle("what apps can you open").tool == "app.list")
     open_app_preview = planner.preview("open app Safari").to_dict()
     add(
         "planner_open_app_routes",
@@ -136,6 +137,7 @@ def run_self_checks() -> dict[str, Any]:
         "tools.more",
         "files.search",
         "app.availability",
+        "app.list",
         "app.open",
         "diagnostics.overnight",
         "voice.stt_audition",

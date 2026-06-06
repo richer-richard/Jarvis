@@ -10,6 +10,7 @@ from .safety import DANGEROUS_SHELL_TOKENS, READ_ONLY_SHELL_COMMANDS, VERSION_ON
 from .wake import detect_wake_command
 from .tools import (
     app_availability,
+    app_list,
     app_open,
     browser_open_url_plan,
     capabilities_status,
@@ -98,6 +99,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "examples": [
             'Yes sir, opening Outlook now. \\tool({"tool":"app.open","entities":{"app_name":"Microsoft Outlook"}})',
             'Yes sir, opening Teams now. \\tool({"tool":"app.open","entities":{"app_name":"Microsoft Teams"}})',
+        ],
+    },
+    {
+        "tool": "app.list",
+        "description": "List local macOS apps Jarvis knows how to open, without launching or inspecting them.",
+        "entities": [],
+        "examples": [
+            'Yes sir, checking which apps I can open now. \\tool({"tool":"app.list","entities":{}})',
         ],
     },
     {
@@ -318,6 +327,8 @@ class Planner:
             return self._result(text, "system.status", "Collected local Jarvis status.", assessment, system_status(), True)
         if _looks_like_browser_url_request(text):
             return self._result(text, "browser.open_url", "Prepared browser-open plan.", assessment, browser_open_url_plan(_extract_url(text)), False)
+        if _looks_like_app_list_request(lower):
+            return self._result(text, "app.list", "Listed local apps Jarvis can open.", assessment, app_list(), True)
         app_open_name = _extract_app_open_name(text)
         if app_open_name is not None:
             result = app_open(app_open_name)
@@ -465,6 +476,8 @@ class Planner:
             )
         if _looks_like_browser_url_request(text):
             return self._preview_result(text, "browser.open_url", assessment, False, plan={"url": _extract_url(text)})
+        if _looks_like_app_list_request(lower):
+            return self._preview_result(text, "app.list", assessment, True)
         app_open_name = _extract_app_open_name(text)
         if app_open_name is not None:
             return self._preview_result(text, "app.open", assessment, True, plan=app_open(app_open_name, execute=False))
@@ -551,6 +564,10 @@ class Planner:
             result = app_open(app_name)
             summary = "Opened local app." if result.get("status") == "opened" else "Tried to open local app."
             return self._result(text, "app.open", summary, assessment, result, bool(result.get("executed")))
+        if selected_tool == "app.list":
+            if not execute:
+                return self._preview_result(text, "app.list", assessment, True, plan={"intent": intent})
+            return self._result(text, "app.list", "Listed local apps Jarvis can open.", assessment, app_list(), True)
         if selected_tool == "terminal.plan":
             command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
             plan = terminal_command_plan(command)
@@ -676,6 +693,13 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "recommended_tool": recommended,
             "executed": False,
             "preview": app_open(app_name, execute=False),
+        }
+    if recommended == "app.list":
+        preview = app_list(limit=40)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
         }
     if recommended == "terminal.plan":
         command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
@@ -876,6 +900,32 @@ def _extract_app_name(text: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip()
+
+
+def _looks_like_app_list_request(lower: str) -> bool:
+    app_cues = (
+        "apps",
+        "applications",
+        "programs",
+        "app list",
+        "application list",
+    )
+    list_cues = (
+        "list",
+        "show",
+        "which",
+        "what",
+        "available",
+        "can you open",
+        "could you open",
+        "know how to open",
+    )
+    mutation_cues = ("open ", "launch ", "start ", "quit ", "close ", "delete ", "install ", "uninstall ")
+    return (
+        any(cue in lower for cue in app_cues)
+        and any(cue in lower for cue in list_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
 
 
 def _extract_wake_transcript(text: str) -> str | None:

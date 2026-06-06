@@ -54,6 +54,7 @@ from jarvis.server import (
 )
 from jarvis.tools import (
     app_availability,
+    app_list,
     browser_open_url_plan,
     codex_chat_status,
     codex_delegate_plan,
@@ -302,6 +303,8 @@ class PlannerTests(unittest.TestCase):
             "find README": "files.search",
             "app Safari": "app.availability",
             "check app Outlook": "app.availability",
+            "what apps can you open": "app.list",
+            "show available apps": "app.list",
             "screenshot capability": "screenshot.capability",
             "latency status": "diagnostics.latency",
             "how do I open Jarvis": "diagnostics.launch",
@@ -472,6 +475,36 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
         self.assertTrue(result.result["next_tool_preview"]["preview"]["would_execute_if_read_only_tool"])
         shell_mock.assert_not_called()
+
+    def test_tools_more_app_list_recommendation_previews_without_opening_apps(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.list",
+            "entities": {},
+            "reply": "Yes sir, checking which apps I can use.",
+        }
+        fake_list = {
+            "tool": "app.list",
+            "status": "checked",
+            "executed": True,
+            "opened_app": False,
+            "known_apps": [],
+            "extra_apps": [],
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.app_list", return_value=fake_list) as list_mock:
+            result = Planner().handle_selected_tool("Which apps can you use for this?", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "app.list")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["opened_app"])
+        list_mock.assert_called_once_with(limit=40)
 
     def test_tools_more_preview_does_not_call_middle_model(self):
         intent = {"status": "completed", "selected_tool": "tools.more", "confidence": 0.8, "entities": {}}
@@ -1280,6 +1313,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("shell.read_only", tool_ids)
         self.assertIn("terminal.plan", tool_ids)
         self.assertIn("tools.more", tool_ids)
+        self.assertIn("app.list", tool_ids)
         self.assertIn("app.open", tool_ids)
         self.assertIn("conversation.fast_local", tool_ids)
         self.assertIn("quick.local_control", tool_ids)
@@ -2452,6 +2486,26 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertTrue(result["available"])
         self.assertTrue(any(match.endswith("Safari.app") for match in result["matches"]))
+
+    def test_app_list_reports_known_apps_without_opening_them(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "Safari.app").mkdir()
+            (root / "Microsoft Outlook.app").mkdir()
+            (root / "Example Extra.app").mkdir()
+            result = app_list(search_dirs=[root])
+
+        known_by_name = {item["name"]: item for item in result["known_apps"]}
+        extra_names = {item["name"] for item in result["extra_apps"]}
+        self.assertEqual(result["tool"], "app.list")
+        self.assertEqual(result["status"], "checked")
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["launched_app"])
+        self.assertFalse(result["read_private_content"])
+        self.assertTrue(known_by_name["Safari"]["available"])
+        self.assertTrue(known_by_name["Microsoft Outlook"]["available"])
+        self.assertIn("outlook", known_by_name["Microsoft Outlook"]["aliases"])
+        self.assertIn("Example Extra", extra_names)
 
     def test_app_open_resolves_alias_and_uses_open_without_shell(self):
         completed = subprocess.CompletedProcess(args=["open"], returncode=0, stdout="", stderr="")
@@ -4050,7 +4104,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("13/13", policy_gate["detail"])
+        self.assertIn("14/14", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

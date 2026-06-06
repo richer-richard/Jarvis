@@ -441,6 +441,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Checks whether a named macOS app bundle exists in standard app folders.",
             },
             {
+                "id": "app.list",
+                "label": "App List",
+                "mode": "read_only",
+                "risk": "local_metadata",
+                "available": True,
+                "description": "Lists known and discovered local macOS apps that Jarvis may open later; does not launch or inspect app content.",
+            },
+            {
                 "id": "app.open",
                 "label": "Open App",
                 "mode": "execute",
@@ -1726,6 +1734,7 @@ def _middle_tool_catalog_ids() -> list[str]:
 def _middle_tool_catalog() -> list[dict[str, str]]:
     return [
         {"id": "app.open", "kind": "safe_execute", "description": "Open or focus a local macOS app."},
+        {"id": "app.list", "kind": "read_only", "description": "List known/discovered local apps before choosing what to open."},
         {"id": "app.availability", "kind": "read_only", "description": "Check whether a local app exists."},
         {"id": "terminal.plan", "kind": "plan_only", "description": "Classify and explain a terminal command without running it."},
         {"id": "terminal.read_only", "kind": "safe_execute_if_allowlisted", "description": "Run only read-only allowlisted terminal commands."},
@@ -1862,6 +1871,74 @@ def app_availability(app_name: str, search_dirs: list[Path] | None = None) -> di
         if exact.exists():
             matches.append(str(exact))
     return {"app": name, "available": bool(matches), "matches": matches}
+
+
+def app_list(search_dirs: list[Path] | None = None, *, limit: int = 80) -> dict[str, Any]:
+    directories = search_dirs or APP_SEARCH_DIRS
+    discovered: dict[str, dict[str, Any]] = {}
+    for directory in directories:
+        try:
+            candidates = list(directory.glob("*.app")) if directory.exists() and directory.is_dir() else []
+        except OSError:
+            continue
+        for candidate in candidates:
+            name = candidate.stem
+            key = name.lower()
+            discovered.setdefault(key, {"name": name, "matches": []})
+            discovered[key]["matches"].append(str(candidate))
+
+    alias_groups: dict[str, list[str]] = {}
+    for alias, target in APP_NAME_ALIASES.items():
+        alias_groups.setdefault(target, []).append(alias)
+    known_names = sorted(set(APP_NAME_ALIASES.values()) | {"Finder"})
+    known_apps: list[dict[str, Any]] = []
+    for name in known_names:
+        key = name.lower()
+        matches = list(discovered.get(key, {}).get("matches", []))
+        system_special = name == "Finder"
+        known_apps.append(
+            {
+                "name": name,
+                "aliases": sorted(alias_groups.get(name, [])),
+                "available": bool(matches) or system_special,
+                "matches": matches,
+                "system_special": system_special,
+            }
+        )
+
+    known_keys = {name.lower() for name in known_names}
+    extra_apps = [
+        {
+            "name": item["name"],
+            "aliases": [],
+            "available": True,
+            "matches": item["matches"],
+            "system_special": False,
+        }
+        for key, item in sorted(discovered.items(), key=lambda pair: pair[1]["name"].lower())
+        if key not in known_keys
+    ][: max(0, limit)]
+    available_known = sum(1 for item in known_apps if item["available"])
+    reply = (
+        f"App list: {available_known}/{len(known_apps)} known Jarvis apps are available, "
+        f"plus {len(extra_apps)} discovered app bundle{'s' if len(extra_apps) != 1 else ''} shown. "
+        "I did not open any app or read app content."
+    )
+    return {
+        "tool": "app.list",
+        "executed": True,
+        "status": "checked",
+        "read_private_content": False,
+        "opened_app": False,
+        "launched_app": False,
+        "search_dirs": [str(directory) for directory in directories],
+        "known_apps": known_apps,
+        "extra_apps": extra_apps,
+        "known_count": len(known_apps),
+        "available_known_count": available_known,
+        "extra_count": len(extra_apps),
+        "reply": reply,
+    }
 
 
 def app_open(app_name: str, *, execute: bool = True) -> dict[str, Any]:
