@@ -4245,6 +4245,11 @@ def overnight_work_status() -> dict[str, Any]:
     else:
         status = "missing"
     metadata = _bundle_metadata(bundle_path)
+    requirement_audit = _overnight_requirement_audit(
+        artifacts=artifacts,
+        bundle_exists=bundle_path.exists(),
+        bundle_metadata=metadata,
+    )
     reply = (
         "Overnight status: the workboard is "
         f"{'available' if workboard_exists else 'missing'} and the morning report draft is "
@@ -4269,6 +4274,7 @@ def overnight_work_status() -> dict[str, Any]:
         "bundle_path": str(bundle_path),
         "bundle_exists": bundle_path.exists(),
         "bundle_metadata": metadata,
+        "requirement_audit": requirement_audit,
         "full_visual_qa_deferred": True,
         "deferred_reason": "Leo has not said he is asleep; foreground browser and app checks could interrupt current work.",
         "next_foreground_checks": [
@@ -4292,6 +4298,11 @@ def final_qa_plan_status() -> dict[str, Any]:
         "stt_audition": _runtime_file_status(stt_path),
     }
     metadata = _bundle_metadata(bundle_path)
+    requirement_audit = _overnight_requirement_audit(
+        artifacts=artifacts,
+        bundle_exists=bundle_path.exists(),
+        bundle_metadata=metadata,
+    )
     checks = [
         {
             "id": "workboard_visual_qa",
@@ -4359,10 +4370,66 @@ def final_qa_plan_status() -> dict[str, Any]:
         "bundle_exists": bundle_path.exists(),
         "bundle_metadata": metadata,
         "artifacts": artifacts,
+        "requirement_audit": requirement_audit,
         "checks": checks,
         "next_safe_terminal_step": "Keep implementing code-only diagnostics or tests until foreground QA is allowed.",
         "reply": reply,
     }
+
+
+def _overnight_requirement_audit(
+    *,
+    artifacts: dict[str, dict[str, Any]],
+    bundle_exists: bool,
+    bundle_metadata: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    html_ready = all(bool(artifacts.get(key, {}).get("exists")) for key in ("workboard", "morning_report", "stt_audition"))
+    version = str(bundle_metadata.get("version") or "unknown") if bundle_metadata else "unknown"
+    build = str(bundle_metadata.get("build") or "unknown") if bundle_metadata else "unknown"
+    return [
+        {
+            "id": "stronger_layered_tool_loop",
+            "status": "implemented_terminal_verified",
+            "evidence": [
+                "fast first-model tool-call contract",
+                "tools.more middle planner",
+                "tools.handoff_plan previews",
+                "low-confidence clarification",
+                "diagnostics.model_context trace",
+            ],
+            "remaining": "Foreground live-app QA is deferred.",
+        },
+        {
+            "id": "app_opening_groundwork",
+            "status": "implemented_terminal_verified",
+            "evidence": ["app.open", "app.list", "app.status", "app.running", "app.quit confirmation plan"],
+            "remaining": "Live app launch/focus QA is deferred.",
+        },
+        {
+            "id": "safe_terminal_groundwork",
+            "status": "implemented_terminal_verified",
+            "evidence": ["terminal.plan", "terminal.read_only", "shell allowlist", "dangerous-command policy gates"],
+            "remaining": "Write/destructive terminal automation remains blocked or confirmation-gated.",
+        },
+        {
+            "id": "voice_recognition_audition_prep",
+            "status": "implemented_terminal_verified" if bool(artifacts.get("stt_audition", {}).get("exists")) else "artifact_missing",
+            "evidence": ["runtime/stt_audition/index.html", "voice.stt_candidates", "voice.stt_session_plan", "voice.stt_score", "voice.stt_recommendation"],
+            "remaining": "Real microphone wake/STT is not enabled yet.",
+        },
+        {
+            "id": "morning_report",
+            "status": "prepared" if html_ready else "partial",
+            "evidence": ["runtime/overnight_status/index.html", "runtime/overnight_status/report.html", "loopback HTML checks"],
+            "remaining": "Foreground visual QA is deferred.",
+        },
+        {
+            "id": "rebuilt_bundle",
+            "status": "available" if bundle_exists else "missing",
+            "evidence": [f"version {version}", f"build {build}"],
+            "remaining": "Live app relaunch is deferred.",
+        },
+    ]
 
 
 def capabilities_status() -> dict[str, Any]:

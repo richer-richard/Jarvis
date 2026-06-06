@@ -2655,6 +2655,10 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["ran_verifier"])
         self.assertFalse(result["read_private_content"])
         self.assertIn("workboard_visual_qa", {check["id"] for check in result["checks"]})
+        audit_ids = {item["id"] for item in result["requirement_audit"]}
+        self.assertIn("stronger_layered_tool_loop", audit_ids)
+        self.assertIn("safe_terminal_groundwork", audit_ids)
+        self.assertIn("morning_report", audit_ids)
 
     def test_permissions_status_reports_metadata_without_prompting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2710,6 +2714,12 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["foreground_activity"])
         self.assertFalse(result["recorded_audio"])
         self.assertFalse(result["sent_network_request"])
+        audit_ids = {item["id"] for item in result["requirement_audit"]}
+        self.assertIn("stronger_layered_tool_loop", audit_ids)
+        self.assertIn("app_opening_groundwork", audit_ids)
+        self.assertIn("safe_terminal_groundwork", audit_ids)
+        self.assertIn("voice_recognition_audition_prep", audit_ids)
+        self.assertIn("morning_report", audit_ids)
         self.assertIn("Workboard:", result["reply"])
 
     def test_latest_latency_status_reads_local_smoke_report(self):
