@@ -59,6 +59,7 @@ from .tools import (
     system_status,
     terminal_command_plan,
     tool_catalog_status,
+    tool_handoff_plan,
     tts_status,
     voice_loop_simulation,
     wake_status,
@@ -113,6 +114,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "tools.deep_catalog",
         "description": "Report the deeper grouped tool catalog and layered handoff contract without executing tools or calling any model.",
         "entities": [],
+    },
+    {
+        "tool": "tools.handoff_plan",
+        "description": "Explain how a chosen tool ID would be previewed, executed through policy, confirmation-gated, unavailable, or refused without running that tool.",
+        "entities": ["recommended_tool", "entities", "user_goal"],
+        "examples": [
+            'Yes sir, checking how to handle that now. \\tool({"tool":"tools.handoff_plan","entities":{"recommended_tool":"app.open","entities":{"app_name":"Microsoft Teams"},"user_goal":"Open Teams"}})',
+        ],
     },
     {
         "tool": "diagnostics.permissions",
@@ -426,6 +435,15 @@ class Planner:
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
         if _looks_like_deep_tool_catalog_status(lower):
             return self._result(text, "tools.deep_catalog", "Read layered deep tool catalog.", assessment, deep_tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
+        if _looks_like_tool_handoff_plan(lower):
+            return self._result(
+                text,
+                "tools.handoff_plan",
+                "Prepared tool handoff plan.",
+                assessment,
+                tool_handoff_plan(_extract_handoff_tool_id(text), user_goal=text),
+                True,
+            )
         if _looks_like_tool_catalog_status(lower):
             return self._result(text, "diagnostics.tool_catalog", "Read Jarvis tool catalog status.", assessment, tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
         if _looks_like_permissions_status(lower):
@@ -727,6 +745,22 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "tools.deep_catalog", assessment, True, plan={"intent": intent})
             return self._result(text, "tools.deep_catalog", "Read layered deep tool catalog.", assessment, deep_tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
+        if selected_tool == "tools.handoff_plan":
+            nested_entities = entities.get("entities") if isinstance(entities.get("entities"), dict) else {}
+            if not nested_entities:
+                nested_entities = {key: value for key, value in entities.items() if key not in {"recommended_tool", "tool", "user_goal"}}
+            recommended_tool = _clean_optional_entity(entities.get("recommended_tool")) or _clean_optional_entity(entities.get("tool")) or _extract_handoff_tool_id(text)
+            user_goal = _clean_optional_entity(entities.get("user_goal")) or text
+            if not execute:
+                return self._preview_result(text, "tools.handoff_plan", assessment, True, plan={"intent": intent, "recommended_tool": recommended_tool})
+            return self._result(
+                text,
+                "tools.handoff_plan",
+                "Prepared tool handoff plan.",
+                assessment,
+                tool_handoff_plan(recommended_tool, nested_entities, user_goal),
+                True,
+            )
         if selected_tool == "diagnostics.permissions":
             if not execute:
                 return self._preview_result(text, "diagnostics.permissions", assessment, True, plan={"intent": intent})
@@ -1116,6 +1150,18 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "executed": False,
             "preview": {**preview, "executed": False, "planned_only": True},
         }
+    if recommended == "tools.handoff_plan":
+        nested_entities = entities.get("entities") if isinstance(entities.get("entities"), dict) else {}
+        if not nested_entities:
+            nested_entities = {key: value for key, value in entities.items() if key not in {"recommended_tool", "tool", "user_goal"}}
+        selected = _clean_optional_entity(entities.get("recommended_tool")) or _clean_optional_entity(entities.get("tool")) or _extract_handoff_tool_id(text)
+        goal = _clean_optional_entity(entities.get("user_goal")) or text
+        preview = tool_handoff_plan(selected, nested_entities, goal)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
     if recommended == "diagnostics.permissions":
         preview = permissions_status()
         return {
@@ -1181,6 +1227,18 @@ def _clean_optional_entity(value: Any) -> str | None:
     if not text or text.lower() in {"null", "none", "unknown", "n/a"}:
         return None
     return text[:120]
+
+
+def _extract_handoff_tool_id(text: str) -> str:
+    for match in re.finditer(
+        r"\b(?:app|browser|codex|conversation|diagnostics|files|memory|outlook|planner|policy|quick|safety|screen|screenshot|shell|system|teams|terminal|tools|ui|voice|workflow)\.[a-z0-9_]+",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        tool_id = match.group(0).lower()
+        if tool_id != "tools.handoff_plan":
+            return tool_id
+    return ""
 
 
 def _extract_app_open_name(text: str) -> str | None:
@@ -1571,6 +1629,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
         "diagnostics.model_context": "Yes sir, checking the model context now.",
         "diagnostics.tool_catalog": "Yes sir, checking the tool catalog now.",
         "tools.deep_catalog": "Yes sir, checking the deeper tool catalog now.",
+        "tools.handoff_plan": "Yes sir, checking how to handle that now.",
         "diagnostics.permissions": "Yes sir, checking permissions readiness now.",
         "voice.stt_candidates": "Yes sir, checking speech recognition options now.",
         "voice.stt_session_plan": "Yes sir, preparing the speech recognition test plan now.",
@@ -1681,6 +1740,25 @@ def _looks_like_deep_tool_catalog_status(lower: str) -> bool:
     )
     mutation_cues = ("change", "edit", "rewrite", "set ", "replace", "delete", "send ")
     return any(cue in lower for cue in deep_cues) and not any(cue in lower for cue in mutation_cues)
+
+
+def _looks_like_tool_handoff_plan(lower: str) -> bool:
+    handoff_cues = (
+        "tool handoff",
+        "handoff plan",
+        "handoff for",
+        "route tool",
+        "route the tool",
+        "route app.",
+        "route diagnostics.",
+        "route voice.",
+        "how would you route",
+        "how to handle tool",
+        "policy handoff",
+        "selected tool route",
+    )
+    mutation_cues = ("change", "edit", "rewrite", "set ", "replace", "delete", "send ")
+    return any(cue in lower for cue in handoff_cues) and not any(cue in lower for cue in mutation_cues)
 
 
 def _looks_like_tool_catalog_status(lower: str) -> bool:

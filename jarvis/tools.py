@@ -552,6 +552,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Returns the grouped first, middle, and registry tool catalog for layered planning without executing tools or calling models.",
             },
             {
+                "id": "tools.handoff_plan",
+                "label": "Tool Handoff Plan",
+                "mode": "read_only_plan",
+                "risk": "read_only_policy_metadata",
+                "available": True,
+                "description": "Explains how a chosen tool would move through Jarvis policy gates without executing the chosen tool.",
+            },
+            {
                 "id": "diagnostics.permissions",
                 "label": "Permissions Readiness",
                 "mode": "execute",
@@ -1996,6 +2004,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
         {"id": "diagnostics.tool_catalog", "kind": "read_only", "description": "Compare model-callable tool specs against the public registry."},
         {"id": "tools.deep_catalog", "kind": "read_only", "description": "Inspect the deeper grouped tool catalog for layered planning; catalog lookup only, no execution."},
+        {"id": "tools.handoff_plan", "kind": "read_only_plan", "description": "Explain how a selected tool would route through policy before any execution."},
         {"id": "diagnostics.permissions", "kind": "read_only", "description": "Report privacy-permission readiness without prompting or changing settings."},
         {"id": "diagnostics.codex_chats", "kind": "read_only", "description": "Report configured Codex chats, default route, and daily memory without exposing session IDs."},
         {"id": "codex.activity", "kind": "read_only", "description": "Show redacted recent Codex job activity without starting a new Codex request."},
@@ -3201,6 +3210,94 @@ def deep_tool_catalog_status(first_tool_specs: list[dict[str, Any]] | None = Non
             "confirmation_boundary": registry.get("execution_boundary"),
         },
         "reply": reply,
+    }
+
+
+def tool_handoff_plan(
+    recommended_tool: str,
+    entities: dict[str, Any] | None = None,
+    user_goal: str = "",
+) -> dict[str, Any]:
+    """Explain how a recommended tool would route without running it."""
+    cleaned = re.sub(r"\s+", " ", str(recommended_tool or "")).strip()
+    safe_entities = {
+        _clean_local_field(key)[:80]: _clean_local_field(value)[:160]
+        for key, value in (entities or {}).items()
+        if _clean_local_field(key)
+    }
+    goal = _clean_local_field(user_goal)[:240]
+    registry = tool_registry()
+    registry_by_id = {str(tool.get("id") or ""): tool for tool in registry.get("tools", [])}
+    middle_by_id = {str(tool.get("id") or ""): tool for tool in _middle_tool_catalog()}
+    registry_tool = registry_by_id.get(cleaned)
+    middle_tool = middle_by_id.get(cleaned)
+    known = bool(registry_tool or middle_tool)
+    available = bool(registry_tool.get("available")) if registry_tool else False
+    mode = str((registry_tool or {}).get("mode") or (middle_tool or {}).get("kind") or "unknown")
+    risk = str((registry_tool or {}).get("risk") or (middle_tool or {}).get("kind") or "unknown")
+    middle_kind = str((middle_tool or {}).get("kind") or "")
+    requires_confirmation = mode == "confirmation_required" or middle_kind == "confirmation_required"
+    planned_or_unavailable = (
+        mode == "planned"
+        or middle_kind.startswith("planned")
+        or (registry_tool is not None and not available)
+    )
+
+    if not cleaned:
+        status = "missing_tool"
+        handoff = "blocked_unknown"
+        next_step = "Ask the planner for a concrete tool ID before attempting a handoff."
+    elif not known:
+        status = "unknown_tool"
+        handoff = "blocked_unknown"
+        next_step = "Use tools.deep_catalog or tools.more to choose a registered tool ID first."
+    elif requires_confirmation:
+        status = "planned"
+        handoff = "confirmation_required"
+        next_step = "Prepare a confirmation object and wait for explicit approval before execution."
+    elif planned_or_unavailable:
+        status = "planned"
+        handoff = "planned_unavailable"
+        next_step = "Show the planned capability status; do not execute until the tool is implemented and enabled."
+    elif mode in {"read_only", "read_only_plan", "plan_only", "capability_only"} or "read_only" in middle_kind or "plan" in middle_kind:
+        status = "planned"
+        handoff = "preview_only"
+        next_step = "Return a preview/status result through the normal planner route."
+    elif mode == "execute" and available:
+        status = "planned"
+        handoff = "safe_execute_after_policy"
+        next_step = "Route back through Planner.handle_selected_tool so policy gates and natural status text run first."
+    else:
+        status = "planned"
+        handoff = "policy_review_required"
+        next_step = "Keep this as a preview until the policy layer explicitly allows the selected route."
+
+    return {
+        "tool": "tools.handoff_plan",
+        "status": status,
+        "executed": False,
+        "planned_only": True,
+        "recommended_tool": cleaned,
+        "available": available,
+        "known_tool": known,
+        "mode": mode,
+        "risk": risk,
+        "middle_kind": middle_kind or None,
+        "handoff": handoff,
+        "requires_confirmation": requires_confirmation,
+        "would_execute_now": False,
+        "entities": safe_entities,
+        "user_goal": goal,
+        "read_private_content": False,
+        "called_fast_model": False,
+        "called_middle_model": False,
+        "called_codex": False,
+        "opened_app": False,
+        "captured_screen": False,
+        "changed_state": False,
+        "policy_boundary": registry.get("execution_boundary"),
+        "next_step": next_step,
+        "reply": f"Tool handoff plan for {cleaned or 'an unspecified tool'}: {handoff}.",
     }
 
 

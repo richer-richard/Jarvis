@@ -92,6 +92,7 @@ from jarvis.tools import (
     stt_session_plan,
     stt_score_transcript,
     tool_catalog_status,
+    tool_handoff_plan,
     tts_status,
     tool_registry,
     voice_loop_simulation,
@@ -366,6 +367,7 @@ class PlannerTests(unittest.TestCase):
             "what tools are fed to the model": "diagnostics.tool_catalog",
             "deep tool catalog": "tools.deep_catalog",
             "show all tool layers": "tools.deep_catalog",
+            "handoff plan for app.open": "tools.handoff_plan",
             "permissions status": "diagnostics.permissions",
             "microphone permission readiness": "diagnostics.permissions",
             "remote worker status": "diagnostics.remote_worker",
@@ -902,6 +904,34 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["called_middle_model"])
         catalog_mock.assert_called_once()
+
+    def test_tools_more_handoff_plan_recommendation_previews_without_executing_target(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "tools.handoff_plan",
+            "entities": {
+                "recommended_tool": "app.open",
+                "entities": {"app_name": "Safari"},
+                "user_goal": "Open Safari",
+            },
+            "reply": "Yes sir, checking how to handle that now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.app_open") as open_mock:
+            result = Planner().handle_selected_tool("Open Safari.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "tools.handoff_plan")
+        preview = result.result["next_tool_preview"]["preview"]
+        self.assertEqual(preview["recommended_tool"], "app.open")
+        self.assertEqual(preview["handoff"], "safe_execute_after_policy")
+        self.assertFalse(preview["would_execute_now"])
+        self.assertFalse(preview["opened_app"])
+        self.assertFalse(preview["changed_state"])
+        open_mock.assert_not_called()
 
     def test_tools_more_permissions_recommendation_previews_without_prompting(self):
         fake_plan = {
@@ -1951,6 +1981,37 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("read_only", result["layers"]["registry"]["tools_by_mode"])
         self.assertFalse(result["handoff_contract"]["execute_recommended_tools"])
 
+    def test_tool_handoff_plan_classifies_safe_execute_without_executing(self):
+        result = tool_handoff_plan("app.open", {"app_name": "Safari"}, "Open Safari")
+
+        self.assertEqual(result["tool"], "tools.handoff_plan")
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(result["recommended_tool"], "app.open")
+        self.assertEqual(result["handoff"], "safe_execute_after_policy")
+        self.assertFalse(result["would_execute_now"])
+        self.assertFalse(result["requires_confirmation"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["changed_state"])
+        self.assertEqual(result["entities"]["app_name"], "Safari")
+
+    def test_tool_handoff_plan_classifies_confirmation_tool_without_executing(self):
+        result = tool_handoff_plan("app.quit", {"app_name": "Safari"}, "Quit Safari")
+
+        self.assertEqual(result["handoff"], "confirmation_required")
+        self.assertTrue(result["requires_confirmation"])
+        self.assertFalse(result["would_execute_now"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["changed_state"])
+
+    def test_tool_handoff_plan_blocks_unknown_tool_without_side_effects(self):
+        result = tool_handoff_plan("made.up_tool", {"target": "Safari"}, "Do something")
+
+        self.assertEqual(result["status"], "unknown_tool")
+        self.assertEqual(result["handoff"], "blocked_unknown")
+        self.assertFalse(result["known_tool"])
+        self.assertFalse(result["would_execute_now"])
+        self.assertFalse(result["changed_state"])
+
     def test_planned_tool_status_reports_unavailable_future_tool_without_side_effects(self):
         result = planned_tool_status("teams.assignment")
 
@@ -2255,6 +2316,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("terminal.plan", tool_ids)
         self.assertIn("tools.more", tool_ids)
         self.assertIn("tools.deep_catalog", tool_ids)
+        self.assertIn("tools.handoff_plan", tool_ids)
         self.assertIn("workflow.app_task_plan", tool_ids)
         self.assertIn("app.list", tool_ids)
         self.assertIn("app.open", tool_ids)
@@ -5203,7 +5265,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("32/32", policy_gate["detail"])
+        self.assertIn("33/33", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
