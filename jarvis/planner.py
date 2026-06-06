@@ -61,6 +61,7 @@ from .tools import (
     tool_catalog_status,
     tool_handoff_plan,
     tts_status,
+    voice_session_plan,
     voice_loop_simulation,
     wake_status,
     wake_phrase_simulation,
@@ -137,6 +138,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "voice.stt_session_plan",
         "description": "Prepare one speech-recognition audition run with candidate, reference sentence, timing metrics, and export checklist without recording audio.",
         "entities": ["candidate_id", "reference_sentence"],
+    },
+    {
+        "tool": "voice.session_plan",
+        "description": "Plan the full Hey Jarvis voice session from wake phrase to visible acknowledgement, STT, command routing, safe tool execution, final visible text, and optional speech without recording audio or playing sound.",
+        "entities": ["command"],
+        "examples": [
+            'Yes sir, planning the voice session now. \\tool({"tool":"voice.session_plan","entities":{"command":"check my email"}})',
+        ],
     },
     {
         "tool": "voice.stt_score",
@@ -473,6 +482,8 @@ class Planner:
         if stt_score_payload is not None:
             result = stt_score_transcript(**stt_score_payload)
             return self._result(text, "voice.stt_score", "Scored speech-recognition transcript.", assessment, result, True)
+        if _looks_like_voice_session_plan(lower):
+            return self._result(text, "voice.session_plan", "Prepared voice session plan.", assessment, voice_session_plan(_extract_voice_session_command(text)), True)
         if _looks_like_stt_session_plan(lower):
             return self._result(text, "voice.stt_session_plan", "Prepared STT audition session plan.", assessment, stt_session_plan(), True)
         if _looks_like_stt_audition_status(lower):
@@ -649,6 +660,8 @@ class Planner:
         stt_score_payload = _extract_stt_score_payload(text)
         if stt_score_payload is not None:
             return self._preview_result(text, "voice.stt_score", assessment, True, plan={"planned_only": True, **stt_score_payload})
+        if _looks_like_voice_session_plan(lower):
+            return self._preview_result(text, "voice.session_plan", assessment, True, plan={"command": _extract_voice_session_command(text)})
         if _looks_like_stt_session_plan(lower):
             return self._preview_result(text, "voice.stt_session_plan", assessment, True)
         if _looks_like_stt_audition_status(lower):
@@ -784,6 +797,11 @@ class Planner:
                     plan={"intent": intent, "candidate_id": candidate_id, "reference_sentence": reference_sentence},
                 )
             return self._result(text, "voice.stt_session_plan", "Prepared STT audition session plan.", assessment, stt_session_plan(candidate_id, reference_sentence), True)
+        if selected_tool == "voice.session_plan":
+            command = _clean_optional_entity(entities.get("command")) or _extract_voice_session_command(text)
+            if not execute:
+                return self._preview_result(text, "voice.session_plan", assessment, True, plan={"intent": intent, "command": command})
+            return self._result(text, "voice.session_plan", "Prepared voice session plan.", assessment, voice_session_plan(command), True)
         if selected_tool == "voice.stt_score":
             payload = _stt_score_payload_from_entities(entities) or _extract_stt_score_payload(text) or {
                 "reference": "",
@@ -1169,6 +1187,14 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
         candidate_id = _clean_optional_entity(entities.get("candidate_id"))
         reference_sentence = _clean_optional_entity(entities.get("reference_sentence"))
         preview = stt_session_plan(candidate_id, reference_sentence)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "voice.session_plan":
+        command = _clean_optional_entity(entities.get("command")) or _extract_voice_session_command(text)
+        preview = voice_session_plan(command)
         return {
             "recommended_tool": recommended,
             "executed": False,
@@ -1689,6 +1715,21 @@ def _extract_voice_loop_transcript(text: str) -> str | None:
     return None
 
 
+def _extract_voice_session_command(text: str) -> str:
+    stripped = re.sub(r"\s+", " ", str(text or "")).strip()
+    patterns = (
+        r"(?i)\b(?:for|with|using)\s+(?:command|prompt|request)\s*[:=]\s*(.+)$",
+        r"(?i)\b(?:command|prompt|request)\s*[:=]\s*(.+)$",
+        r"(?i)\bvoice session plan\s+for\s+(.+)$",
+        r"(?i)\bfull voice loop plan\s+for\s+(.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, stripped)
+        if match:
+            return re.sub(r"\s+", " ", match.group(1)).strip()[:160]
+    return ""
+
+
 def _voice_loop_status_text_for_tool(tool: str) -> str:
     labels = {
         "outlook.visible_summary": "Yes sir, checking your email now.",
@@ -1702,6 +1743,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
         "diagnostics.permissions": "Yes sir, checking permissions readiness now.",
         "voice.stt_candidates": "Yes sir, checking speech recognition options now.",
         "voice.stt_session_plan": "Yes sir, preparing the speech recognition test plan now.",
+        "voice.session_plan": "Yes sir, planning the voice session now.",
         "voice.stt_score": "Yes sir, scoring that transcript now.",
         "screenshot.capability": "Yes sir, checking the screen setup now.",
         "app.list": "Yes sir, checking which apps I can open now.",
@@ -1924,6 +1966,36 @@ def _looks_like_stt_session_plan(lower: str) -> bool:
     mutation_cues = ("start recording", "record now", "listen now", "turn on microphone", "enable microphone")
     return (
         any(cue in lower for cue in stt_cues)
+        and any(cue in lower for cue in plan_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_voice_session_plan(lower: str) -> bool:
+    voice_cues = (
+        "voice session",
+        "voice command session",
+        "full voice loop",
+        "full voice session",
+        "end-to-end voice",
+        "wake to response",
+        "wake-to-response",
+        "hey jarvis loop",
+        "hey jarvis session",
+        "real voice loop",
+    )
+    plan_cues = (
+        "plan",
+        "logistics",
+        "flow",
+        "pipeline",
+        "sequence",
+        "how would",
+        "what happens",
+    )
+    mutation_cues = ("start recording", "record now", "listen now", "turn on microphone", "enable microphone")
+    return (
+        any(cue in lower for cue in voice_cues)
         and any(cue in lower for cue in plan_cues)
         and not any(cue in lower for cue in mutation_cues)
     )

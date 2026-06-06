@@ -96,6 +96,7 @@ from jarvis.tools import (
     tts_status,
     tool_registry,
     voice_loop_simulation,
+    voice_session_plan,
     wake_status,
 )
 from jarvis.wake import WakeSession, detect_wake_command
@@ -345,6 +346,8 @@ class PlannerTests(unittest.TestCase):
             "voice recognition models": "voice.stt_candidates",
             "speech recognition test plan": "voice.stt_session_plan",
             "stt audition plan": "voice.stt_session_plan",
+            "full voice session plan": "voice.session_plan",
+            "end-to-end voice loop plan": "voice.session_plan",
             "score stt transcript: hello Jarvis => hello Jarvis": "voice.stt_score",
             "voice loop: Hey Jarvis status": "voice.loop_simulation",
             "simulate voice loop Hey Jarvis final QA plan": "voice.loop_simulation",
@@ -855,6 +858,31 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(preview["requested_microphone_permission"])
         self.assertFalse(preview["opened_browser"])
         self.assertFalse(preview["sent_audio"])
+
+    def test_tools_more_voice_session_plan_recommendation_previews_without_audio(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "voice.session_plan",
+            "entities": {"command": "check my email"},
+            "reply": "Yes sir, planning the voice session now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan):
+            result = Planner().handle_selected_tool("Plan the full voice session.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "voice.session_plan")
+        preview = result.result["next_tool_preview"]["preview"]
+        self.assertEqual(preview["tool"], "voice.session_plan")
+        self.assertTrue(preview["planned_only"])
+        self.assertEqual(preview["command"], "check my email")
+        self.assertFalse(preview["recorded_audio"])
+        self.assertFalse(preview["requested_microphone_permission"])
+        self.assertFalse(preview["played_audio"])
+        self.assertTrue(preview["visible_text_required"])
+        self.assertIn("execute_safe_recommendation", preview["phases"][3]["safe_follow_through"])
 
     def test_tools_more_stt_score_recommendation_previews_without_audio(self):
         fake_plan = {
@@ -1920,6 +1948,26 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["sent_audio"])
         self.assertFalse(result["installed_anything"])
 
+    def test_voice_session_plan_maps_full_loop_without_audio_or_models(self):
+        result = voice_session_plan("check my email")
+
+        self.assertEqual(result["tool"], "voice.session_plan")
+        self.assertEqual(result["status"], "planned")
+        self.assertTrue(result["planned_only"])
+        self.assertEqual(result["command"], "check my email")
+        self.assertTrue(result["visible_text_required"])
+        self.assertFalse(result["recorded_audio"])
+        self.assertFalse(result["requested_microphone_permission"])
+        self.assertFalse(result["started_recognition"])
+        self.assertFalse(result["played_audio"])
+        self.assertFalse(result["called_model"])
+        self.assertFalse(result["changed_state"])
+        phase_ids = [phase["id"] for phase in result["phases"]]
+        self.assertEqual(phase_ids, ["wake", "acknowledge", "speech_to_text", "route_command", "working_status", "execute_or_preview", "respond"])
+        self.assertEqual(result["phases"][1]["visible_text"], "Yes sir, listening.")
+        self.assertIn("voice.loop_simulation", result["current_working_surfaces"]["typed_wake_simulation"])
+        self.assertIn("execute_safe_recommendation", result["phases"][3]["safe_follow_through"])
+
     def test_stt_score_transcript_scores_text_without_audio(self):
         result = stt_score_transcript(
             "Hey Jarvis, check my email.",
@@ -2430,6 +2478,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("voice.stt_audition", tool_ids)
         self.assertIn("voice.stt_candidates", tool_ids)
         self.assertIn("voice.stt_session_plan", tool_ids)
+        self.assertIn("voice.session_plan", tool_ids)
         self.assertIn("voice.stt_score", tool_ids)
         self.assertIn("voice.loop_simulation", tool_ids)
         self.assertIn("diagnostics.overnight", tool_ids)
@@ -5364,7 +5413,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("33/33", policy_gate["detail"])
+        self.assertIn("34/34", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

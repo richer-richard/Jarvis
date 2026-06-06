@@ -424,6 +424,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Prepares a speech-recognition audition run plan with reference sentence, metrics, and export checklist without recording audio.",
             },
             {
+                "id": "voice.session_plan",
+                "label": "Voice Session Plan",
+                "mode": "read_only_plan",
+                "risk": "local_metadata",
+                "available": True,
+                "description": "Plans the full Hey Jarvis voice session from wake phrase to visible status, STT, tool routing, TTS, and fallback text without recording audio or playing sound.",
+            },
+            {
                 "id": "voice.stt_candidates",
                 "label": "STT Candidate Status",
                 "mode": "read_only",
@@ -2013,6 +2021,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "workflow.app_task_plan", "kind": "read_only_plan", "description": "Create a structured safe plan for future multi-step app work without executing the workflow."},
         {"id": "voice.stt_audition", "kind": "planned", "description": "Prepare a speech-recognition audition workflow."},
         {"id": "voice.stt_session_plan", "kind": "read_only_plan", "description": "Plan one speech-recognition audition run with reference sentence, candidate, metrics, and export checklist."},
+        {"id": "voice.session_plan", "kind": "read_only_plan", "description": "Plan the full voice-command loop from wake to visible status, STT, routing, speech, and text fallback without recording audio."},
         {"id": "voice.stt_candidates", "kind": "read_only", "description": "List speech-recognition candidates and installed local engine evidence."},
         {"id": "voice.stt_score", "kind": "read_only", "description": "Score a pasted STT transcript against a reference sentence without recording audio."},
         {"id": "voice.loop_simulation", "kind": "read_only_text_only", "description": "Simulate wake, greeting, command capture, and command preview without microphone or audio."},
@@ -2621,6 +2630,110 @@ def voice_loop_simulation(
         "changed_state": False,
         "prototype_behavior": "Typed simulation only. It does not listen, speak, open apps, capture the screen, call a model, or execute the previewed command.",
         "reply": reply,
+    }
+
+
+def voice_session_plan(command: str | None = None) -> dict[str, Any]:
+    """Plan the future real voice session without using microphone or audio."""
+    clean_command = re.sub(r"\s+", " ", str(command or "")).strip()
+    example_command = clean_command or "check my email"
+    phases = [
+        {
+            "id": "wake",
+            "status": "planned_not_active",
+            "trigger": "Hey Jarvis",
+            "visible_text": "Hello sir.",
+            "spoken_text": "Hello sir.",
+            "notes": "Current production path still needs a real microphone wake listener; typed wake simulation is available now.",
+        },
+        {
+            "id": "acknowledge",
+            "status": "required_for_public_spaces",
+            "visible_text": "Yes sir, listening.",
+            "spoken_text": "Yes sir, listening.",
+            "target_ms": 300,
+            "notes": "Visible text must update as soon as Jarvis accepts the wake phrase, because Leo may not hear the speaker.",
+        },
+        {
+            "id": "speech_to_text",
+            "status": "planned",
+            "visible_text": "Listening...",
+            "spoken_text": None,
+            "target_first_result_ms": 700,
+            "target_final_result_ms": 1600,
+            "candidate_plan_tool": "voice.stt_session_plan",
+            "notes": "STT audition decides the engine; no microphone permission is requested by this plan.",
+        },
+        {
+            "id": "route_command",
+            "status": "planned",
+            "example_command": example_command,
+            "fast_layer": "Use the first model for natural response and first-level tools.",
+            "middle_layer": "Use tools.more for broader planning only when the first layer needs more tools.",
+            "safe_follow_through": "tools.more may follow through only for app.open or allowlisted terminal.read_only when execute_safe_recommendation is explicit.",
+        },
+        {
+            "id": "working_status",
+            "status": "required",
+            "visible_text": "Yes sir, checking that now.",
+            "spoken_text": "Yes sir, checking that now.",
+            "notes": "Natural status appears before slower tools or models; internal words such as skill, route, or catalog stay hidden.",
+        },
+        {
+            "id": "execute_or_preview",
+            "status": "policy_gated",
+            "safe_immediate_tools": ["app.open", "terminal.read_only"],
+            "preview_only_tools": ["browser.open_url", "tools.handoff_plan", "workflow.app_task_plan"],
+            "confirmation_required_tools": ["app.quit", "policy.confirmation", "policy.strong_confirmation"],
+            "blocked_without_approval": ["send", "submit", "delete", "overwrite", "credentials", "settings changes"],
+        },
+        {
+            "id": "respond",
+            "status": "planned",
+            "visible_text": "Short final answer shown in the Jarvis panel.",
+            "spoken_text": "Same short answer, stripped of raw links and internal metadata.",
+            "notes": "Final text should be visible even when TTS is quiet, delayed, or disabled.",
+        },
+    ]
+    return {
+        "tool": "voice.session_plan",
+        "executed": True,
+        "status": "planned",
+        "planned_only": True,
+        "command": clean_command,
+        "read_private_content": False,
+        "recorded_audio": False,
+        "requested_microphone_permission": False,
+        "started_recognition": False,
+        "played_audio": False,
+        "opened_app": False,
+        "captured_screen": False,
+        "called_model": False,
+        "changed_state": False,
+        "visible_text_required": True,
+        "spoken_text_required": False,
+        "current_working_surfaces": {
+            "typed_wake_simulation": "voice.loop_simulation",
+            "stt_audition_plan": "voice.stt_session_plan",
+            "status_overlay": "current Jarvis panel text stream",
+            "tts_route": "local Piper route when enabled",
+        },
+        "latency_budget": {
+            "wake_ack_ms": 300,
+            "working_status_ms": 500,
+            "first_stt_result_ms": 700,
+            "final_stt_result_ms": 1600,
+            "first_visible_answer_ms": 1200,
+            "tts_start_after_text_ms": 400,
+        },
+        "phases": phases,
+        "required_next_verification": [
+            "Foreground app relaunch once Leo says it is okay.",
+            "Live visible text check for wake, working status, and final response.",
+            "STT audition with at least one local candidate and one system/browser candidate.",
+            "TTS check that no overlapping speech processes remain.",
+        ],
+        "reply": "Voice session plan prepared: wake, visible acknowledgement, STT, routing, safe execution, visible final text, and optional speech are mapped without using the microphone or speaker.",
     }
 
 
