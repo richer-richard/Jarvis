@@ -25,6 +25,7 @@ from .tools import (
     launch_status,
     latest_latency_status,
     memory_status,
+    model_context_status,
     more_tools_plan,
     overnight_work_status,
     outlook_read_only_check,
@@ -79,6 +80,11 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "diagnostics.overnight",
         "description": "Report the overnight workboard, morning report draft, and deferred QA paths without opening apps or browsers.",
         "entities": [],
+    },
+    {
+        "tool": "diagnostics.model_context",
+        "description": "Preview what Jarvis would feed its first model, middle planner, Codex, and TTS without calling any model.",
+        "entities": ["sample_prompt"],
     },
     {
         "tool": "voice.stt_candidates",
@@ -299,6 +305,8 @@ class Planner:
             return self._result(text, "diagnostics.latency", "Read local fast-latency status.", assessment, latest_latency_status(), True)
         if _looks_like_fast_model_status(lower):
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
+        if _looks_like_model_context_status(lower):
+            return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(_extract_model_context_sample(text), tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
         if _looks_like_remote_worker_status(lower):
             return self._result(text, "diagnostics.remote_worker", "Read remote MacBook Air worker status.", assessment, remote_worker_status(), True)
         if _looks_like_elevation_status(lower):
@@ -451,6 +459,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.latency", assessment, True)
         if _looks_like_fast_model_status(lower):
             return self._preview_result(text, "diagnostics.fast_model", assessment, True)
+        if _looks_like_model_context_status(lower):
+            return self._preview_result(text, "diagnostics.model_context", assessment, True)
         if _looks_like_source_access_status(lower):
             return self._preview_result(text, "diagnostics.source_access", assessment, True)
         if _looks_like_tts_status(lower):
@@ -530,6 +540,11 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "diagnostics.overnight", assessment, True, plan={"intent": intent})
             return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
+        if selected_tool == "diagnostics.model_context":
+            sample = _clean_optional_entity(entities.get("sample_prompt")) or _extract_model_context_sample(text)
+            if not execute:
+                return self._preview_result(text, "diagnostics.model_context", assessment, True, plan={"intent": intent, "sample_prompt": sample})
+            return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(sample, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
         if selected_tool == "voice.stt_candidates":
             if not execute:
                 return self._preview_result(text, "voice.stt_candidates", assessment, True, plan={"intent": intent})
@@ -749,6 +764,13 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "executed": False,
             "preview": {**preview, "executed": False, "planned_only": True},
         }
+    if recommended == "diagnostics.model_context":
+        preview = model_context_status(text, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
     return None
 
 
@@ -818,6 +840,19 @@ def _extract_terminal_command_text(text: str) -> str:
     if match:
         return match.group(1).strip()
     return stripped
+
+
+def _extract_model_context_sample(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    quoted = re.search(r"['\"]([^'\"]{1,240})['\"]", cleaned)
+    if quoted:
+        return quoted.group(1).strip()
+    match = re.search(r"(?i)\b(?:for|if i say|when i say|sample prompt)\s*:?\s+(.+)$", cleaned)
+    if match:
+        sample = match.group(1).strip(" .")
+        if sample and not re.search(r"(?i)\b(model|prompt|context|input|diagnostic|show|preview)\b", sample):
+            return sample[:240]
+    return "hello Jarvis"
 
 
 def _extract_email_sender_constraint(text: str) -> str | None:
@@ -1004,6 +1039,32 @@ def _looks_like_fast_model_status(lower: str) -> bool:
     )
     status_cues = ("status", "check", "show", "what", "which", "using", "configured")
     mutation_cues = ("change", "switch", "set ", "use ", "replace", "install", "remove", "delete")
+    return (
+        any(cue in lower for cue in model_cues)
+        and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_model_context_status(lower: str) -> bool:
+    model_cues = (
+        "model context",
+        "model input",
+        "model inputs",
+        "model prompt",
+        "model prompts",
+        "prompt engineering",
+        "prompt preview",
+        "what do you feed",
+        "what are you feeding",
+        "what will you give",
+        "first model",
+        "middle model",
+        "codex prompt",
+        "tts input",
+    )
+    status_cues = ("show", "preview", "tell", "what", "which", "status", "diagnostic", "debug", "for")
+    mutation_cues = ("change", "edit", "rewrite", "set ", "replace", "delete", "send ")
     return (
         any(cue in lower for cue in model_cues)
         and any(cue in lower for cue in status_cues)

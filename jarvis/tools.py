@@ -325,6 +325,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Reports the configured fast chat model, fallback route, timeout, and latest first-visible latency evidence without calling a model.",
             },
             {
+                "id": "diagnostics.model_context",
+                "label": "Model Context Preview",
+                "mode": "read_only",
+                "risk": "redacted_local_metadata",
+                "available": True,
+                "description": "Shows redacted prompt/message shapes for Jarvis model routing without calling models, reading private content, or playing audio.",
+            },
+            {
                 "id": "diagnostics.tts",
                 "label": "TTS Status",
                 "mode": "read_only",
@@ -1834,6 +1842,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "browser.open_url", "kind": "plan_only", "description": "Prepare opening a browser URL."},
         {"id": "files.search", "kind": "read_only", "description": "Search project filenames."},
         {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
+        {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
         {"id": "codex.job", "kind": "async_deep_work", "description": "Delegate broad coding/project work to Codex."},
         {"id": "voice.stt_audition", "kind": "planned", "description": "Prepare a speech-recognition audition workflow."},
         {"id": "voice.stt_candidates", "kind": "read_only", "description": "List speech-recognition candidates and installed local engine evidence."},
@@ -2295,6 +2304,106 @@ def stt_audition_status() -> dict[str, Any]:
             "human_score",
         ],
         "requires_foreground_browser_for_live_test": True,
+        "reply": reply,
+    }
+
+
+def _model_context_preview_text(text: str, *, max_chars: int = 700) -> str:
+    preview = redact_sensitive_text(str(text or ""))
+    preview = preview.replace(REMOTE_WORKER_SSH_TARGET, "[REDACTED_REMOTE_TARGET]")
+    preview = preview.replace(REMOTE_WORKER_HOST, "[REDACTED_REMOTE_HOST]")
+    preview = re.sub(r"\s+", " ", preview).strip()
+    if len(preview) > max_chars:
+        return preview[: max(0, max_chars - 12)].rstrip() + " [truncated]"
+    return preview
+
+
+def model_context_status(
+    sample_prompt: str = "hello Jarvis",
+    *,
+    tool_specs: list[dict[str, Any]] | None = None,
+    history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Show what Jarvis would feed its model layers without calling them."""
+    prompt = re.sub(r"\s+", " ", str(sample_prompt or "hello Jarvis")).strip()[:240] or "hello Jarvis"
+    history_items = list(history or [])[-6:]
+    fast_messages = _fast_chat_messages(prompt, history=history_items, tool_specs=tool_specs)
+    fast_preview = [
+        {
+            "role": message.get("role"),
+            "chars": len(str(message.get("content") or "")),
+            "preview": _model_context_preview_text(str(message.get("content") or "")),
+        }
+        for message in fast_messages
+    ]
+    middle_prompt = _middle_tools_prompt(prompt, history=history_items)
+    codex_selection = {
+        "chat": {
+            "name": "Default",
+            "purpose": "Default Jarvis-generated Codex work when no named chat is a stronger match.",
+            "context": "Diagnostic sample only; no Codex job is started.",
+        },
+        "reason": "Diagnostic sample for model-context preview.",
+    }
+    codex_prompt = _codex_jarvis_generated_prompt(prompt, codex_selection)
+    sample_tts_reply = _sanitize_spoken_text("Hello sir. What would you like me to do?")
+    tool_ids = [str(spec.get("tool") or "") for spec in tool_specs or [] if spec.get("tool")]
+    reply = (
+        f"Model context preview for '{prompt}': fast chat would receive {len(fast_messages)} messages, "
+        f"the middle planner would receive one JSON-planning prompt with {len(_middle_tool_catalog_ids())} tools, "
+        "Codex would receive a Jarvis-generated prompt only for deep delegated work, and TTS would receive sanitized final visible text. "
+        "No model was called and no audio was played."
+    )
+    return {
+        "tool": "diagnostics.model_context",
+        "executed": True,
+        "status": "previewed",
+        "sample_prompt": prompt,
+        "read_private_content": False,
+        "called_fast_model": False,
+        "called_middle_model": False,
+        "called_codex": False,
+        "played_audio": False,
+        "redacted": True,
+        "fast_chat": {
+            "backend": FAST_MODEL_BACKEND,
+            "model": FAST_MODEL_NAME,
+            "fallback_backend": FAST_MODEL_FALLBACK_BACKEND if FAST_MODEL_FALLBACK_ENABLED else None,
+            "fallback_enabled": FAST_MODEL_FALLBACK_ENABLED,
+            "message_count": len(fast_messages),
+            "history_items": len(history_items),
+            "tool_catalog_ids": tool_ids,
+            "messages": fast_preview,
+        },
+        "middle_planner": {
+            "backend": "ollama",
+            "model": MIDDLE_MODEL,
+            "uses_cloud_model": _ollama_model_uses_cloud(MIDDLE_MODEL),
+            "prompt_chars": len(middle_prompt),
+            "prompt_preview": _model_context_preview_text(middle_prompt, max_chars=900),
+            "tool_catalog_ids": _middle_tool_catalog_ids(),
+            "output_contract": {
+                "format": "json",
+                "fields": ["recommended_tool", "confidence", "entities", "user_status", "reason", "safety"],
+                "plan_only": True,
+            },
+        },
+        "codex": {
+            "model": DEFAULT_CODEX_MODEL,
+            "reasoning_effort": DEFAULT_CODEX_REASONING_EFFORT,
+            "starts_only_for": "deep delegated code/project/review/build work",
+            "prompt_chars": len(codex_prompt),
+            "prompt_preview": _model_context_preview_text(codex_prompt, max_chars=900),
+            "jarvis_generated_marker": "This is a Jarvis-generated prompt.",
+        },
+        "tts": {
+            "provider": _normalize_tts_provider(TTS_PROVIDER),
+            "fallback_provider": _normalize_tts_provider(TTS_FALLBACK_PROVIDER),
+            "automatic_enabled": TTS_AUTOMATIC_ENABLED,
+            "spoken_status_enabled": TTS_SPEAK_STATUS,
+            "max_chars": TTS_MAX_CHARS,
+            "sample_input": sample_tts_reply,
+        },
         "reply": reply,
     }
 

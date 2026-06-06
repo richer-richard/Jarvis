@@ -66,6 +66,7 @@ from jarvis.tools import (
     latest_latency_status,
     launch_status,
     memory_status,
+    model_context_status,
     overnight_work_status,
     outlook_visible_text_summary,
     outlook_read_only_check,
@@ -325,6 +326,8 @@ class PlannerTests(unittest.TestCase):
             "what requires confirmation": "diagnostics.safety",
             "what model are you using": "diagnostics.fast_model",
             "model status": "diagnostics.fast_model",
+            "model inputs for hello Jarvis": "diagnostics.model_context",
+            "what do you feed the first model for 'hello Jarvis'": "diagnostics.model_context",
             "remote worker status": "diagnostics.remote_worker",
             "MacBook Air SSH status": "diagnostics.remote_worker",
             "elevation status": "diagnostics.elevation",
@@ -539,6 +542,37 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["recorded_audio"])
         stt_mock.assert_called_once_with()
+
+    def test_tools_more_model_context_recommendation_previews_without_calling_models(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "diagnostics.model_context",
+            "entities": {},
+            "reply": "Yes sir, checking the model context now.",
+        }
+        fake_context = {
+            "tool": "diagnostics.model_context",
+            "status": "previewed",
+            "executed": True,
+            "called_fast_model": False,
+            "called_middle_model": False,
+            "called_codex": False,
+            "played_audio": False,
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.model_context_status", return_value=fake_context) as context_mock:
+            result = Planner().handle_selected_tool("What are you feeding the models?", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "diagnostics.model_context")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["called_fast_model"])
+        context_mock.assert_called_once()
 
     def test_tools_more_preview_does_not_call_middle_model(self):
         intent = {"status": "completed", "selected_tool": "tools.more", "confidence": 0.8, "entities": {}}
@@ -1192,6 +1226,32 @@ class PlannerTests(unittest.TestCase):
         self.assertGreaterEqual(result["audition_ready_count"], 2)
         self.assertTrue(result["reference_sentences"])
 
+    def test_model_context_status_previews_prompts_without_calling_models(self):
+        tool_specs = [
+            {"tool": "outlook.visible_summary", "description": "Read email.", "entities": ["selection"]},
+            {"tool": "app.open", "description": "Open app.", "entities": ["app_name"]},
+        ]
+        history = [
+            {"role": "user", "text": "Give me a math problem."},
+            {"role": "assistant", "text": "Solve x + 2 = 5."},
+        ]
+        result = model_context_status("hello Jarvis", tool_specs=tool_specs, history=history)
+
+        self.assertEqual(result["tool"], "diagnostics.model_context")
+        self.assertEqual(result["status"], "previewed")
+        self.assertFalse(result["called_fast_model"])
+        self.assertFalse(result["called_middle_model"])
+        self.assertFalse(result["called_codex"])
+        self.assertFalse(result["played_audio"])
+        self.assertTrue(result["redacted"])
+        self.assertEqual(result["fast_chat"]["tool_catalog_ids"], ["outlook.visible_summary", "app.open"])
+        self.assertEqual(result["fast_chat"]["message_count"], 4)
+        self.assertIn("hello Jarvis", result["fast_chat"]["messages"][-1]["preview"])
+        self.assertIn("recommended_tool", result["middle_planner"]["output_contract"]["fields"])
+        self.assertIn("This is a Jarvis-generated prompt.", result["codex"]["jarvis_generated_marker"])
+        self.assertEqual(result["tts"]["sample_input"], "Hello sir. What would you like me to do?")
+        self.assertNotIn("254118", str(result))
+
     def test_overnight_work_status_reports_paths_without_foreground_activity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1389,6 +1449,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("voice.stt_audition", tool_ids)
         self.assertIn("voice.stt_candidates", tool_ids)
         self.assertIn("diagnostics.overnight", tool_ids)
+        self.assertIn("diagnostics.model_context", tool_ids)
         self.assertIn("safety.injection_scan", tool_ids)
         self.assertIn("codex.delegate", tool_ids)
         self.assertIn("codex.job", tool_ids)
@@ -4192,7 +4253,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("15/15", policy_gate["detail"])
+        self.assertIn("16/16", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
