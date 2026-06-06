@@ -12,6 +12,7 @@ from .tools import (
     app_availability,
     app_list,
     app_open,
+    app_status,
     browser_open_url_plan,
     capabilities_status,
     codex_chat_status,
@@ -119,6 +120,18 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": [],
         "examples": [
             'Yes sir, checking which apps I can open now. \\tool({"tool":"app.list","entities":{}})',
+        ],
+    },
+    {
+        "tool": "app.status",
+        "description": "Check whether a named local macOS app exists and appears to be running, without launching, focusing, or inspecting it.",
+        "entities": ["app_name"],
+        "entity_details": {
+            "app_name": "The user-facing app name, such as Microsoft Outlook, Google Chrome, Microsoft Teams, Word, PowerPoint, Excel, Safari, Mail, Finder, or Codex.",
+        },
+        "examples": [
+            'Yes sir, checking Outlook now. \\tool({"tool":"app.status","entities":{"app_name":"Microsoft Outlook"}})',
+            'Yes sir, checking whether Teams is running now. \\tool({"tool":"app.status","entities":{"app_name":"Microsoft Teams"}})',
         ],
     },
     {
@@ -345,6 +358,9 @@ class Planner:
             return self._result(text, "browser.open_url", "Prepared browser-open plan.", assessment, browser_open_url_plan(_extract_url(text)), False)
         if _looks_like_app_list_request(lower):
             return self._result(text, "app.list", "Listed local apps Jarvis can open.", assessment, app_list(), True)
+        app_status_name = _extract_app_status_name(text)
+        if app_status_name is not None:
+            return self._result(text, "app.status", "Checked local app status.", assessment, app_status(app_status_name), True)
         app_open_name = _extract_app_open_name(text)
         if app_open_name is not None:
             result = app_open(app_open_name)
@@ -498,6 +514,15 @@ class Planner:
             return self._preview_result(text, "browser.open_url", assessment, False, plan={"url": _extract_url(text)})
         if _looks_like_app_list_request(lower):
             return self._preview_result(text, "app.list", assessment, True)
+        app_status_name = _extract_app_status_name(text)
+        if app_status_name is not None:
+            return self._preview_result(
+                text,
+                "app.status",
+                assessment,
+                True,
+                plan={"app_name": app_status_name, "would_check_running_processes": True, "planned_only": True},
+            )
         app_open_name = _extract_app_open_name(text)
         if app_open_name is not None:
             return self._preview_result(text, "app.open", assessment, True, plan=app_open(app_open_name, execute=False))
@@ -597,6 +622,11 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "app.list", assessment, True, plan={"intent": intent})
             return self._result(text, "app.list", "Listed local apps Jarvis can open.", assessment, app_list(), True)
+        if selected_tool == "app.status":
+            app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_status_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
+            if not execute:
+                return self._preview_result(text, "app.status", assessment, True, plan={"intent": intent, "app_name": app_name})
+            return self._result(text, "app.status", "Checked local app status.", assessment, app_status(app_name), True)
         if selected_tool == "terminal.plan":
             command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
             plan = terminal_command_plan(command)
@@ -730,6 +760,14 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "executed": False,
             "preview": {**preview, "executed": False, "planned_only": True},
         }
+    if recommended == "app.status":
+        app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_status_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
+        preview = app_status(app_name)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
     if recommended == "terminal.plan":
         command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
         return {
@@ -820,6 +858,44 @@ def _extract_app_open_name(text: str) -> str | None:
     if app_name.lower() in blocked:
         return None
     return app_name[:120]
+
+
+def _extract_app_status_name(text: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", text.strip())
+    if _extract_url(cleaned):
+        return None
+    patterns = (
+        r"(?i)^(?:app status|check app status|check status of app|check the status of app)\s+(.+)$",
+        r"(?i)^(?:status of|running status of)\s+(.+?)(?:\s+(?:app|application))?(?:\s+(?:now|please))?[.!?]?$",
+        r"(?i)^(?:is|check whether|check if)\s+(.+?)\s+(?:running|open|launched)(?:\s+(?:now|yet|please))?[.!?]?$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, cleaned)
+        if not match:
+            continue
+        app_name = match.group(1).strip(" .")
+        app_name = re.sub(r"(?i)\s+(?:app|application)$", "", app_name).strip(" .")
+        app_name = re.sub(r"(?i)^(?:the|my)\s+", "", app_name).strip(" .")
+        if not app_name:
+            return None
+        blocked = {
+            "app",
+            "apps",
+            "application",
+            "applications",
+            "anything",
+            "browser",
+            "email",
+            "mailbox",
+            "inbox",
+            "website",
+            "url",
+            "link",
+        }
+        if app_name.lower() in blocked:
+            return None
+        return app_name[:120]
+    return None
 
 
 def _extract_terminal_command_text(text: str) -> str:

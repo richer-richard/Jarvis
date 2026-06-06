@@ -549,6 +549,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Lists known and discovered local macOS apps that Jarvis may open later; does not launch or inspect app content.",
             },
             {
+                "id": "app.status",
+                "label": "App Status",
+                "mode": "read_only",
+                "risk": "local_metadata",
+                "available": True,
+                "description": "Checks a named app's bundle availability and apparent running processes without opening, focusing, or inspecting the app.",
+            },
+            {
                 "id": "app.open",
                 "label": "Open App",
                 "mode": "execute",
@@ -1835,6 +1843,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
     return [
         {"id": "app.open", "kind": "safe_execute", "description": "Open or focus a local macOS app."},
         {"id": "app.list", "kind": "read_only", "description": "List known/discovered local apps before choosing what to open."},
+        {"id": "app.status", "kind": "read_only", "description": "Check whether a named local app is available and appears to be running."},
         {"id": "app.availability", "kind": "read_only", "description": "Check whether a local app exists."},
         {"id": "terminal.plan", "kind": "plan_only", "description": "Classify and explain a terminal command without running it."},
         {"id": "terminal.read_only", "kind": "safe_execute_if_allowlisted", "description": "Run only read-only allowlisted terminal commands."},
@@ -2039,6 +2048,102 @@ def app_list(search_dirs: list[Path] | None = None, *, limit: int = 80) -> dict[
         "known_count": len(known_apps),
         "available_known_count": available_known,
         "extra_count": len(extra_apps),
+        "reply": reply,
+    }
+
+
+def _app_executable_names(app_name: str, matches: list[str]) -> list[str]:
+    names: list[str] = []
+    resolved = _resolve_app_name(app_name)
+    if resolved:
+        names.append(resolved)
+    for match in matches:
+        info_plist = Path(match) / "Contents" / "Info.plist"
+        try:
+            with info_plist.open("rb") as handle:
+                plist = plistlib.load(handle)
+        except (OSError, plistlib.InvalidFileException):
+            continue
+        executable = str(plist.get("CFBundleExecutable") or "").strip()
+        if executable:
+            names.append(executable)
+    if resolved == "Google Chrome":
+        names.append("Google Chrome Helper")
+    if resolved == "Finder":
+        names.append("Finder")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        key = name.casefold()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(name)
+    return deduped
+
+
+def _pgrep_exact(name: str, *, timeout_seconds: float = 1.5) -> dict[str, Any]:
+    pgrep_path = _find_executable("pgrep") or "/usr/bin/pgrep"
+    try:
+        completed = subprocess.run(
+            [pgrep_path, "-x", name],
+            shell=False,
+            cwd=PROJECT_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"name": name, "status": "timeout", "running": False, "pids": [], "error": "pgrep timed out"}
+    except OSError as error:
+        return {"name": name, "status": "pgrep_unavailable", "running": False, "pids": [], "error": str(error)}
+    pids = [line.strip() for line in completed.stdout.splitlines() if line.strip().isdigit()]
+    return {
+        "name": name,
+        "status": "checked",
+        "running": completed.returncode == 0 and bool(pids),
+        "pids": pids[:20],
+        "returncode": completed.returncode,
+        "stderr": _text_tail(completed.stderr, 240),
+    }
+
+
+def app_status(app_name: str, search_dirs: list[Path] | None = None) -> dict[str, Any]:
+    name = _resolve_app_name(app_name)
+    availability = app_availability(name, search_dirs=search_dirs)
+    matches = list(availability.get("matches") or [])
+    executable_names = _app_executable_names(name, matches)
+    process_checks = [_pgrep_exact(executable) for executable in executable_names]
+    running = any(check.get("running") for check in process_checks)
+    available = bool(availability.get("available")) or name == "Finder"
+    if not available:
+        status = "app_not_found"
+    elif running:
+        status = "running"
+    else:
+        status = "not_running"
+    reply = (
+        f"App status: {name} is {'available' if available else 'not found'} and appears "
+        f"{'running' if running else 'not running'}. "
+        "I did not open, focus, screenshot, or inspect the app."
+    )
+    return {
+        "tool": "app.status",
+        "executed": True,
+        "status": status,
+        "app": name,
+        "requested_app": re.sub(r"\s+", " ", str(app_name or "")).strip(),
+        "available": available,
+        "matches": matches,
+        "running": running,
+        "executable_names": executable_names,
+        "process_checks": process_checks,
+        "read_private_content": False,
+        "opened_app": False,
+        "launched_app": False,
+        "focused_app": False,
+        "captured_screen": False,
         "reply": reply,
     }
 

@@ -56,6 +56,7 @@ from jarvis.server import (
 from jarvis.tools import (
     app_availability,
     app_list,
+    app_status,
     browser_open_url_plan,
     codex_chat_status,
     codex_delegate_plan,
@@ -308,6 +309,8 @@ class PlannerTests(unittest.TestCase):
             "check app Outlook": "app.availability",
             "what apps can you open": "app.list",
             "show available apps": "app.list",
+            "is Safari running": "app.status",
+            "app status Outlook": "app.status",
             "screenshot capability": "screenshot.capability",
             "latency status": "diagnostics.latency",
             "how do I open Jarvis": "diagnostics.launch",
@@ -512,6 +515,41 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["opened_app"])
         list_mock.assert_called_once_with(limit=40)
+
+    def test_tools_more_app_status_recommendation_previews_without_opening_apps(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.status",
+            "entities": {"app_name": "Microsoft Teams"},
+            "reply": "Yes sir, checking Teams now.",
+        }
+        fake_status = {
+            "tool": "app.status",
+            "status": "running",
+            "executed": True,
+            "app": "Microsoft Teams",
+            "running": True,
+            "opened_app": False,
+            "launched_app": False,
+            "focused_app": False,
+            "captured_screen": False,
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.app_status", return_value=fake_status) as status_mock:
+            result = Planner().handle_selected_tool("Check whether Teams is running.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "app.status")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["opened_app"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["launched_app"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["focused_app"])
+        status_mock.assert_called_once_with("Microsoft Teams")
 
     def test_tools_more_stt_candidate_recommendation_previews_without_audio(self):
         fake_plan = {
@@ -1443,6 +1481,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("tools.more", tool_ids)
         self.assertIn("app.list", tool_ids)
         self.assertIn("app.open", tool_ids)
+        self.assertIn("app.status", tool_ids)
         self.assertIn("conversation.fast_local", tool_ids)
         self.assertIn("quick.local_control", tool_ids)
         self.assertIn("voice.wake_simulation", tool_ids)
@@ -2636,6 +2675,31 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(known_by_name["Microsoft Outlook"]["available"])
         self.assertIn("outlook", known_by_name["Microsoft Outlook"]["aliases"])
         self.assertIn("Example Extra", extra_names)
+
+    def test_app_status_checks_running_process_without_opening_app(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_contents = root / "Microsoft Outlook.app" / "Contents"
+            app_contents.mkdir(parents=True)
+            with (app_contents / "Info.plist").open("wb") as handle:
+                plistlib.dump({"CFBundleExecutable": "Microsoft Outlook"}, handle)
+            completed = subprocess.CompletedProcess(args=["pgrep"], returncode=0, stdout="123\n", stderr="")
+            with patch("jarvis.tools._find_executable", return_value="/usr/bin/pgrep"), \
+                 patch("jarvis.tools.subprocess.run", return_value=completed) as run_mock:
+                result = app_status("Outlook", search_dirs=[root])
+
+        self.assertEqual(result["tool"], "app.status")
+        self.assertEqual(result["status"], "running")
+        self.assertTrue(result["available"])
+        self.assertTrue(result["running"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["launched_app"])
+        self.assertFalse(result["focused_app"])
+        self.assertFalse(result["captured_screen"])
+        self.assertIn("Microsoft Outlook", result["executable_names"])
+        run_mock.assert_called_once()
+        self.assertEqual(run_mock.call_args.args[0], ["/usr/bin/pgrep", "-x", "Microsoft Outlook"])
+        self.assertFalse(run_mock.call_args.kwargs["shell"])
 
     def test_app_open_resolves_alias_and_uses_open_without_shell(self):
         completed = subprocess.CompletedProcess(args=["open"], returncode=0, stdout="", stderr="")
@@ -4253,7 +4317,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("16/16", policy_gate["detail"])
+        self.assertIn("17/17", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
