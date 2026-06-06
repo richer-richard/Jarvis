@@ -40,7 +40,7 @@ from jarvis import self_check as jarvis_self_check
 from jarvis.audit import AuditLogger, redact_sensitive_text
 from jarvis.config import PROJECT_ROOT, env_bool, host_allowed
 from jarvis.injection import scan_untrusted_text
-from jarvis.planner import Planner
+from jarvis.planner import NATURAL_LANGUAGE_TOOL_SPECS, Planner
 from jarvis.safety import classify_command, classify_shell_command, policy_summary
 from jarvis.server import (
     MAX_VERIFICATION_AGE_SECONDS,
@@ -600,6 +600,13 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["safe_followup"]["executed"])
         self.assertNotIn("next_tool_preview", result.result)
         open_mock.assert_not_called()
+
+    def test_first_model_tools_more_catalog_avoids_skill_wording(self):
+        catalog = jarvis_tools._fast_chat_tool_catalog(NATURAL_LANGUAGE_TOOL_SPECS)
+
+        self.assertNotIn("future skills", catalog.lower())
+        self.assertNotIn("skill.", catalog.lower())
+        self.assertIn("future capabilities", catalog)
 
     def test_tools_more_terminal_recommendation_previews_without_running(self):
         fake_plan = {

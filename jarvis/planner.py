@@ -268,7 +268,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "tools.more",
-        "description": "Ask Jarvis's smarter middle model for a broader plan when the first tool list is insufficient, especially for multi-app workflows, UI automation, future skills, or complex tasks that need more context before execution. Set execute_safe_recommendation true only when the user asked Jarvis to take action and it is okay for Jarvis to immediately run a small safe follow-up such as opening an app or running an allowlisted read-only terminal command.",
+        "description": "Ask Jarvis's smarter middle model for a broader plan when the first tool list is insufficient, especially for multi-app workflows, UI automation, future capabilities, or complex tasks that need more context before execution. Set execute_safe_recommendation true only when the user asked Jarvis to take action and it is okay for Jarvis to immediately run a small safe follow-up such as opening an app or running an allowlisted read-only terminal command.",
         "entities": ["execute_safe_recommendation"],
         "entity_details": {
             "execute_safe_recommendation": "Boolean. True only for action requests where Jarvis may immediately follow through on app.open or terminal.read_only after the middle planner chooses one; protected, private, Codex, browser, future, or confirmation-required routes remain preview-only.",
