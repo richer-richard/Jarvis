@@ -1225,17 +1225,22 @@ def _piper_warm_worker_command(readiness: dict[str, Any]) -> list[str]:
 class _PiperWorkerSpeechHandle:
     def __init__(self, speech_id: str) -> None:
         self.speech_id = speech_id
+        self._stop_requested = False
 
     def poll(self) -> int | None:
         with PIPER_WORKER_LOCK:
             return None if PIPER_WORKER_ACTIVE_ID == self.speech_id else 0
 
     def terminate(self) -> None:
-        _send_piper_worker_message({"type": "stop", "id": self.speech_id})
-        global PIPER_WORKER_ACTIVE_ID
-        with PIPER_WORKER_LOCK:
-            if PIPER_WORKER_ACTIVE_ID == self.speech_id:
-                PIPER_WORKER_ACTIVE_ID = None
+        if self._stop_requested:
+            return
+        self._stop_requested = True
+        sent = _send_piper_worker_message({"type": "stop", "id": self.speech_id})
+        if not sent:
+            global PIPER_WORKER_ACTIVE_ID
+            with PIPER_WORKER_LOCK:
+                if PIPER_WORKER_ACTIVE_ID == self.speech_id:
+                    PIPER_WORKER_ACTIVE_ID = None
 
     def kill(self) -> None:
         self.terminate()

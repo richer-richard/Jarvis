@@ -3383,6 +3383,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
             def write(self, text):
                 self.lines.append(text)
+                message = json.loads(text)
+                if message["type"] == "stop":
+                    jarvis_tools._record_piper_worker_event({"event": "stopped", "id": message["id"]})
 
             def flush(self):
                 pass
@@ -3426,6 +3429,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
             jarvis_tools.PIPER_WORKER_PROCESS = None
             jarvis_tools.PIPER_WORKER_READY = False
             jarvis_tools.PIPER_WORKER_ACTIVE_ID = None
+            jarvis_tools.PIPER_WORKER_SPEECH_EVENTS.clear()
 
         self.assertTrue(first["spoken"])
         self.assertEqual(first["status"], "queued")
@@ -3438,6 +3442,81 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(messages[1]["id"], first["speech_id"])
         self.assertEqual(messages[2]["type"], "speak")
         self.assertEqual(messages[2]["text"], "second warm reply")
+
+    def test_piper_worker_handle_waits_for_worker_stop_event(self):
+        class FakeStdin:
+            def __init__(self):
+                self.lines: list[str] = []
+
+            def write(self, text):
+                self.lines.append(text)
+
+            def flush(self):
+                pass
+
+        class FakeWorker:
+            def __init__(self):
+                self.stdin = FakeStdin()
+
+            def poll(self):
+                return None
+
+        fake_worker = FakeWorker()
+        jarvis_tools.PIPER_WORKER_PROCESS = fake_worker
+        jarvis_tools.PIPER_WORKER_ACTIVE_ID = "speech-1"
+        try:
+            handle = jarvis_tools._PiperWorkerSpeechHandle("speech-1")
+            handle.terminate()
+
+            self.assertEqual(jarvis_tools.PIPER_WORKER_ACTIVE_ID, "speech-1")
+            message = json.loads(fake_worker.stdin.lines[0])
+            self.assertEqual(message["type"], "stop")
+            self.assertEqual(message["id"], "speech-1")
+
+            jarvis_tools._record_piper_worker_event({"event": "stopped", "id": "speech-1"})
+
+            self.assertIsNone(jarvis_tools.PIPER_WORKER_ACTIVE_ID)
+        finally:
+            jarvis_tools.PIPER_WORKER_PROCESS = None
+            jarvis_tools.PIPER_WORKER_READY = False
+            jarvis_tools.PIPER_WORKER_ACTIVE_ID = None
+            jarvis_tools.PIPER_WORKER_SPEECH_EVENTS.clear()
+
+    def test_warm_piper_worker_stop_waits_for_player_exit(self):
+        class FakePlayer:
+            def __init__(self):
+                self.running = True
+                self.terminated = False
+                self.killed = False
+                self.waited = False
+
+            def poll(self):
+                return None if self.running else 0
+
+            def terminate(self):
+                self.terminated = True
+
+            def kill(self):
+                self.killed = True
+                self.running = False
+
+            def wait(self, timeout=None):
+                self.waited = True
+                self.running = False
+                return 0
+
+        state = piper_warm_worker.SpeechState()
+        state.start_job("speech-1")
+        player = FakePlayer()
+        with state.lock:
+            state.current_player = player
+
+        stopped = state.stop_current()
+
+        self.assertTrue(stopped)
+        self.assertTrue(player.terminated)
+        self.assertTrue(player.waited)
+        self.assertFalse(player.killed)
 
     def test_warm_piper_worker_command_includes_length_scale(self):
         readiness = {

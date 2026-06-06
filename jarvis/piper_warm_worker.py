@@ -19,6 +19,10 @@ if TYPE_CHECKING:
     from piper import PiperVoice, SynthesisConfig
 
 
+PLAYER_TERMINATE_GRACE_SECONDS = 0.18
+PLAYER_KILL_GRACE_SECONDS = 0.12
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a warm Piper speech worker over JSON lines.")
     parser.add_argument("--model", required=True)
@@ -111,10 +115,7 @@ class SpeechState:
             self.current_stop.set()
             stopped = True
         if self.current_player is not None and self.current_player.poll() is None:
-            try:
-                self.current_player.terminate()
-            except OSError:
-                pass
+            _stop_player(self.current_player)
             stopped = True
         return stopped
 
@@ -137,6 +138,22 @@ class SpeechState:
                 self.current_id = None
                 self.current_stop = None
                 self.current_player = None
+
+
+def _stop_player(player: subprocess.Popen[str]) -> None:
+    try:
+        player.terminate()
+        player.wait(timeout=PLAYER_TERMINATE_GRACE_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except OSError:
+        return
+    try:
+        player.kill()
+        player.wait(timeout=PLAYER_KILL_GRACE_SECONDS)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
 
 
 def _synthesize_to_wav(voice: "PiperVoice", syn_config: "SynthesisConfig", text: str, wav_path: Path) -> None:
@@ -233,10 +250,7 @@ def _play_job(
                     )
                 while player.poll() is None:
                     if stop_event.is_set() or not state.is_current(speech_id, generation):
-                        try:
-                            player.terminate()
-                        except OSError:
-                            pass
+                        _stop_player(player)
                         _emit("stopped", id=speech_id, chunks_played=played_chunks)
                         return
                     time.sleep(0.02)
