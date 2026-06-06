@@ -566,6 +566,105 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["would_execute_if_read_only_tool"])
         shell_mock.assert_not_called()
 
+    def test_tools_more_explicit_safe_followup_executes_app_open_through_policy(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.open",
+            "entities": {"app_name": "Microsoft Teams"},
+            "reply": "Yes sir, opening Teams now.",
+        }
+        fake_preview = {
+            "tool": "app.open",
+            "status": "planned",
+            "executed": False,
+            "app": "Microsoft Teams",
+            "planned_command": ["/usr/bin/open", "-a", "Microsoft Teams"],
+        }
+        fake_opened = {
+            "tool": "app.open",
+            "status": "opened",
+            "executed": True,
+            "app": "Microsoft Teams",
+            "planned_command": ["/usr/bin/open", "-a", "Microsoft Teams"],
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.app_open", side_effect=[fake_preview, fake_opened]) as open_mock:
+            result = Planner().handle_selected_tool(
+                "Go to Teams.",
+                "tools.more",
+                {"execute_safe_recommendation": True},
+            )
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        followup = result.result["safe_followup"]
+        self.assertEqual(followup["status"], "followed_through")
+        self.assertEqual(followup["selected_tool"], "app.open")
+        self.assertTrue(followup["executed"])
+        self.assertEqual(followup["handoff"]["handoff"], "safe_execute_after_policy")
+        self.assertEqual(followup["result"]["tool"], "app.open")
+        self.assertTrue(followup["result"]["executed"])
+        self.assertEqual(open_mock.call_count, 2)
+        open_mock.assert_any_call("Microsoft Teams", execute=False)
+        open_mock.assert_any_call("Microsoft Teams")
+
+    def test_tools_more_explicit_safe_followup_runs_allowlisted_terminal_command(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "terminal.read_only",
+            "entities": {"command": "git status"},
+            "reply": "Yes sir, checking that locally now.",
+        }
+        fake_shell = {
+            "tool": "shell.read_only",
+            "status": "completed",
+            "executed": True,
+            "command": ["git", "status"],
+            "stdout": "On branch test",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.run_read_only_shell", return_value=fake_shell) as shell_mock:
+            result = Planner().handle_selected_tool(
+                "Check the repo status.",
+                "tools.more",
+                {"execute_safe_recommendation": "true"},
+            )
+
+        followup = result.result["safe_followup"]
+        self.assertEqual(followup["status"], "followed_through")
+        self.assertEqual(followup["selected_tool"], "terminal.read_only")
+        self.assertEqual(followup["handoff"]["handoff"], "safe_execute_after_policy")
+        self.assertTrue(followup["executed"])
+        self.assertEqual(followup["result"]["tool"], "terminal.read_only")
+        shell_mock.assert_called_once_with("git status")
+
+    def test_tools_more_safe_followup_does_not_execute_confirmation_tool(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.quit",
+            "entities": {"app_name": "Safari"},
+            "reply": "Yes sir, I can prepare that, but quitting Safari needs confirmation.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan):
+            result = Planner().handle_selected_tool(
+                "Use the middle planner for this app-control request.",
+                "tools.more",
+                {"execute_safe_recommendation": True},
+            )
+
+        followup = result.result["safe_followup"]
+        self.assertEqual(followup["status"], "preview_only")
+        self.assertEqual(followup["selected_tool"], "app.quit")
+        self.assertEqual(followup["handoff"]["handoff"], "confirmation_required")
+        self.assertFalse(followup["executed"])
+        self.assertIsNone(followup["result"])
+
     def test_tools_more_app_list_recommendation_previews_without_opening_apps(self):
         fake_plan = {
             "tool": "tools.more",

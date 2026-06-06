@@ -227,8 +227,11 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "tools.more",
-        "description": "Ask Jarvis's smarter middle model for a broader plan when the first tool list is insufficient, especially for multi-app workflows, UI automation, future skills, or complex tasks that need more context before execution.",
-        "entities": [],
+        "description": "Ask Jarvis's smarter middle model for a broader plan when the first tool list is insufficient, especially for multi-app workflows, UI automation, future skills, or complex tasks that need more context before execution. Set execute_safe_recommendation true only when the user asked Jarvis to take action and it is okay for Jarvis to immediately run a small safe follow-up such as opening an app or running an allowlisted read-only terminal command.",
+        "entities": ["execute_safe_recommendation"],
+        "entity_details": {
+            "execute_safe_recommendation": "Boolean. True only for action requests where Jarvis may immediately follow through on app.open or terminal.read_only after the middle planner chooses one; protected, private, Codex, browser, future, or confirmation-required routes remain preview-only.",
+        },
     },
     {
         "tool": "workflow.app_task_plan",
@@ -884,6 +887,15 @@ class Planner:
             next_preview = _middle_plan_next_tool_preview(text, result)
             if next_preview is not None:
                 result = {**result, "next_tool_preview": next_preview}
+            followup = self._middle_safe_followup_result(
+                text,
+                result,
+                assessment,
+                history=history,
+                allow_followup=_entity_truthy(entities.get("execute_safe_recommendation")),
+            )
+            if followup is not None:
+                result = {**result, "safe_followup": followup}
             summary = "Prepared middle-layer tool plan." if result.get("status") == "planned" else "Tried middle-layer tool planning."
             return self._result(text, "tools.more", summary, assessment, result, False)
         if selected_tool == "workflow.app_task_plan":
@@ -949,6 +961,63 @@ class Planner:
             summary = "Started Codex CLI job." if result.get("status") == "running" else "Tried to start Codex CLI job."
             return self._result(text, "codex.job", summary, assessment, result, bool(result.get("executed")))
         return None
+
+
+    def _middle_safe_followup_result(
+        self,
+        text: str,
+        result: dict[str, Any],
+        assessment: Any,
+        *,
+        history: list[dict[str, str]] | None = None,
+        allow_followup: bool = False,
+    ) -> dict[str, Any] | None:
+        recommended = str(result.get("recommended_tool") or "").strip()
+        if not recommended:
+            return None
+        entities = result.get("entities") if isinstance(result.get("entities"), dict) else {}
+        handoff = tool_handoff_plan(recommended, entities, text)
+        followup: dict[str, Any] = {
+            "selected_tool": recommended,
+            "allowed_by_request": allow_followup,
+            "handoff": handoff,
+            "executed": False,
+            "result": None,
+        }
+        if not allow_followup:
+            return {
+                **followup,
+                "status": "preview_only",
+                "reason": "The first model did not explicitly request safe follow-through.",
+            }
+        if recommended not in {"app.open", "terminal.read_only"}:
+            return {
+                **followup,
+                "status": "preview_only",
+                "reason": "Only app.open and terminal.read_only are currently allowed for middle-layer safe follow-through.",
+            }
+        if handoff.get("handoff") != "safe_execute_after_policy":
+            return {
+                **followup,
+                "status": "blocked_by_policy",
+                "reason": f"Policy handoff is {handoff.get('handoff') or 'unknown'}, not safe_execute_after_policy.",
+            }
+
+        routed = self.handle_selected_tool(text, recommended, entities, history=history)
+        if routed is None:
+            return {
+                **followup,
+                "status": "route_unavailable",
+                "reason": "The selected tool did not resolve through Planner.handle_selected_tool.",
+            }
+        routed_dict = routed.to_dict()
+        return {
+            **followup,
+            "status": "followed_through" if routed.executed else "not_executed",
+            "executed": bool(routed.executed),
+            "result": routed_dict,
+            "reason": routed.summary,
+        }
 
 
     def _voice_loop_result(self, text: str, assessment: Any, transcript: str) -> PlannedResult:
