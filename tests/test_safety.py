@@ -95,6 +95,7 @@ from jarvis.tools import (
     stt_recommendation_from_export,
     stt_session_plan,
     stt_score_transcript,
+    stop_speaking,
     teams_assignment_workflow_plan,
     tool_catalog_status,
     tool_handoff_plan,
@@ -374,6 +375,8 @@ class PlannerTests(unittest.TestCase):
             "model status": "diagnostics.fast_model",
             "model inputs for hello Jarvis": "diagnostics.model_context",
             "what do you feed the first model for 'hello Jarvis'": "diagnostics.model_context",
+            "stop talking": "voice.stop_speaking",
+            "stop Jarvis speech": "voice.stop_speaking",
             "tool catalog status": "diagnostics.tool_catalog",
             "what tools are fed to the model": "diagnostics.tool_catalog",
             "deep tool catalog": "tools.deep_catalog",
@@ -1050,6 +1053,28 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["called_fast_model"])
         context_mock.assert_called_once()
+
+    def test_tools_more_stop_speaking_recommendation_previews_without_audio(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "voice.stop_speaking",
+            "entities": {},
+            "reply": "Stopping my voice now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan):
+            result = Planner().handle_selected_tool("Stop speaking.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "voice.stop_speaking")
+        preview = result.result["next_tool_preview"]["preview"]
+        self.assertEqual(preview["tool"], "voice.stop_speaking")
+        self.assertFalse(preview["executed"])
+        self.assertTrue(preview["planned_only"])
+        self.assertTrue(preview["would_stop_active_speech"])
+        self.assertFalse(preview["would_start_audio"])
 
     def test_tools_more_daily_memory_recommendation_previews_without_raw_history(self):
         fake_plan = {
@@ -2835,6 +2860,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("voice.stt_score", tool_ids)
         self.assertIn("voice.stt_recommendation", tool_ids)
         self.assertIn("voice.loop_simulation", tool_ids)
+        self.assertIn("voice.stop_speaking", tool_ids)
         self.assertIn("diagnostics.overnight", tool_ids)
         self.assertIn("diagnostics.final_qa", tool_ids)
         self.assertIn("diagnostics.model_context", tool_ids)
@@ -3542,6 +3568,52 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(first_process.terminated)
         self.assertTrue(second["interrupted_previous"])
         self.assertEqual(second["previous_stop_method"], "terminate")
+
+    def test_stop_speaking_interrupts_active_process_without_starting_audio(self):
+        class FakeProcess:
+            def __init__(self):
+                self.running = True
+                self.terminated = False
+
+            def poll(self):
+                return None if self.running else 0
+
+            def terminate(self):
+                self.terminated = True
+                self.running = False
+
+            def kill(self):
+                self.running = False
+
+            def wait(self, timeout=None):
+                self.running = False
+                return 0
+
+        process = FakeProcess()
+        jarvis_tools.SPEECH_PROCESS = process
+        try:
+            result = stop_speaking()
+        finally:
+            jarvis_tools.SPEECH_PROCESS = None
+
+        self.assertEqual(result["tool"], "voice.stop_speaking")
+        self.assertEqual(result["status"], "stopped")
+        self.assertTrue(result["executed"])
+        self.assertTrue(result["interrupted_previous"])
+        self.assertTrue(process.terminated)
+        self.assertFalse(result["started_audio"])
+        self.assertFalse(result["played_audio"])
+
+    def test_stop_speaking_reports_idle_without_audio(self):
+        jarvis_tools.SPEECH_PROCESS = None
+
+        result = stop_speaking()
+
+        self.assertEqual(result["status"], "idle")
+        self.assertTrue(result["executed"])
+        self.assertFalse(result["interrupted_previous"])
+        self.assertFalse(result["started_audio"])
+        self.assertEqual(result["reply"], "I was not speaking.")
 
     def test_auto_speech_sanitizer_flattens_audio_unfriendly_formatting(self):
         spoken = jarvis_tools._sanitize_spoken_text(
@@ -5204,6 +5276,71 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(events[-1]["data"]["tool"], "tools.more")
         self.assertFalse(events[-1]["data"]["executed"])
 
+    def test_stream_command_suppresses_status_speech_for_direct_stop_speaking(self):
+        fake_stop = {
+            "tool": "voice.stop_speaking",
+            "status": "idle",
+            "executed": True,
+            "interrupted_previous": False,
+            "started_audio": False,
+            "played_audio": False,
+            "reply": "I was not speaking.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.stream_fast_local_chat_events") as stream_mock, \
+                 patch("jarvis.planner.stop_speaking", return_value=fake_stop) as stop_mock, \
+                 patch("jarvis.server.speak_text_async") as speak_mock:
+                events = list(server.stream_command("stop talking"))
+
+        stream_mock.assert_not_called()
+        stop_mock.assert_called_once()
+        speak_mock.assert_not_called()
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["text"], "Stopping my voice now.")
+        self.assertEqual(events[0]["data"]["speech"]["status"], "suppressed_for_stop_speaking")
+        self.assertEqual(events[-1]["data"]["tool"], "voice.stop_speaking")
+
+    def test_stream_command_suppresses_status_speech_for_model_selected_stop_speaking(self):
+        fake_events = [
+            {
+                "event": "final_result",
+                "data": {
+                    "tool": "conversation.fast_local",
+                    "status": "tool_requested",
+                    "selected_tool": "voice.stop_speaking",
+                    "status_text": "Stopping my voice now.",
+                    "entities": {},
+                    "executed": True,
+                },
+            }
+        ]
+        fake_stop = {
+            "tool": "voice.stop_speaking",
+            "status": "idle",
+            "executed": True,
+            "interrupted_previous": False,
+            "started_audio": False,
+            "played_audio": False,
+            "reply": "I was not speaking.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.stream_fast_local_chat_events", return_value=fake_events), \
+                 patch("jarvis.planner.stop_speaking", return_value=fake_stop) as stop_mock, \
+                 patch("jarvis.server.speak_text_async") as speak_mock:
+                events = list(server.stream_command("handle this voice request"))
+
+        stop_mock.assert_called_once()
+        speak_mock.assert_not_called()
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["text"], "Stopping my voice now.")
+        self.assertEqual(events[0]["data"]["speech"]["status"], "suppressed_for_stop_speaking")
+        self.assertEqual(events[-1]["data"]["tool"], "voice.stop_speaking")
+        self.assertEqual(events[-1]["data"]["result"]["status"], "idle")
+
     def test_conversation_history_payload_accepts_content_alias_and_skips_current(self):
         payload = {
             "history": [
@@ -5971,7 +6108,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("37/37", policy_gate["detail"])
+        self.assertIn("38/38", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

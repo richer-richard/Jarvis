@@ -352,6 +352,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Reports local text-to-speech readiness without playing audio.",
             },
             {
+                "id": "voice.stop_speaking",
+                "label": "Stop Speaking",
+                "mode": "execute",
+                "risk": "local_audio_control",
+                "available": True,
+                "description": "Stops any current Jarvis speech playback without starting new audio.",
+            },
+            {
                 "id": "conversation.codex",
                 "label": "Codex Chat",
                 "mode": "execute",
@@ -1713,6 +1721,27 @@ def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -
         )
 
 
+def stop_speaking() -> dict[str, Any]:
+    """Stop current Jarvis speech playback without starting new audio."""
+    started_at = time.monotonic()
+    with SPEECH_LOCK:
+        stop_status = _stop_active_speech_locked(timeout_seconds=0.6)
+    interrupted = bool(stop_status.get("interrupted_previous"))
+    return {
+        "tool": "voice.stop_speaking",
+        "status": "stopped" if interrupted else "idle",
+        "executed": True,
+        "interrupted_previous": interrupted,
+        "started_audio": False,
+        "played_audio": False,
+        "recorded_audio": False,
+        "read_private_content": False,
+        **stop_status,
+        **_duration_fields(started_at),
+        "reply": "Stopped speaking." if interrupted else "I was not speaking.",
+    }
+
+
 def tts_status() -> dict[str, Any]:
     """Return text-to-speech readiness without playing audio."""
     provider = _normalize_tts_provider(TTS_PROVIDER)
@@ -2043,6 +2072,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "diagnostics.final_qa", "kind": "read_only", "description": "Report the deferred foreground QA plan without opening apps or browsers."},
         {"id": "workflow.app_task_plan", "kind": "read_only_plan", "description": "Create a structured safe plan for future multi-step app work without executing the workflow."},
         {"id": "teams.assignment", "kind": "read_only_plan", "description": "Plan a Microsoft Teams assignment workflow without opening Teams, reading private content, downloading, submitting, or changing schoolwork."},
+        {"id": "voice.stop_speaking", "kind": "safe_execute", "description": "Stop current Jarvis speech playback without starting new audio."},
         {"id": "voice.stt_audition", "kind": "planned", "description": "Prepare a speech-recognition audition workflow."},
         {"id": "voice.stt_session_plan", "kind": "read_only_plan", "description": "Plan one speech-recognition audition run with reference sentence, candidate, metrics, and export checklist."},
         {"id": "voice.session_plan", "kind": "read_only_plan", "description": "Plan the full voice-command loop from wake to visible status, STT, routing, speech, and text fallback without recording audio."},

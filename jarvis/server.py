@@ -107,12 +107,16 @@ class JarvisServer:
         if preview.get("tool") != "conversation.fast_local":
             status_text = _stream_status_text(preview)
             if status_text:
-                speech = speak_text_async(status_text, reason="status")
+                preview_tool = str(preview.get("tool") or "")
+                if preview_tool == "voice.stop_speaking":
+                    speech = {"spoken": False, "status": "suppressed_for_stop_speaking", "reason": "status"}
+                else:
+                    speech = speak_text_async(status_text, reason="status")
                 yield {
                     "event": "status",
                     "data": {
                         "text": status_text,
-                        "tool": preview.get("tool"),
+                        "tool": preview_tool,
                         "speech": speech,
                     },
                 }
@@ -147,7 +151,10 @@ class JarvisServer:
             if not status_text:
                 status_text = _stream_status_text({"tool": selected_tool})
             if status_text:
-                speech = speak_text_async(status_text, reason="status")
+                if selected_tool == "voice.stop_speaking":
+                    speech = {"spoken": False, "status": "suppressed_for_stop_speaking", "reason": "status"}
+                else:
+                    speech = speak_text_async(status_text, reason="status")
                 yield {
                     "event": "status",
                     "data": {
@@ -397,6 +404,7 @@ class JarvisServer:
             "diagnostics.overnight",
             "diagnostics.final_qa",
             "diagnostics.model_context",
+            "voice.stop_speaking",
             "diagnostics.tool_catalog",
             "tools.deep_catalog",
             "tools.handoff_plan",
@@ -577,6 +585,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "diagnostics.memory": "Yes sir, checking Jarvis memory now.",
         "memory.daily_summary": "Yes sir, checking today's memory summary now.",
         "diagnostics.model_context": "Yes sir, checking the model context now.",
+        "voice.stop_speaking": "Stopping my voice now.",
         "diagnostics.tool_catalog": "Yes sir, checking the tool catalog now.",
         "tools.deep_catalog": "Yes sir, checking the deeper tool catalog now.",
         "tools.handoff_plan": "Yes sir, checking how to handle that now.",

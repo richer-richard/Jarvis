@@ -55,6 +55,7 @@ from .tools import (
     source_access_status,
     start_codex_continue_job,
     start_codex_delegate_job,
+    stop_speaking,
     stt_audition_status,
     stt_candidate_status,
     stt_recommendation_from_export,
@@ -110,6 +111,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "diagnostics.model_context",
         "description": "Preview what Jarvis would feed its first model, middle planner, Codex, and TTS without calling any model.",
         "entities": ["sample_prompt"],
+    },
+    {
+        "tool": "voice.stop_speaking",
+        "description": "Stop current Jarvis speech playback when the user tells Jarvis to stop talking, be quiet, or stop speaking. Do not speak a status line for this tool.",
+        "entities": [],
+        "examples": [
+            'Stopping my voice now. \\tool({"tool":"voice.stop_speaking","entities":{}})',
+        ],
     },
     {
         "tool": "diagnostics.tool_catalog",
@@ -515,6 +524,8 @@ class Planner:
             return self._result(text, "diagnostics.permissions", "Read Jarvis permissions readiness.", assessment, permissions_status(), True)
         if _looks_like_model_context_status(lower):
             return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(_extract_model_context_sample(text), tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
+        if _looks_like_stop_speaking(lower):
+            return self._result(text, "voice.stop_speaking", "Stopped Jarvis speech playback.", assessment, stop_speaking(), True)
         if _looks_like_remote_worker_status(lower):
             return self._result(text, "diagnostics.remote_worker", "Read remote MacBook Air worker status.", assessment, remote_worker_status(), True)
         if _looks_like_elevation_status(lower):
@@ -709,6 +720,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.permissions", assessment, True)
         if _looks_like_model_context_status(lower):
             return self._preview_result(text, "diagnostics.model_context", assessment, True)
+        if _looks_like_stop_speaking(lower):
+            return self._preview_result(text, "voice.stop_speaking", assessment, True)
         if _looks_like_source_access_status(lower):
             return self._preview_result(text, "diagnostics.source_access", assessment, True)
         if _looks_like_tts_status(lower):
@@ -817,6 +830,10 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "diagnostics.model_context", assessment, True, plan={"intent": intent, "sample_prompt": sample})
             return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(sample, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
+        if selected_tool == "voice.stop_speaking":
+            if not execute:
+                return self._preview_result(text, "voice.stop_speaking", assessment, True, plan={"intent": intent})
+            return self._result(text, "voice.stop_speaking", "Stopped Jarvis speech playback.", assessment, stop_speaking(), True)
         if selected_tool == "diagnostics.tool_catalog":
             if not execute:
                 return self._preview_result(text, "diagnostics.tool_catalog", assessment, True, plan={"intent": intent})
@@ -1326,6 +1343,20 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "recommended_tool": recommended,
             "executed": False,
             "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "voice.stop_speaking":
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {
+                "tool": "voice.stop_speaking",
+                "status": "planned",
+                "executed": False,
+                "planned_only": True,
+                "would_stop_active_speech": True,
+                "would_start_audio": False,
+                "reply": "Would stop Jarvis speech playback.",
+            },
         }
     if recommended == "diagnostics.tool_catalog":
         preview = tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS)
@@ -1876,6 +1907,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
         "diagnostics.overnight": "Yes sir, checking the overnight workboard now.",
         "diagnostics.final_qa": "Yes sir, checking the final QA plan now.",
         "diagnostics.model_context": "Yes sir, checking the model context now.",
+        "voice.stop_speaking": "Stopping my voice now.",
         "diagnostics.tool_catalog": "Yes sir, checking the tool catalog now.",
         "tools.deep_catalog": "Yes sir, checking the deeper tool catalog now.",
         "tools.handoff_plan": "Yes sir, checking how to handle that now.",
@@ -2086,6 +2118,16 @@ def _looks_like_tts_status(lower: str) -> bool:
         any(cue in lower for cue in tts_cues)
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_stop_speaking(lower: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:stop|cancel|interrupt|mute)\s+(?:jarvis\s+)?(?:speaking|speech|talking|voice|tts)\b",
+            lower,
+        )
+        or re.search(r"\b(?:be quiet|shut up|stop talking)\b", lower)
     )
 
 
