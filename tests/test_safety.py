@@ -308,6 +308,7 @@ class PlannerTests(unittest.TestCase):
             "can you speak": "diagnostics.tts",
             "screen status": "screenshot.capability",
             "codex speed status": "diagnostics.codex_speed",
+            "codex jobs": "codex.job",
             "open browser https://example.com": "browser.open_url",
             "wake: Hey Jarvis status": "voice.wake_simulation",
             "Hey Jarvis status": "voice.wake_simulation",
@@ -334,6 +335,35 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.executed)
         self.assertEqual(result.result["job_id"], "codex-test")
         self.assertEqual(result.result["model"], "gpt-5.4-mini")
+
+    def test_explicit_codex_request_bypasses_model_router(self):
+        fake_result = {
+            "tool": "codex.job",
+            "status": "running",
+            "executed": True,
+            "model": "gpt-5.4-mini",
+            "job_id": "codex-explicit",
+            "reply": "I started Codex job codex-explicit.",
+        }
+        bad_intent = {"status": "completed", "selected_tool": "outlook.visible_summary", "confidence": 0.91, "entities": {}}
+        with patch("jarvis.planner.select_tool_intent", return_value=bad_intent) as router_mock, \
+             patch("jarvis.planner.start_codex_delegate_job", return_value=fake_result):
+            result = Planner().handle("ask Codex to inspect this prototype", use_model_router=True)
+
+        router_mock.assert_not_called()
+        self.assertEqual(result.tool, "codex.job")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["job_id"], "codex-explicit")
+
+    def test_explicit_codex_preview_bypasses_model_router(self):
+        bad_intent = {"status": "completed", "selected_tool": "outlook.visible_summary", "confidence": 0.91, "entities": {}}
+        with patch("jarvis.planner.select_tool_intent", return_value=bad_intent) as router_mock:
+            result = Planner().preview("use Codex to answer this one question", use_model_router=True)
+
+        router_mock.assert_not_called()
+        self.assertEqual(result.tool, "codex.job")
+        self.assertFalse(result.executed)
+        self.assertTrue(result.result["would_execute_if_run"])
 
     def test_codex_job_status_route(self):
         fake_result = {
@@ -1393,6 +1423,44 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["reply"], "Persisted answer.")
         self.assertNotIn("planned_command", result["job"])
+
+    def test_codex_activity_snapshot_reports_redacted_tails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = Path(temp_dir) / "codex_jobs.json"
+            try:
+                with patch("jarvis.tools.CODEX_JOB_STORE", store):
+                    with jarvis_tools.CODEX_JOBS_LOCK:
+                        jarvis_tools.CODEX_JOBS.clear()
+                        jarvis_tools.CODEX_JOBS_LOADED = True
+                        jarvis_tools.CODEX_JOBS["codex-running"] = {
+                            "tool": "codex.job",
+                            "job_id": "codex-running",
+                            "status": "running",
+                            "phase": "running",
+                            "model": "gpt-5.4-mini",
+                            "prompt_summary": "inspect project",
+                            "started_at": 20.0,
+                            "last_activity_at": 21.0,
+                            "stdout_tail": "reading files",
+                            "stderr_tail": "token=abc123 working",
+                            "cli_tail": "stdout:\nreading files\nstderr:\ntoken=abc123 working",
+                            "conversation_tail": "Thinking through the code.",
+                        }
+                    snapshot = jarvis_tools.codex_activity_snapshot()
+            finally:
+                with jarvis_tools.CODEX_JOBS_LOCK:
+                    jarvis_tools.CODEX_JOBS.clear()
+                    jarvis_tools.CODEX_JOBS_LOADED = False
+
+        serialized = json.dumps(snapshot, ensure_ascii=False)
+        self.assertEqual(snapshot["status"], "checked")
+        self.assertEqual(snapshot["running_count"], 1)
+        self.assertEqual(snapshot["latest_job"]["job_id"], "codex-running")
+        self.assertEqual(snapshot["latest_job"]["phase"], "running")
+        self.assertIn("reading files", snapshot["latest_job"]["cli_tail"])
+        self.assertIn("Thinking through the code.", snapshot["latest_job"]["conversation_tail"])
+        self.assertNotIn("abc123", serialized)
+        self.assertIn("[REDACTED]", serialized)
 
     def test_persisted_running_codex_job_becomes_interrupted_after_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3025,6 +3093,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn("GET /api/readiness", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /api/preflight", readiness["mode"]["allowed_while_paused"])
+        self.assertIn("GET /api/codex/activity", readiness["mode"]["allowed_while_paused"])
         self.assertTrue(readiness["mode"]["paused"])
         self.assertGreaterEqual(readiness["tools"]["total"], readiness["tools"]["available"])
         self.assertGreater(readiness["self_check"]["total"], 0)

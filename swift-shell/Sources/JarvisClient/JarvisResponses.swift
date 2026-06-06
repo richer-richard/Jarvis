@@ -72,6 +72,40 @@ public struct CodexJobHealth: Decodable, Sendable {
     public let latestStatus: String?
 }
 
+public struct CodexActivityResponse: Decodable, Sendable {
+    public let tool: String?
+    public let status: String
+    public let trackedCount: Int
+    public let runningCount: Int
+    public let latestJob: CodexActivityJob?
+    public let jobs: [CodexActivityJob]
+    public let reply: String?
+}
+
+public struct CodexActivityJob: Decodable, Identifiable, Sendable {
+    public let jobId: String
+    public let status: String?
+    public let phase: String?
+    public let model: String?
+    public let promptSummary: String?
+    public let startedAt: Double?
+    public let completedAt: Double?
+    public let lastActivityAt: Double?
+    public let durationHuman: String?
+    public let durationSeconds: Double?
+    public let returncode: Int?
+    public let commandPreview: String?
+    public let cliTail: String?
+    public let stdoutTail: String?
+    public let stderrTail: String?
+    public let conversationTail: String?
+    public let replyTail: String?
+
+    public var id: String {
+        jobId
+    }
+}
+
 public struct FastModelStatus: Decodable, Sendable {
     public let backend: String?
     public let model: String?

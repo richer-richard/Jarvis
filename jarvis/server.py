@@ -27,6 +27,7 @@ from .planner import NATURAL_LANGUAGE_TOOL_SPECS, Planner
 from .safety import classify_command, policy_summary
 from .self_check import run_self_checks
 from .tools import (
+    codex_activity_snapshot,
     outlook_visible_text_summary,
     prewarm_tts_async,
     speak_text_async,
@@ -316,6 +317,7 @@ class JarvisServer:
                     "GET /api/tools",
                     "GET /api/readiness",
                     "GET /api/preflight",
+                    "GET /api/codex/activity",
                     "GET /api/audit/status",
                     "GET /api/audit",
                     "GET /api/self-check",
@@ -615,6 +617,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         if route.path == "/api/preflight":
             self._send_json(STATE.preflight())
+            return
+        if route.path == "/api/codex/activity":
+            query = parse_qs(route.query)
+            limit = _bounded_int(query.get("limit", ["3"])[0], default=3, minimum=1, maximum=10)
+            self._send_json(codex_activity_snapshot(limit=limit))
             return
         if route.path == "/api/audit/status":
             self._send_json(STATE.audit.status())

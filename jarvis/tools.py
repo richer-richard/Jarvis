@@ -29,6 +29,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from typing import Any
 
+from .audit import redact_sensitive_text
 from .config import (
     CODEX_CHAT_TIMEOUT_SECONDS,
     CODEX_TIMEOUT_SECONDS,
@@ -101,6 +102,8 @@ CODEX_JOBS_LOCK = threading.Lock()
 CODEX_JOBS_LOADED = False
 CODEX_JOB_STORE = RUNTIME_DIR / "codex_jobs.json"
 MAX_PERSISTED_CODEX_JOBS = 20
+CODEX_ACTIVITY_TAIL_CHARS = 2400
+CODEX_ACTIVITY_BUFFER_LINES = 80
 REMOTE_WORKER_USER = "hongyi"
 REMOTE_WORKER_HOST = "100.72.212.85"
 REMOTE_WORKER_SSH_TARGET = f"{REMOTE_WORKER_USER}@{REMOTE_WORKER_HOST}"
@@ -298,6 +301,14 @@ def tool_registry() -> dict[str, Any]:
                 "risk": "read_only",
                 "available": True,
                 "description": "Summarizes persisted Codex job timings without starting a new Codex request.",
+            },
+            {
+                "id": "codex.activity",
+                "label": "Codex Activity",
+                "mode": "read_only",
+                "risk": "local_metadata_redacted_tails",
+                "available": True,
+                "description": "Shows redacted short tails from recent async Codex jobs so the app can display live progress.",
             },
             {
                 "id": "diagnostics.remote_worker",
@@ -4477,9 +4488,13 @@ def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model:
         "tool": "codex.job",
         "job_id": job_id,
         "status": "running",
+        "phase": "queued",
         "model": plan["model"],
         "started_at": time.time(),
+        "last_activity_at": time.time(),
         "prompt_summary": _rough_understanding(cleaned),
+        "cli_tail": "Codex job queued.",
+        "conversation_tail": "",
     }
     with CODEX_JOBS_LOCK:
         _ensure_codex_jobs_loaded_unlocked()
@@ -4588,26 +4603,274 @@ def codex_speed_status() -> dict[str, Any]:
     }
 
 
+def codex_activity_snapshot(limit: int = 3) -> dict[str, Any]:
+    with CODEX_JOBS_LOCK:
+        _ensure_codex_jobs_loaded_unlocked()
+        jobs = [dict(value) for value in CODEX_JOBS.values()]
+    recent_jobs = sorted(jobs, key=lambda item: float(item.get("started_at") or 0), reverse=True)
+    visible_jobs = [_codex_activity_job(job) for job in recent_jobs[: max(1, min(limit, 10))]]
+    running_count = sum(1 for job in jobs if job.get("status") == "running")
+    latest_job = visible_jobs[0] if visible_jobs else None
+    if latest_job:
+        reply = f"Latest Codex job {latest_job.get('job_id')} is {latest_job.get('phase') or latest_job.get('status')}."
+    else:
+        reply = "No Codex jobs are tracked yet."
+    return {
+        "tool": "codex.activity",
+        "status": "checked",
+        "executed": False,
+        "tracked_count": len(jobs),
+        "running_count": running_count,
+        "latest_job": latest_job,
+        "jobs": visible_jobs,
+        "reply": reply,
+    }
+
+
 def _codex_delegate_job_worker(job_id: str, prompt: str, project_dir: str | None, model: str | None) -> None:
-    result = run_codex_delegate(prompt, project_dir=project_dir, model=model)
-    completed_at = time.time()
+    cleaned = _clean_codex_prompt(prompt)
+    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model)
+    started_at = time.monotonic()
+    if not plan["available"]:
+        _update_codex_job_activity(
+            job_id,
+            status="codex_not_found",
+            phase="failed",
+            completed_at=time.time(),
+            duration_seconds=0.0,
+            duration_human="0.0s",
+            reply="Codex CLI is not available on this machine.",
+            cli_tail="Codex CLI is not available on this machine.",
+            conversation_tail="Codex CLI is not available on this machine.",
+            last_activity_at=time.time(),
+        )
+        return
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    activity_lock = threading.Lock()
+    workdir = plan["planned_command"][plan["planned_command"].index("--cd") + 1]
+
+    with tempfile.TemporaryDirectory(prefix="jarvis-codex-") as temp_dir:
+        output_path = Path(temp_dir) / "last-message.txt"
+        command = [
+            *plan["planned_command"][:-1],
+            "--output-last-message",
+            str(output_path),
+            plan["planned_command"][-1],
+        ]
+        command_preview = _codex_command_preview(plan)
+        _update_codex_job_activity(
+            job_id,
+            phase="starting",
+            command_preview=command_preview,
+            cli_tail=f"Starting Codex CLI: {command_preview}",
+            last_activity_at=time.time(),
+        )
+        try:
+            process = subprocess.Popen(
+                command,
+                shell=False,
+                cwd=workdir,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=1,
+            )
+        except OSError as error:
+            duration = _duration_fields(started_at)
+            message = f"I could not start Codex CLI: {error}"
+            _update_codex_job_activity(
+                job_id,
+                status="execution_error",
+                phase="failed",
+                completed_at=time.time(),
+                error=str(error),
+                reply=message,
+                conversation_tail=message,
+                cli_tail=message,
+                last_activity_at=time.time(),
+                **duration,
+            )
+            return
+
+        _update_codex_job_activity(
+            job_id,
+            phase="running",
+            process_id=process.pid,
+            cli_tail=f"Codex CLI is running as pid {process.pid}.",
+            last_activity_at=time.time(),
+        )
+
+        def publish_activity() -> None:
+            with activity_lock:
+                stdout_tail = _codex_lines_tail(stdout_lines, CODEX_ACTIVITY_TAIL_CHARS)
+                stderr_tail = _codex_lines_tail(stderr_lines, CODEX_ACTIVITY_TAIL_CHARS)
+            _update_codex_job_activity(
+                job_id,
+                phase="running",
+                stdout_tail=stdout_tail,
+                stderr_tail=stderr_tail,
+                cli_tail=_codex_combined_cli_tail(stdout_tail, stderr_tail),
+                last_activity_at=time.time(),
+            )
+
+        def reader(stream: Any, target: list[str]) -> None:
+            if stream is None:
+                return
+            try:
+                for line in stream:
+                    clean_line = _codex_activity_tail(line.rstrip("\n"), 1200)
+                    if not clean_line:
+                        continue
+                    with activity_lock:
+                        target.append(clean_line)
+                        if len(target) > CODEX_ACTIVITY_BUFFER_LINES:
+                            del target[: len(target) - CODEX_ACTIVITY_BUFFER_LINES]
+                    publish_activity()
+            finally:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+
+        readers = [
+            threading.Thread(target=reader, args=(process.stdout, stdout_lines), daemon=True),
+            threading.Thread(target=reader, args=(process.stderr, stderr_lines), daemon=True),
+        ]
+        for thread in readers:
+            thread.start()
+
+        timed_out = False
+        try:
+            returncode = process.wait(timeout=CODEX_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            current_stdout = _codex_lines_tail(stdout_lines)
+            current_stderr = _codex_lines_tail(stderr_lines)
+            _update_codex_job_activity(
+                job_id,
+                phase="timeout",
+                cli_tail=_codex_activity_tail(
+                    f"{_codex_combined_cli_tail(current_stdout, current_stderr)}\n"
+                    f"Codex CLI timed out after {CODEX_TIMEOUT_SECONDS} seconds; stopping the process.",
+                    CODEX_ACTIVITY_TAIL_CHARS,
+                ),
+                last_activity_at=time.time(),
+            )
+            process.kill()
+            try:
+                returncode = process.wait(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                returncode = None
+
+        for thread in readers:
+            thread.join(timeout=1)
+
+        stdout_tail = _codex_lines_tail(stdout_lines, 8000)
+        stderr_tail = _codex_lines_tail(stderr_lines, 3000)
+        last_message = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
+
+    duration = _duration_fields(started_at)
+    if timed_out:
+        status = "timeout"
+        phase = "timeout"
+        reply = f"Codex CLI timed out after {CODEX_TIMEOUT_SECONDS} seconds using {plan['model']}."
+    else:
+        status = "completed" if returncode == 0 else "failed"
+        phase = status
+        reply = _codex_reply(stdout_tail, stderr_tail, int(returncode or 0), plan["model"], last_message=last_message)
+
+    conversation_tail = _codex_activity_tail(last_message or reply, 4000)
+    _update_codex_job_activity(
+        job_id,
+        status=status,
+        phase=phase,
+        completed_at=time.time(),
+        returncode=returncode,
+        stdout_tail=_codex_activity_tail(stdout_tail, 8000),
+        stderr_tail=_codex_activity_tail(stderr_tail, 3000),
+        cli_tail=_codex_combined_cli_tail(stdout_tail, stderr_tail),
+        conversation_tail=conversation_tail,
+        reply=_codex_activity_tail(reply, 4000),
+        last_activity_at=time.time(),
+        **duration,
+    )
+
+
+def _codex_activity_job(job: dict[str, Any]) -> dict[str, Any]:
+    reply_tail = _codex_activity_tail(job.get("reply"), 1600)
+    conversation_tail = _codex_activity_tail(job.get("conversation_tail") or reply_tail, 1600)
+    stdout_tail = _codex_activity_tail(job.get("stdout_tail"), 1800)
+    stderr_tail = _codex_activity_tail(job.get("stderr_tail"), 1200)
+    cli_tail = _codex_activity_tail(
+        job.get("cli_tail") or _codex_combined_cli_tail(stdout_tail, stderr_tail),
+        CODEX_ACTIVITY_TAIL_CHARS,
+    )
+    return {
+        "job_id": str(job.get("job_id") or ""),
+        "status": str(job.get("status") or "unknown"),
+        "phase": str(job.get("phase") or job.get("status") or "unknown"),
+        "model": str(job.get("model") or ""),
+        "prompt_summary": _codex_activity_tail(job.get("prompt_summary"), 500),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "last_activity_at": job.get("last_activity_at"),
+        "duration_human": job.get("duration_human"),
+        "duration_seconds": job.get("duration_seconds"),
+        "returncode": job.get("returncode"),
+        "command_preview": _codex_activity_tail(job.get("command_preview"), 500),
+        "cli_tail": cli_tail,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+        "conversation_tail": conversation_tail,
+        "reply_tail": reply_tail,
+    }
+
+
+def _update_codex_job_activity(job_id: str, **fields: Any) -> None:
     with CODEX_JOBS_LOCK:
         job = CODEX_JOBS.get(job_id)
         if not job:
             return
-        job["status"] = "completed" if result.get("status") == "completed" else str(result.get("status") or "failed")
-        job["completed_at"] = completed_at
-        job["duration_human"] = result.get("duration_human")
-        job["duration_seconds"] = result.get("duration_seconds")
-        job["returncode"] = result.get("returncode")
-        job["reply"] = result.get("reply")
+        for key, value in fields.items():
+            if value is not None:
+                job[key] = value
         _persist_codex_jobs_unlocked()
+
+
+def _codex_command_preview(plan: dict[str, Any]) -> str:
+    return (
+        f"{Path(str(plan.get('codex_path') or 'codex')).name} exec "
+        f"--model {plan.get('model') or DEFAULT_CODEX_MODEL} "
+        f"--sandbox {plan.get('sandbox') or 'read-only'}"
+    )
+
+
+def _codex_activity_tail(value: Any, max_chars: int = CODEX_ACTIVITY_TAIL_CHARS) -> str:
+    return _text_tail(redact_sensitive_text(str(value or "")), max_chars).strip()
+
+
+def _codex_lines_tail(lines: list[str], max_chars: int = CODEX_ACTIVITY_TAIL_CHARS) -> str:
+    return _codex_activity_tail("\n".join(lines[-CODEX_ACTIVITY_BUFFER_LINES:]), max_chars)
+
+
+def _codex_combined_cli_tail(stdout_tail: str, stderr_tail: str) -> str:
+    sections = []
+    if stdout_tail.strip():
+        sections.append(f"stdout:\n{stdout_tail.strip()}")
+    if stderr_tail.strip():
+        sections.append(f"stderr:\n{stderr_tail.strip()}")
+    return _codex_activity_tail("\n\n".join(sections), CODEX_ACTIVITY_TAIL_CHARS)
 
 
 def _codex_job_reply(job: dict[str, Any]) -> str:
     status = str(job.get("status") or "unknown")
     job_id = str(job.get("job_id") or "unknown")
     if status == "running":
+        activity = _codex_activity_tail(job.get("conversation_tail") or job.get("cli_tail"), 300)
+        if activity:
+            return f"Codex job {job_id} is still running. Latest activity: {activity}"
         return f"Codex job {job_id} is still running."
     if status == "interrupted":
         return f"Codex job {job_id} was interrupted because the worker restarted before it finished."
@@ -4639,7 +4902,9 @@ def _ensure_codex_jobs_loaded_unlocked() -> None:
             continue
         if job.get("status") == "running":
             job["status"] = "interrupted"
+            job["phase"] = "interrupted"
             job["completed_at"] = time.time()
+            job["last_activity_at"] = time.time()
             job["reply"] = _codex_job_reply(job)
             changed = True
         CODEX_JOBS.setdefault(job_id, job)
@@ -4673,13 +4938,21 @@ def _codex_job_persistable(job: dict[str, Any]) -> dict[str, Any]:
         "tool",
         "job_id",
         "status",
+        "phase",
         "model",
         "prompt_summary",
         "started_at",
         "completed_at",
+        "last_activity_at",
         "duration_human",
         "duration_seconds",
         "returncode",
+        "process_id",
+        "command_preview",
+        "stdout_tail",
+        "stderr_tail",
+        "cli_tail",
+        "conversation_tail",
         "reply",
         "error",
     }
@@ -4688,9 +4961,18 @@ def _codex_job_persistable(job: dict[str, Any]) -> dict[str, Any]:
     if "prompt_summary" in clean:
         clean["prompt_summary"] = _text_tail(str(clean["prompt_summary"]), 500)
     if "reply" in clean:
-        clean["reply"] = _text_tail(str(clean["reply"]), 4000)
+        clean["reply"] = _codex_activity_tail(clean["reply"], 4000)
     if "error" in clean:
-        clean["error"] = _text_tail(str(clean["error"]), 1000)
+        clean["error"] = _codex_activity_tail(clean["error"], 1000)
+    for key, max_chars in {
+        "command_preview": 500,
+        "stdout_tail": 8000,
+        "stderr_tail": 3000,
+        "cli_tail": CODEX_ACTIVITY_TAIL_CHARS,
+        "conversation_tail": 4000,
+    }.items():
+        if key in clean:
+            clean[key] = _codex_activity_tail(clean[key], max_chars)
     return clean
 
 

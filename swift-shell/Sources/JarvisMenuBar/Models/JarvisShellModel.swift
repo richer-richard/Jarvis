@@ -12,6 +12,8 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var confirmation: Confirmation?
     @Published private(set) var auditText: String = "Audit not loaded"
     @Published private(set) var codexText: String = "Codex not checked"
+    @Published private(set) var codexActivity: CodexActivityResponse?
+    @Published private(set) var codexActivityText: String = "No Codex activity yet"
     @Published private(set) var workerText: String = "Worker not checked"
     @Published private(set) var verificationText: String = "Verification not checked"
     @Published private(set) var modeText: String = "Mode not checked"
@@ -33,6 +35,7 @@ final class JarvisShellModel: ObservableObject {
     private var lastReadinessDiagnostics: [String: Any] = [:]
     private var lastCommandDiagnostics: [String: Any] = [:]
     private var monitoredCodexJobs: Set<String> = []
+    private var codexActivityTask: Task<Void, Never>?
     private var activeTimerTasks: [String: Task<Void, Never>] = [:]
     private static let smokeTestPrompts = [
         "hello Jarvis",
@@ -120,6 +123,8 @@ final class JarvisShellModel: ObservableObject {
     }
 
     func stopWorkerMonitoring() {
+        codexActivityTask?.cancel()
+        codexActivityTask = nil
         workerSupervisor.stopMonitoring()
         workerSupervisor.stopStartedWorker()
     }
@@ -167,6 +172,7 @@ final class JarvisShellModel: ObservableObject {
                 "mode": modeText,
                 "worker": workerText,
                 "codex": codexText,
+                "codex_activity": codexActivityText,
                 "verification": verificationText,
                 "permission_summary": permissionText,
                 "fast_model": lastHealthDiagnostics["fast_model"] ?? NSNull(),
@@ -176,6 +182,7 @@ final class JarvisShellModel: ObservableObject {
                 "health": lastHealthDiagnostics,
                 "readiness": lastReadinessDiagnostics,
                 "permissions": Self.permissionDiagnostics(permissions),
+                "codex_activity": Self.codexActivityDiagnostics(codexActivity),
                 "last_response": lastCommandDiagnostics,
             ],
             "current_command": command,
@@ -228,6 +235,7 @@ final class JarvisShellModel: ObservableObject {
             connection = "Offline"
             auditText = "Audit unavailable"
             codexText = "Worker unavailable"
+            codexActivityText = "Worker unavailable"
             return
         }
 
@@ -236,6 +244,17 @@ final class JarvisShellModel: ObservableObject {
             connection = health.ok ? "Online" : "Issue"
             codexText = health.status.codex.version ?? "Codex CLI not found"
             lastHealthDiagnostics = Self.healthDiagnostics(from: health)
+            let codexJobCount = health.status.codexJobs?.trackedCount ?? 0
+            let runningCodexJobCount = health.status.codexJobs?.runningCount ?? 0
+            if codexJobCount > 0 {
+                await refreshCodexActivity()
+            } else {
+                codexActivity = nil
+                codexActivityText = "No Codex activity yet"
+            }
+            if runningCodexJobCount > 0 {
+                startCodexActivityPolling()
+            }
             if let mode = health.mode {
                 applyMode(mode)
             } else {
@@ -254,6 +273,7 @@ final class JarvisShellModel: ObservableObject {
             connection = "Offline"
             auditText = "Audit unavailable"
             codexText = "Worker unavailable"
+            codexActivityText = "Codex activity unavailable"
             verificationText = "Verification unavailable"
         }
     }
@@ -769,8 +789,45 @@ final class JarvisShellModel: ObservableObject {
         }
 
         monitoredCodexJobs.insert(jobId)
+        startCodexActivityPolling()
         Task {
             await monitorCodexJob(jobId)
+        }
+    }
+
+    private func startCodexActivityPolling() {
+        codexActivityTask?.cancel()
+        codexActivityTask = Task { [weak self] in
+            var idlePolls = 0
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+                await self.refreshCodexActivity()
+                if (self.codexActivity?.runningCount ?? 0) > 0 {
+                    idlePolls = 0
+                } else {
+                    idlePolls += 1
+                    if idlePolls >= 2 {
+                        break
+                    }
+                }
+                do {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func refreshCodexActivity() async {
+        do {
+            let activity = try await client.codexActivity()
+            codexActivity = activity
+            codexActivityText = Self.formatCodexActivity(activity)
+        } catch {
+            codexActivityText = "Codex activity unavailable"
         }
     }
 
@@ -787,6 +844,7 @@ final class JarvisShellModel: ObservableObject {
             }
 
             do {
+                await refreshCodexActivity()
                 let response = try await client.send(command: "codex job \(jobId)")
                 let status = response.result?.objectValue?["status"]?.stringValue ?? "unknown"
                 if status == "running" {
@@ -807,6 +865,7 @@ final class JarvisShellModel: ObservableObject {
                     )
                 )
                 chatExportText = "Codex job finished"
+                await refreshCodexActivity()
                 await refreshNow()
                 return
             } catch {
@@ -1237,6 +1296,23 @@ final class JarvisShellModel: ObservableObject {
         return "Verification \(state) \(passed)/\(total)\(age)"
     }
 
+    private static func formatCodexActivity(_ activity: CodexActivityResponse) -> String {
+        guard let job = activity.latestJob else {
+            return "No Codex activity yet"
+        }
+        let phase = job.phase ?? job.status ?? "unknown"
+        var parts = ["\(job.jobId) \(phase)"]
+        if let duration = job.durationHuman, !duration.isEmpty {
+            parts.append(duration)
+        } else if activity.runningCount > 0 {
+            parts.append("running")
+        }
+        if let model = job.model, !model.isEmpty {
+            parts.append(model)
+        }
+        return parts.joined(separator: " | ")
+    }
+
     private static func healthDiagnostics(from health: HealthResponse) -> [String: Any] {
         var payload: [String: Any] = [
             "ok": health.ok,
@@ -1305,6 +1381,43 @@ final class JarvisShellModel: ObservableObject {
             payload["verification"] = verificationDiagnostics(verification)
         }
         return payload
+    }
+
+    private static func codexActivityDiagnostics(_ activity: CodexActivityResponse?) -> [String: Any] {
+        guard let activity else {
+            return [
+                "available": false,
+                "reason": "not_loaded",
+            ]
+        }
+        return [
+            "available": true,
+            "status": activity.status,
+            "tracked_count": activity.trackedCount,
+            "running_count": activity.runningCount,
+            "latest_job": activity.latestJob.map(Self.codexActivityJobDiagnostics) ?? NSNull(),
+            "jobs": activity.jobs.map(Self.codexActivityJobDiagnostics),
+        ]
+    }
+
+    private static func codexActivityJobDiagnostics(_ job: CodexActivityJob) -> [String: Any] {
+        [
+            "job_id": job.jobId,
+            "status": jsonOrNull(job.status),
+            "phase": jsonOrNull(job.phase),
+            "model": jsonOrNull(job.model),
+            "prompt_summary": jsonOrNull(job.promptSummary),
+            "started_at": jsonOrNull(job.startedAt),
+            "completed_at": jsonOrNull(job.completedAt),
+            "last_activity_at": jsonOrNull(job.lastActivityAt),
+            "duration_human": jsonOrNull(job.durationHuman),
+            "duration_seconds": jsonOrNull(job.durationSeconds),
+            "returncode": jsonOrNull(job.returncode),
+            "command_preview": jsonOrNull(job.commandPreview),
+            "cli_tail": jsonOrNull(job.cliTail),
+            "conversation_tail": jsonOrNull(job.conversationTail),
+            "reply_tail": jsonOrNull(job.replyTail),
+        ]
     }
 
     private static func permissionDiagnostics(_ permissions: [PermissionReadiness]) -> [[String: Any]] {

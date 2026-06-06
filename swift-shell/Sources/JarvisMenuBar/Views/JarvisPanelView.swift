@@ -12,10 +12,11 @@ struct JarvisPanelView: View {
             chatSection
             composer
             quickActions
+            codexActivityPanel
             readinessFooter
         }
         .padding(18)
-        .frame(minWidth: 640, minHeight: 680)
+        .frame(minWidth: 660, minHeight: 760)
         .task {
             model.refresh()
         }
@@ -100,6 +101,60 @@ struct JarvisPanelView: View {
             QuickActionButton("Screen", command: "screenshot capability", model: model)
             QuickActionButton("Codex", command: "ask Codex to review this project", model: model)
         }
+    }
+
+    @ViewBuilder
+    private var codexActivityPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Codex Activity")
+                    .font(.caption.weight(.semibold))
+                Text(model.codexActivityText)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                if (model.codexActivity?.runningCount ?? 0) > 0 {
+                    Text("Running")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.green)
+                }
+            }
+
+            if let job = model.codexActivity?.latestJob {
+                HStack(spacing: 8) {
+                    CodexMetaChip(job.jobId)
+                    CodexMetaChip(job.phase ?? job.status ?? "unknown")
+                    if let modelName = job.model, !modelName.isEmpty {
+                        CodexMetaChip(modelName)
+                    }
+                    if let duration = job.durationHuman, !duration.isEmpty {
+                        CodexMetaChip(duration)
+                    }
+                }
+
+                if let prompt = job.promptSummary, !prompt.isEmpty {
+                    Text(prompt)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                HStack(alignment: .top, spacing: 10) {
+                    CodexTailBlock(title: "Conversation", text: job.conversationTail)
+                    CodexTailBlock(title: "CLI Tail", text: job.cliTail)
+                }
+            } else {
+                Text("No Codex session is running.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var readinessFooter: some View {
@@ -322,6 +377,49 @@ private struct ChatBubble: View {
 
     private var bubbleBackground: some ShapeStyle {
         isUser ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.regularMaterial)
+    }
+}
+
+private struct CodexMetaChip: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.monospaced())
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.regularMaterial, in: Capsule())
+    }
+}
+
+private struct CodexTailBlock: View {
+    let title: String
+    let text: String?
+
+    private var cleanText: String {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "No tail yet." : trimmed
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(cleanText)
+                .font(.caption2.monospaced())
+                .lineLimit(4)
+                .truncationMode(.head)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 

@@ -185,6 +185,10 @@ public struct JarvisClient: Sendable {
         try await get(["api", "preflight"], as: PreflightResponse.self)
     }
 
+    public func codexActivity() async throws -> CodexActivityResponse {
+        try await get(["api", "codex", "activity"], as: CodexActivityResponse.self)
+    }
+
     public func mode() async throws -> ModeResponse {
         try await get(["api", "mode"], as: ModeResponse.self)
     }

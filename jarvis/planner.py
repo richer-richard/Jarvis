@@ -264,6 +264,10 @@ class Planner:
                 },
                 True,
             )
+        if _explicitly_asks_codex(lower):
+            routed = self._handle_model_intent(text, assessment, _explicit_codex_intent(), execute=True)
+            if routed is not None:
+                return routed
         if use_model_router:
             intent = select_tool_intent(text, NATURAL_LANGUAGE_TOOL_SPECS)
             routed = self._handle_model_intent(text, assessment, intent, execute=True)
@@ -324,6 +328,11 @@ class Planner:
                     prototype_note="Preview only. No protected action was executed.",
                 ),
             )
+        codex_job_query = _extract_codex_job_query(text)
+        if codex_job_query is not None:
+            return self._preview_result(text, "codex.job", assessment, False)
+        if _looks_like_codex_speed_status(lower):
+            return self._preview_result(text, "diagnostics.codex_speed", assessment, True)
         if lower.startswith("find ") or lower.startswith("search "):
             return self._preview_result(text, "files.search", assessment, True)
         if _extract_wake_transcript(text) is not None:
@@ -368,11 +377,10 @@ class Planner:
         exact_reply = _extract_exact_reply(text)
         if exact_reply is not None and not _explicitly_asks_codex(lower):
             return self._preview_result(text, "conversation.local_exact", assessment, True)
-        codex_job_query = _extract_codex_job_query(text)
-        if codex_job_query is not None:
-            return self._preview_result(text, "codex.job", assessment, False)
-        if _looks_like_codex_speed_status(lower):
-            return self._preview_result(text, "diagnostics.codex_speed", assessment, True)
+        if _explicitly_asks_codex(lower):
+            routed = self._handle_model_intent(text, assessment, _explicit_codex_intent(), execute=False)
+            if routed is not None:
+                return routed
         if use_model_router:
             intent = select_tool_intent(text, NATURAL_LANGUAGE_TOOL_SPECS)
             routed = self._handle_model_intent(text, assessment, intent, execute=False)
@@ -864,7 +872,27 @@ def _extract_exact_reply(text: str) -> str | None:
 
 
 def _explicitly_asks_codex(lower: str) -> bool:
-    return bool(re.search(r"\bask\s+codex\b|\bcodex\s+to\b|\bthrough\s+codex\b|\busing\s+codex\b", lower))
+    return bool(
+        re.search(
+            r"\b(?:ask|use|run|start)\s+codex\b"
+            r"|\bdelegate\s+(?:this\s+)?to\s+codex\b"
+            r"|\bsend\s+(?:this\s+)?to\s+codex\b"
+            r"|\bcodex\s+to\b"
+            r"|\bthrough\s+codex\b"
+            r"|\busing\s+codex\b",
+            lower,
+        )
+    )
+
+
+def _explicit_codex_intent() -> dict[str, Any]:
+    return {
+        "status": "completed",
+        "selected_tool": "codex.job",
+        "confidence": 1.0,
+        "entities": {},
+        "reason": "Explicit Codex request.",
+    }
 
 
 def _confirmation(
