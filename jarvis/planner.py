@@ -12,6 +12,7 @@ from .tools import (
     app_availability,
     app_list,
     app_open,
+    app_running,
     app_status,
     browser_open_url_plan,
     capabilities_status,
@@ -142,6 +143,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "examples": [
             'Yes sir, checking Outlook now. \\tool({"tool":"app.status","entities":{"app_name":"Microsoft Outlook"}})',
             'Yes sir, checking whether Teams is running now. \\tool({"tool":"app.status","entities":{"app_name":"Microsoft Teams"}})',
+        ],
+    },
+    {
+        "tool": "app.running",
+        "description": "List known local macOS apps and whether each appears to be running, without launching, focusing, screenshotting, or inspecting app content.",
+        "entities": [],
+        "examples": [
+            'Yes sir, checking which apps are running now. \\tool({"tool":"app.running","entities":{}})',
         ],
     },
     {
@@ -383,6 +392,8 @@ class Planner:
             return self._result(text, "system.status", "Collected local Jarvis status.", assessment, system_status(), True)
         if _looks_like_browser_url_request(text):
             return self._result(text, "browser.open_url", "Prepared browser-open plan.", assessment, browser_open_url_plan(_extract_url(text)), False)
+        if _looks_like_running_apps_request(lower):
+            return self._result(text, "app.running", "Checked which known apps are running.", assessment, app_running(), True)
         if _looks_like_app_list_request(lower):
             return self._result(text, "app.list", "Listed local apps Jarvis can open.", assessment, app_list(), True)
         app_status_name = _extract_app_status_name(text)
@@ -544,6 +555,8 @@ class Planner:
             )
         if _looks_like_browser_url_request(text):
             return self._preview_result(text, "browser.open_url", assessment, False, plan={"url": _extract_url(text)})
+        if _looks_like_running_apps_request(lower):
+            return self._preview_result(text, "app.running", assessment, True)
         if _looks_like_app_list_request(lower):
             return self._preview_result(text, "app.list", assessment, True)
         app_status_name = _extract_app_status_name(text)
@@ -671,6 +684,10 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "app.status", assessment, True, plan={"intent": intent, "app_name": app_name})
             return self._result(text, "app.status", "Checked local app status.", assessment, app_status(app_name), True)
+        if selected_tool == "app.running":
+            if not execute:
+                return self._preview_result(text, "app.running", assessment, True, plan={"intent": intent})
+            return self._result(text, "app.running", "Checked which known apps are running.", assessment, app_running(), True)
         if selected_tool == "terminal.plan":
             command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
             plan = terminal_command_plan(command)
@@ -816,6 +833,13 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
     if recommended == "app.status":
         app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_status_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
         preview = app_status(app_name)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "app.running":
+        preview = app_running(limit=40)
         return {
             "recommended_tool": recommended,
             "executed": False,
@@ -1201,6 +1225,40 @@ def _looks_like_app_list_request(lower: str) -> bool:
     mutation_cues = ("open ", "launch ", "start ", "quit ", "close ", "delete ", "install ", "uninstall ")
     return (
         any(cue in lower for cue in app_cues)
+        and any(cue in lower for cue in list_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_running_apps_request(lower: str) -> bool:
+    app_cues = (
+        "apps",
+        "applications",
+        "programs",
+        "things",
+    )
+    running_cues = (
+        "running",
+        "open right now",
+        "currently open",
+        "currently running",
+        "open apps",
+        "apps open",
+        "active apps",
+    )
+    list_cues = (
+        "list",
+        "show",
+        "which",
+        "what",
+        "check",
+        "tell me",
+        "are there",
+    )
+    mutation_cues = ("launch ", "start ", "quit ", "close ", "kill ", "force quit ")
+    return (
+        any(cue in lower for cue in app_cues)
+        and any(cue in lower for cue in running_cues)
         and any(cue in lower for cue in list_cues)
         and not any(cue in lower for cue in mutation_cues)
     )

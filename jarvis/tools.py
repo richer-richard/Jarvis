@@ -576,6 +576,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Checks a named app's bundle availability and apparent running processes without opening, focusing, or inspecting the app.",
             },
             {
+                "id": "app.running",
+                "label": "Running Apps",
+                "mode": "read_only",
+                "risk": "local_metadata",
+                "available": True,
+                "description": "Lists known local macOS apps and whether they appear to be running, without opening, focusing, or inspecting app content.",
+            },
+            {
                 "id": "app.open",
                 "label": "Open App",
                 "mode": "execute",
@@ -1863,6 +1871,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "app.open", "kind": "safe_execute", "description": "Open or focus a local macOS app."},
         {"id": "app.list", "kind": "read_only", "description": "List known/discovered local apps before choosing what to open."},
         {"id": "app.status", "kind": "read_only", "description": "Check whether a named local app is available and appears to be running."},
+        {"id": "app.running", "kind": "read_only", "description": "List known local apps and whether each appears to be running."},
         {"id": "app.availability", "kind": "read_only", "description": "Check whether a local app exists."},
         {"id": "terminal.plan", "kind": "plan_only", "description": "Classify and explain a terminal command without running it."},
         {"id": "terminal.read_only", "kind": "safe_execute_if_allowlisted", "description": "Run only read-only allowlisted terminal commands."},
@@ -2166,6 +2175,56 @@ def app_status(app_name: str, search_dirs: list[Path] | None = None) -> dict[str
         "launched_app": False,
         "focused_app": False,
         "captured_screen": False,
+        "reply": reply,
+    }
+
+
+def app_running(search_dirs: list[Path] | None = None, *, limit: int = 80) -> dict[str, Any]:
+    app_snapshot = app_list(search_dirs=search_dirs, limit=limit)
+    running_apps: list[dict[str, Any]] = []
+    checked_apps: list[dict[str, Any]] = []
+    for item in app_snapshot.get("known_apps", []):
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        matches = [str(match) for match in item.get("matches") or []]
+        executable_names = _app_executable_names(name, matches)
+        process_checks = [_pgrep_exact(executable) for executable in executable_names]
+        running = any(check.get("running") for check in process_checks)
+        checked = {
+            "name": name,
+            "aliases": list(item.get("aliases") or []),
+            "available": bool(item.get("available")),
+            "matches": matches,
+            "system_special": bool(item.get("system_special")),
+            "running": running,
+            "executable_names": executable_names,
+            "process_checks": process_checks,
+        }
+        checked_apps.append(checked)
+        if running:
+            running_apps.append(checked)
+
+    reply = (
+        f"Running app status: {len(running_apps)}/{len(checked_apps)} known Jarvis app"
+        f"{'s' if len(checked_apps) != 1 else ''} appear to be running. "
+        "I did not open, focus, screenshot, or inspect any app."
+    )
+    return {
+        "tool": "app.running",
+        "executed": True,
+        "status": "checked",
+        "read_private_content": False,
+        "opened_app": False,
+        "launched_app": False,
+        "focused_app": False,
+        "captured_screen": False,
+        "search_dirs": list(app_snapshot.get("search_dirs") or []),
+        "known_apps": checked_apps,
+        "running_apps": running_apps,
+        "known_count": len(checked_apps),
+        "running_known_count": len(running_apps),
+        "available_known_count": int(app_snapshot.get("available_known_count") or 0),
         "reply": reply,
     }
 
