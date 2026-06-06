@@ -603,10 +603,12 @@ class PlannerTests(unittest.TestCase):
 
     def test_first_model_tools_more_catalog_avoids_skill_wording(self):
         catalog = jarvis_tools._fast_chat_tool_catalog(NATURAL_LANGUAGE_TOOL_SPECS)
+        prompt = jarvis_tools._fast_chat_system_prompt(NATURAL_LANGUAGE_TOOL_SPECS)
 
         self.assertNotIn("future skills", catalog.lower())
         self.assertNotIn("skill.", catalog.lower())
         self.assertIn("future capabilities", catalog)
+        self.assertNotIn("skill", prompt.lower())
 
     def test_tools_more_terminal_recommendation_previews_without_running(self):
         fake_plan = {

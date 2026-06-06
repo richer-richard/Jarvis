@@ -2733,7 +2733,7 @@ def voice_session_plan(command: str | None = None) -> dict[str, Any]:
             "status": "required",
             "visible_text": "Yes sir, checking that now.",
             "spoken_text": "Yes sir, checking that now.",
-            "notes": "Natural status appears before slower tools or models; internal words such as skill, route, or catalog stay hidden.",
+            "notes": "Natural status appears before slower tools or models; internal implementation words stay hidden.",
         },
         {
             "id": "execute_or_preview",
@@ -2816,7 +2816,7 @@ def ui_overlay_plan(mode: str | None = None) -> dict[str, Any]:
         {
             "id": "working_status",
             "visible_text": "Yes sir, checking that now.",
-            "purpose": "Natural status line before slower tools or models, without words such as skill, route, or catalog.",
+            "purpose": "Natural status line before slower tools or models, without internal implementation wording.",
             "normal_mode": True,
             "debug_mode": True,
         },
@@ -3462,7 +3462,7 @@ def model_context_status(
     tool_ids = [str(spec.get("tool") or "") for spec in tool_specs or [] if spec.get("tool")]
     stream_tool_flow = {
         "enabled": bool(tool_specs),
-        "normal_reply_rule": "If no real tool is needed, the fast model should answer directly and should not mention tools, skills, or routing.",
+        "normal_reply_rule": "If no real tool is needed, the fast model should answer directly and should not mention tools or routing.",
         "hidden_call_syntax": "\\tool({\"tool\":\"tool.id\",\"entities\":{}})",
         "legacy_email_shorthand_supported": "\\Email(count, from, to, unread_only, optional_sender)",
         "visible_status_rule": "Text outside the hidden call is shown and may be spoken; the hidden machine call is removed before display and TTS.",
@@ -7252,7 +7252,7 @@ def _fast_chat_system_prompt(tool_specs: list[dict[str, Any]] | None = None) -> 
             "First write the short natural words Leo should see and hear, then include exactly one hidden machine tool call. "
             "The preferred hidden call is \\tool({\"tool\":\"tool.id\",\"entities\":{}}). "
             "Jarvis will remove the hidden call before display and speech, so the visible words must make sense by themselves. "
-            "Do not put the word skill in visible text. Do not explain that you are choosing tools. "
+            "Do not use internal implementation labels in visible text. Do not explain that you are choosing tools. "
             "For email, useful selections are latest, unread_first, index:N, and range:A-B; index:2 means the second newest inbox email. "
             "Examples:\n"
             "Yes sir, checking your email now. \\tool({\"tool\":\"outlook.visible_summary\",\"entities\":{\"selection\":\"unread_first\"}})\n"
