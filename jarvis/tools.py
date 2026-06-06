@@ -31,7 +31,9 @@ from typing import Any
 
 from .audit import redact_sensitive_text
 from .config import (
+    CODEX_CHAT_REGISTRY_PATH,
     CODEX_CHAT_TIMEOUT_SECONDS,
+    CODEX_DAILY_MEMORY_PATH,
     CODEX_TIMEOUT_SECONDS,
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_REASONING_EFFORT,
@@ -104,6 +106,11 @@ CODEX_JOB_STORE = RUNTIME_DIR / "codex_jobs.json"
 MAX_PERSISTED_CODEX_JOBS = 20
 CODEX_ACTIVITY_TAIL_CHARS = 2400
 CODEX_ACTIVITY_BUFFER_LINES = 80
+CODEX_SESSION_ID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+CODEX_SENSITIVE_SNIPPETS: set[str] = set()
+CODEX_SENSITIVE_SNIPPETS_LOCK = threading.Lock()
 REMOTE_WORKER_USER = "hongyi"
 REMOTE_WORKER_HOST = "100.72.212.85"
 REMOTE_WORKER_SSH_TARGET = f"{REMOTE_WORKER_USER}@{REMOTE_WORKER_HOST}"
@@ -1891,10 +1898,10 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
         "user": REMOTE_WORKER_USER,
         "tailnet_transport": "ssh_over_tailscale",
         "ssh_path": ssh,
-        "allowed_probe": "hostname, sw_vers, uname -m, hw.memsize, CPU brand",
+        "allowed_probe": "hostname, sw_vers, uname -m, hw.memsize, CPU brand, codex command path/version",
         "recommended_roles": [
             "overnight model benchmarks",
-            "Codex or test-runner helper jobs",
+            "Codex CLI or test-runner helper jobs when installed",
             "daily Jarvis memory summarizer after Leo approves the retention/sync policy",
             "remote app-control experiments with a separate permission model",
         ],
@@ -1925,7 +1932,11 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
         "sw_vers -productVersion; "
         "uname -m; "
         "sysctl -n hw.memsize; "
-        "sysctl -n machdep.cpu.brand_string 2>/dev/null || sysctl -n hw.optional.arm64"
+        "sysctl -n machdep.cpu.brand_string 2>/dev/null || sysctl -n hw.optional.arm64; "
+        "if command -v codex >/dev/null 2>&1; then "
+        "printf 'CODEX_PATH=%s\\n' \"$(command -v codex)\"; "
+        "codex --version 2>/dev/null | head -n 1; "
+        "else printf 'CODEX_PATH=missing\\n'; printf 'codex_not_detected\\n'; fi"
     )
     started = time.monotonic()
     try:
@@ -1983,6 +1994,10 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
     architecture = lines[4] if len(lines) > 4 else "unknown"
     memory_bytes = _safe_int(lines[5] if len(lines) > 5 else None)
     cpu = lines[6] if len(lines) > 6 else "unknown"
+    codex_path_line = lines[7] if len(lines) > 7 else "CODEX_PATH=unknown"
+    codex_path = codex_path_line.split("=", 1)[1] if codex_path_line.startswith("CODEX_PATH=") else "unknown"
+    codex_version = lines[8] if len(lines) > 8 else "unknown"
+    codex_available = codex_path not in {"", "missing", "unknown"} and codex_version != "codex_not_detected"
     memory_gb = round(memory_bytes / (1024 ** 3), 1) if memory_bytes else None
     reply = (
         f"Remote worker status: MacBook Air SSH is reachable at {REMOTE_WORKER_SSH_TARGET} "
@@ -1990,6 +2005,9 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
     )
     if memory_gb is not None:
         reply += f", {memory_gb:g} GB RAM"
+    reply += f". Codex CLI {'is available' if codex_available else 'was not detected'}"
+    if codex_available:
+        reply += f" ({codex_version})"
     reply += f". Probe time: {duration['duration_human']}. No user files were read."
     return {
         **base,
@@ -2003,6 +2021,9 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
         "memory_bytes": memory_bytes,
         "memory_gb": memory_gb,
         "cpu": cpu,
+        "codex_cli_available": codex_available,
+        "codex_path": codex_path,
+        "codex_version": codex_version,
         "reply": reply,
     }
 
@@ -3415,7 +3436,13 @@ def _email_selection_reply(mailbox: str, selection_mode: str, unread_count: int,
     return f"selected {selected_count} inbox message(s) from {mailbox}"
 
 
-def codex_delegate_plan(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
+def codex_delegate_plan(
+    prompt: str,
+    project_dir: str | None = None,
+    model: str | None = None,
+    *,
+    ephemeral: bool = True,
+) -> dict[str, Any]:
     codex_path = _find_executable("codex")
     workdir = str(_safe_root(project_dir))
     selected_model = (model or DEFAULT_CODEX_MODEL).strip() or DEFAULT_CODEX_MODEL
@@ -3434,9 +3461,10 @@ def codex_delegate_plan(prompt: str, project_dir: str | None = None, model: str 
         "--cd",
         workdir,
         "--skip-git-repo-check",
-        "--ephemeral",
-        delegated_prompt,
     ]
+    if ephemeral:
+        command.append("--ephemeral")
+    command.append(delegated_prompt)
     return {
         "tool": "codex.delegate",
         "available": bool(codex_path),
@@ -3445,6 +3473,7 @@ def codex_delegate_plan(prompt: str, project_dir: str | None = None, model: str 
         "timeout_seconds": CODEX_TIMEOUT_SECONDS,
         "sandbox": "read-only",
         "reasoning_effort": DEFAULT_CODEX_REASONING_EFFORT,
+        "ephemeral": ephemeral,
         "planned_command": command,
         "status": "dry_run",
         "note": "Codex CLI execution sends the prompt and any files it chooses to read to the configured model. This route uses a read-only sandbox.",
@@ -4473,7 +4502,7 @@ def run_codex_delegate(prompt: str, project_dir: str | None = None, model: str |
 
 def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
     cleaned = _clean_codex_prompt(prompt)
-    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model)
+    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model, ephemeral=False)
     if not plan["available"]:
         return {
             "tool": "codex.job",
@@ -4482,6 +4511,18 @@ def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model:
             "available": False,
             "reply": "Codex CLI is not available on this machine.",
         }
+
+    chat_selection = _select_codex_chat(cleaned)
+    selected_chat = chat_selection.get("chat") if isinstance(chat_selection.get("chat"), dict) else {}
+    selected_session_id = str(selected_chat.get("session_id") or "").strip()
+    if selected_session_id:
+        codex_prompt = _codex_jarvis_generated_prompt(cleaned, chat_selection)
+        prompt_summary = _rough_understanding(cleaned)
+        cli_tail = f"Codex chat {selected_chat.get('name') or 'selected'} queued."
+    else:
+        codex_prompt = cleaned
+        prompt_summary = _rough_understanding(cleaned)
+        cli_tail = "Codex job queued."
 
     job_id = f"codex-{uuid.uuid4().hex[:8]}"
     job = {
@@ -4492,25 +4533,140 @@ def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model:
         "model": plan["model"],
         "started_at": time.time(),
         "last_activity_at": time.time(),
-        "prompt_summary": _rough_understanding(cleaned),
-        "cli_tail": "Codex job queued.",
+        "prompt_summary": prompt_summary,
+        "ephemeral": False,
+        "jarvis_generated_prompt": bool(selected_session_id),
+        "cli_tail": cli_tail,
+        "conversation_tail": "",
+    }
+    if selected_session_id:
+        job.update(
+            {
+                "resume_session_id": selected_session_id,
+                "codex_session_id": selected_session_id,
+                "codex_chat_name": str(selected_chat.get("name") or "Default"),
+                "codex_chat_purpose": _codex_activity_tail(selected_chat.get("purpose"), 500),
+                "codex_chat_context": _codex_activity_tail(selected_chat.get("context"), 800),
+                "codex_chat_selection_reason": str(chat_selection.get("reason") or "Selected by Jarvis chat registry."),
+            }
+        )
+    with CODEX_JOBS_LOCK:
+        _ensure_codex_jobs_loaded_unlocked()
+        CODEX_JOBS[job_id] = job
+        _persist_codex_jobs_unlocked()
+    _record_codex_memory_event(
+        "codex_job_started",
+        chat_name=str(job.get("codex_chat_name") or "new Codex session"),
+        prompt_summary=prompt_summary,
+        detail=str(job.get("codex_chat_selection_reason") or "No named chat selected."),
+    )
+    _start_codex_job_thread(
+        job_id,
+        codex_prompt,
+        project_dir,
+        model,
+        resume_session_id=selected_session_id or None,
+        sensitive_stdin=False,
+    )
+    return {
+        **job,
+        "available": True,
+        "executed": True,
+        "reply": _codex_job_started_reply(job_id, selected_chat if selected_session_id else None),
+    }
+
+
+def start_codex_continue_job(
+    prompt: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+    project_dir: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    raw_followup = prompt.strip()
+    cleaned_followup = _clean_codex_continuation_prompt(raw_followup)
+    _remember_codex_sensitive_text(raw_followup)
+    _remember_codex_sensitive_text(cleaned_followup)
+
+    target = _latest_codex_resume_target(history=history)
+    if not target:
+        return {
+            "tool": "codex.job",
+            "status": "no_pending_codex_job",
+            "executed": False,
+            "available": True,
+            "reply": "I do not have a previous Codex job waiting for a follow-up.",
+        }
+    resume_session_id = str(target.get("codex_session_id") or "").strip()
+    parent_job_id = str(target.get("job_id") or "")
+    if not resume_session_id:
+        return {
+            "tool": "codex.job",
+            "status": "no_resumable_session",
+            "executed": False,
+            "available": True,
+            "continuation_of": parent_job_id,
+            "reply": (
+                "That older Codex job cannot be resumed because it was created before Jarvis started "
+                "saving Codex session IDs. Start the Codex request again once, and Jarvis can continue "
+                "that new session afterward."
+            ),
+        }
+
+    selected_model = (model or str(target.get("model") or "") or DEFAULT_CODEX_MODEL).strip() or DEFAULT_CODEX_MODEL
+    plan = codex_delegate_plan("Continue the previous Codex job.", project_dir=project_dir, model=selected_model, ephemeral=False)
+    if not plan["available"]:
+        return {
+            "tool": "codex.job",
+            "status": "codex_not_found",
+            "executed": False,
+            "available": False,
+            "reply": "Codex CLI is not available on this machine.",
+        }
+
+    chat_selection = _codex_chat_selection_from_job(target)
+    codex_prompt = _codex_jarvis_generated_prompt(cleaned_followup, chat_selection)
+
+    job_id = f"codex-{uuid.uuid4().hex[:8]}"
+    job = {
+        "tool": "codex.job",
+        "job_id": job_id,
+        "status": "running",
+        "phase": "queued",
+        "model": selected_model,
+        "started_at": time.time(),
+        "last_activity_at": time.time(),
+        "prompt_summary": "Continue previous Codex job with Leo's latest reply.",
+        "parent_prompt_summary": _codex_activity_tail(target.get("prompt_summary"), 500),
+        "continuation_of": parent_job_id,
+        "resume_session_id": resume_session_id,
+        "codex_session_id": resume_session_id,
+        "continuation_contains_sensitive_followup": True,
+        "ephemeral": False,
+        "jarvis_generated_prompt": True,
+        "codex_chat_name": str(chat_selection.get("chat", {}).get("name") or target.get("codex_chat_name") or "previous Codex chat"),
+        "codex_chat_purpose": _codex_activity_tail(chat_selection.get("chat", {}).get("purpose"), 500),
+        "codex_chat_context": _codex_activity_tail(chat_selection.get("chat", {}).get("context"), 800),
+        "codex_chat_selection_reason": str(chat_selection.get("reason") or "Continuing the previous Codex job."),
+        "cli_tail": "Codex continuation queued.",
         "conversation_tail": "",
     }
     with CODEX_JOBS_LOCK:
         _ensure_codex_jobs_loaded_unlocked()
         CODEX_JOBS[job_id] = job
         _persist_codex_jobs_unlocked()
-    thread = threading.Thread(
-        target=_codex_delegate_job_worker,
-        args=(job_id, cleaned, project_dir, model),
-        daemon=True,
+    _record_codex_memory_event(
+        "codex_job_continued",
+        chat_name=str(job.get("codex_chat_name") or "previous Codex chat"),
+        prompt_summary="Continued previous Codex job with Leo's latest reply.",
+        detail=str(job.get("codex_chat_selection_reason") or "Continuation."),
     )
-    thread.start()
+    _start_codex_job_thread(job_id, codex_prompt, project_dir, selected_model, resume_session_id=resume_session_id, sensitive_stdin=True)
     return {
         **job,
         "available": True,
         "executed": True,
-        "reply": f"I started Codex job {job_id}. Ask `codex job {job_id}` for the result.",
+        "reply": f"I sent that to the same Codex chat as job {parent_job_id}. Ask `codex job {job_id}` for the result.",
     }
 
 
@@ -4627,9 +4783,284 @@ def codex_activity_snapshot(limit: int = 3) -> dict[str, Any]:
     }
 
 
-def _codex_delegate_job_worker(job_id: str, prompt: str, project_dir: str | None, model: str | None) -> None:
+def _codex_job_started_reply(job_id: str, chat: dict[str, Any] | None) -> str:
+    if chat:
+        name = str(chat.get("name") or "selected Codex chat")
+        return f"I sent that to the {name} Codex chat as job {job_id}. Ask `codex job {job_id}` for the result."
+    return f"I started Codex job {job_id}. Ask `codex job {job_id}` for the result."
+
+
+def _load_codex_chat_registry() -> dict[str, Any]:
+    try:
+        data = json.loads(CODEX_CHAT_REGISTRY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    raw_chats = data.get("chats") if isinstance(data, dict) else []
+    if not isinstance(raw_chats, list):
+        raw_chats = []
+    chats = [_normalize_codex_chat(raw_chat) for raw_chat in raw_chats if isinstance(raw_chat, dict)]
+    chats = [chat for chat in chats if chat.get("name") and chat.get("session_id")]
+    return {
+        "schema": "jarvis.codex_chats.v1",
+        "path": str(CODEX_CHAT_REGISTRY_PATH),
+        "status": "loaded" if chats else "missing_or_empty",
+        "updated_at": data.get("updated_at") if isinstance(data, dict) else None,
+        "default_chat": str(data.get("default_chat") or "Default") if isinstance(data, dict) else "Default",
+        "selector": str(data.get("selector") or "registry_first") if isinstance(data, dict) else "registry_first",
+        "chats": chats,
+    }
+
+
+def _normalize_codex_chat(raw_chat: dict[str, Any]) -> dict[str, Any]:
+    name = str(raw_chat.get("name") or "").strip()
+    session_id = str(raw_chat.get("session_id") or raw_chat.get("thread_id") or "").strip()
+    aliases = raw_chat.get("aliases")
+    if not isinstance(aliases, list):
+        aliases = []
+    return {
+        "name": name,
+        "session_id": session_id,
+        "purpose": str(raw_chat.get("purpose") or "").strip(),
+        "context": str(raw_chat.get("context") or "").strip(),
+        "aliases": [str(alias).strip() for alias in aliases if str(alias).strip()],
+    }
+
+
+def _select_codex_chat(prompt: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    del history
+    registry = _load_codex_chat_registry()
+    chats = registry["chats"]
+    if not chats:
+        return {
+            "status": "no_configured_chat",
+            "registry_path": registry["path"],
+            "chat": None,
+            "reason": "No named Codex chat registry is configured.",
+        }
+    requested_name = _extract_requested_codex_chat_name(prompt)
+    if requested_name:
+        requested_lower = requested_name.lower()
+        for chat in chats:
+            names = [str(chat.get("name") or ""), *chat.get("aliases", [])]
+            if any(name.lower() == requested_lower for name in names):
+                return {
+                    "status": "selected",
+                    "registry_path": registry["path"],
+                    "chat": chat,
+                    "reason": f"Leo explicitly requested the {chat['name']} Codex chat.",
+                }
+    lower = prompt.lower()
+    for chat in chats:
+        names = [str(chat.get("name") or ""), *chat.get("aliases", [])]
+        if any(name and re.search(rf"\b{re.escape(name.lower())}\b", lower) for name in names):
+            return {
+                "status": "selected",
+                "registry_path": registry["path"],
+                "chat": chat,
+                "reason": f"The prompt mentioned the {chat['name']} Codex chat.",
+            }
+    default_name = registry["default_chat"].lower()
+    for chat in chats:
+        if str(chat.get("name") or "").lower() == default_name:
+            return {
+                "status": "selected",
+                "registry_path": registry["path"],
+                "chat": chat,
+                "reason": f"No specific Codex chat was requested, so Jarvis used the default chat named {chat['name']}.",
+            }
+    return {
+        "status": "selected",
+        "registry_path": registry["path"],
+        "chat": chats[0],
+        "reason": f"No default chat was found, so Jarvis used the first configured Codex chat named {chats[0]['name']}.",
+    }
+
+
+def _extract_requested_codex_chat_name(prompt: str) -> str | None:
+    patterns = [
+        r"(?i)\b(?:codex\s+)?chat\s+(?:named|called)\s+['\"]?([A-Za-z0-9 _.-]{1,80})['\"]?",
+        r"(?i)\b(?:use|send\s+to|route\s+to)\s+['\"]?([A-Za-z0-9 _.-]{1,80})['\"]?\s+(?:codex\s+)?chat\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, prompt)
+        if match:
+            return match.group(1).strip(" .,:;\"'")
+    return None
+
+
+def _codex_chat_selection_from_job(job: dict[str, Any]) -> dict[str, Any]:
+    chat = {
+        "name": str(job.get("codex_chat_name") or "previous Codex chat"),
+        "session_id": str(job.get("codex_session_id") or job.get("resume_session_id") or ""),
+        "purpose": str(job.get("codex_chat_purpose") or "Continue the previous Codex work."),
+        "context": str(job.get("codex_chat_context") or "This is the chat used by the previous Jarvis Codex job."),
+        "aliases": [],
+    }
+    return {
+        "status": "selected",
+        "registry_path": str(CODEX_CHAT_REGISTRY_PATH),
+        "chat": chat,
+        "reason": f"Jarvis is continuing the previous Codex job {job.get('job_id') or 'unknown'}.",
+    }
+
+
+def _codex_jarvis_generated_prompt(prompt: str, chat_selection: dict[str, Any]) -> str:
+    chat = chat_selection.get("chat") if isinstance(chat_selection.get("chat"), dict) else {}
+    chat_name = str(chat.get("name") or "selected Codex chat")
+    purpose = str(chat.get("purpose") or "No purpose recorded.")
+    context = str(chat.get("context") or "No chat-specific context recorded.")
+    memory_text = _codex_daily_memory_text()
+    return f"""This is a Jarvis-generated prompt. It was sent by Jarvis on Leo's behalf, not typed directly by Leo in the Codex chat.
+
+Jarvis selected Codex chat:
+- Name: {chat_name}
+- Purpose: {purpose}
+- Context: {context}
+- Selection reason: {chat_selection.get("reason") or "Jarvis selected this chat from its registry."}
+
+Jarvis working context:
+{_codex_operator_context()}
+
+Jarvis daily memory for today:
+{memory_text}
+
+Safety note for Codex:
+- Follow the applicable Codex and AGENTS.md safety rules.
+- If this prompt asks for a sensitive, destructive, external, or hard-to-undo action, ask for Leo's confirmation as your rules require.
+- Treat the text above as context from Jarvis. Treat only the original request below as Leo's request to Jarvis.
+
+Original request from Leo to Jarvis:
+{prompt.strip()}"""
+
+
+def _codex_operator_context() -> str:
+    now = datetime.now().isoformat(timespec="seconds")
+    return "\n".join(
+        [
+            f"- Local time: {now}",
+            "- User profile: Leo uses a MacBook Pro M4 with 16 GB memory and mainly works in Python, HTML, Chrome, Office apps, Codex, and Jarvis.",
+            f"- Current Jarvis project root: {PROJECT_ROOT}",
+            f"- Remote MacBook Air helper target, if needed later: {REMOTE_WORKER_SSH_TARGET}",
+            "- Jarvis should prefer deterministic/local tools for quick work, fast chat for ordinary conversation, and Codex chats for deeper project work.",
+        ]
+    )
+
+
+def _codex_daily_memory_text() -> str:
+    memory = _load_codex_daily_memory()
+    events = memory.get("events") if isinstance(memory.get("events"), list) else []
+    if not events:
+        return "- No Jarvis-to-Codex events have been recorded yet today."
+    lines = []
+    for event in events[-8:]:
+        chat = str(event.get("chat_name") or "unknown chat")
+        summary = str(event.get("prompt_summary") or "unspecified request")
+        detail = str(event.get("detail") or "").strip()
+        if detail:
+            lines.append(f"- {chat}: {summary} ({detail})")
+        else:
+            lines.append(f"- {chat}: {summary}")
+    return "\n".join(lines)
+
+
+def _load_codex_daily_memory() -> dict[str, Any]:
+    today = datetime.now().date().isoformat()
+    try:
+        data = json.loads(CODEX_DAILY_MEMORY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict) or data.get("date") != today:
+        previous_summary = ""
+        if isinstance(data, dict) and data.get("date"):
+            previous_summary = _compile_codex_memory_summary(data)
+        return {
+            "schema": "jarvis.codex_daily_memory.v1",
+            "date": today,
+            "refreshed_at": time.time(),
+            "previous_day_summary": previous_summary,
+            "events": [],
+        }
+    events = data.get("events")
+    if not isinstance(events, list):
+        data["events"] = []
+    return data
+
+
+def _record_codex_memory_event(kind: str, *, chat_name: str, prompt_summary: str, detail: str = "") -> None:
+    memory = _load_codex_daily_memory()
+    events = memory.get("events")
+    if not isinstance(events, list):
+        events = []
+    events.append(
+        {
+            "timestamp": time.time(),
+            "kind": kind,
+            "chat_name": _codex_activity_tail(chat_name, 120),
+            "prompt_summary": _codex_activity_tail(prompt_summary, 300),
+            "detail": _codex_activity_tail(detail, 300),
+        }
+    )
+    memory["events"] = events[-80:]
+    memory["compiled_summary"] = _compile_codex_memory_summary(memory)
+    memory["updated_at"] = time.time()
+    try:
+        CODEX_DAILY_MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = CODEX_DAILY_MEMORY_PATH.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(memory, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(CODEX_DAILY_MEMORY_PATH)
+    except OSError:
+        return
+
+
+def _compile_codex_memory_summary(memory: dict[str, Any]) -> str:
+    events = memory.get("events") if isinstance(memory.get("events"), list) else []
+    if not events:
+        return ""
+    by_chat: dict[str, int] = {}
+    latest: list[str] = []
+    for event in events:
+        chat = str(event.get("chat_name") or "unknown chat")
+        by_chat[chat] = by_chat.get(chat, 0) + 1
+        summary = str(event.get("prompt_summary") or "").strip()
+        if summary:
+            latest.append(f"{chat}: {summary}")
+    chat_counts = ", ".join(f"{name} {count}" for name, count in sorted(by_chat.items()))
+    recent = "; ".join(latest[-5:])
+    return f"Today Jarvis used Codex chats: {chat_counts}. Recent work: {recent}."
+
+
+def _start_codex_job_thread(
+    job_id: str,
+    prompt: str,
+    project_dir: str | None,
+    model: str | None,
+    *,
+    resume_session_id: str | None,
+    sensitive_stdin: bool,
+) -> None:
+    thread = threading.Thread(
+        target=_codex_delegate_job_worker,
+        args=(job_id, prompt, project_dir, model),
+        kwargs={"resume_session_id": resume_session_id, "sensitive_stdin": sensitive_stdin},
+        daemon=True,
+    )
+    thread.start()
+
+
+def _codex_delegate_job_worker(
+    job_id: str,
+    prompt: str,
+    project_dir: str | None,
+    model: str | None,
+    *,
+    resume_session_id: str | None = None,
+    sensitive_stdin: bool = False,
+) -> None:
     cleaned = _clean_codex_prompt(prompt)
-    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model)
+    if sensitive_stdin:
+        _remember_codex_sensitive_text(prompt)
+        _remember_codex_sensitive_text(cleaned)
+    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model, ephemeral=False)
     started_at = time.monotonic()
     if not plan["available"]:
         _update_codex_job_activity(
@@ -4653,18 +5084,27 @@ def _codex_delegate_job_worker(job_id: str, prompt: str, project_dir: str | None
 
     with tempfile.TemporaryDirectory(prefix="jarvis-codex-") as temp_dir:
         output_path = Path(temp_dir) / "last-message.txt"
-        command = [
-            *plan["planned_command"][:-1],
-            "--output-last-message",
-            str(output_path),
-            plan["planned_command"][-1],
-        ]
-        command_preview = _codex_command_preview(plan)
+        if resume_session_id:
+            command = _codex_resume_command(plan, output_path, resume_session_id)
+            stdin_text = _clean_codex_continuation_prompt(prompt)
+            command_preview = _codex_resume_command_preview(plan)
+            starting_tail = f"Resuming Codex CLI: {command_preview}"
+        else:
+            command = [
+                *plan["planned_command"][:-1],
+                "--json",
+                "--output-last-message",
+                str(output_path),
+                "-",
+            ]
+            stdin_text = plan["planned_command"][-1]
+            command_preview = _codex_command_preview(plan)
+            starting_tail = f"Starting Codex CLI: {command_preview}"
         _update_codex_job_activity(
             job_id,
             phase="starting",
             command_preview=command_preview,
-            cli_tail=f"Starting Codex CLI: {command_preview}",
+            cli_tail=starting_tail,
             last_activity_at=time.time(),
         )
         try:
@@ -4673,6 +5113,7 @@ def _codex_delegate_job_worker(job_id: str, prompt: str, project_dir: str | None
                 shell=False,
                 cwd=workdir,
                 text=True,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=1,
@@ -4693,6 +5134,15 @@ def _codex_delegate_job_worker(job_id: str, prompt: str, project_dir: str | None
                 **duration,
             )
             return
+
+        if process.stdin is not None:
+            try:
+                process.stdin.write(stdin_text)
+                if not stdin_text.endswith("\n"):
+                    process.stdin.write("\n")
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
 
         _update_codex_job_activity(
             job_id,
@@ -4720,7 +5170,11 @@ def _codex_delegate_job_worker(job_id: str, prompt: str, project_dir: str | None
                 return
             try:
                 for line in stream:
-                    clean_line = _codex_activity_tail(line.rstrip("\n"), 1200)
+                    raw_line = line.rstrip("\n")
+                    session_id = _extract_codex_session_id(raw_line)
+                    if session_id:
+                        _update_codex_job_activity(job_id, codex_session_id=session_id)
+                    clean_line = _codex_activity_tail(raw_line, 1200)
                     if not clean_line:
                         continue
                     with activity_lock:
@@ -4770,6 +5224,9 @@ def _codex_delegate_job_worker(job_id: str, prompt: str, project_dir: str | None
         stdout_tail = _codex_lines_tail(stdout_lines, 8000)
         stderr_tail = _codex_lines_tail(stderr_lines, 3000)
         last_message = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
+        session_id = _extract_codex_session_id("\n".join([stdout_tail, stderr_tail, last_message]))
+        if session_id:
+            _update_codex_job_activity(job_id, codex_session_id=session_id)
 
     duration = _duration_fields(started_at)
     if timed_out:
@@ -4820,6 +5277,11 @@ def _codex_activity_job(job: dict[str, Any]) -> dict[str, Any]:
         "duration_seconds": job.get("duration_seconds"),
         "returncode": job.get("returncode"),
         "command_preview": _codex_activity_tail(job.get("command_preview"), 500),
+        "continuation_of": str(job.get("continuation_of") or ""),
+        "has_resumable_session": bool(job.get("codex_session_id")),
+        "codex_chat_name": str(job.get("codex_chat_name") or ""),
+        "codex_chat_purpose": _codex_activity_tail(job.get("codex_chat_purpose"), 500),
+        "jarvis_generated_prompt": bool(job.get("jarvis_generated_prompt")),
         "cli_tail": cli_tail,
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
@@ -4847,8 +5309,39 @@ def _codex_command_preview(plan: dict[str, Any]) -> str:
     )
 
 
+def _codex_resume_command_preview(plan: dict[str, Any]) -> str:
+    return (
+        f"{Path(str(plan.get('codex_path') or 'codex')).name} exec resume "
+        f"--model {plan.get('model') or DEFAULT_CODEX_MODEL} "
+        f"--sandbox {plan.get('sandbox') or 'read-only'}"
+    )
+
+
+def _codex_resume_command(plan: dict[str, Any], output_path: Path, session_id: str) -> list[str]:
+    return [
+        str(plan.get("codex_path") or "codex"),
+        "--model",
+        str(plan.get("model") or DEFAULT_CODEX_MODEL),
+        "-c",
+        f"model_reasoning_effort={plan.get('reasoning_effort') or DEFAULT_CODEX_REASONING_EFFORT}",
+        "--sandbox",
+        str(plan.get("sandbox") or "read-only"),
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "resume",
+        "--skip-git-repo-check",
+        "--json",
+        "--output-last-message",
+        str(output_path),
+        session_id,
+        "-",
+    ]
+
+
 def _codex_activity_tail(value: Any, max_chars: int = CODEX_ACTIVITY_TAIL_CHARS) -> str:
-    return _text_tail(redact_sensitive_text(str(value or "")), max_chars).strip()
+    text = _redact_codex_sensitive_text(str(value or ""))
+    return _text_tail(redact_sensitive_text(text), max_chars).strip()
 
 
 def _codex_lines_tail(lines: list[str], max_chars: int = CODEX_ACTIVITY_TAIL_CHARS) -> str:
@@ -4862,6 +5355,147 @@ def _codex_combined_cli_tail(stdout_tail: str, stderr_tail: str) -> str:
     if stderr_tail.strip():
         sections.append(f"stderr:\n{stderr_tail.strip()}")
     return _codex_activity_tail("\n\n".join(sections), CODEX_ACTIVITY_TAIL_CHARS)
+
+
+def _remember_codex_sensitive_text(value: str) -> None:
+    text = value.strip()
+    if not text:
+        return
+    snippets = {text}
+    snippets.update(match.group(0) for match in re.finditer(r"\b\d{4,12}\b", text))
+    with CODEX_SENSITIVE_SNIPPETS_LOCK:
+        for snippet in snippets:
+            if 4 <= len(snippet) <= 2000:
+                CODEX_SENSITIVE_SNIPPETS.add(snippet)
+        if len(CODEX_SENSITIVE_SNIPPETS) > 40:
+            kept = sorted(CODEX_SENSITIVE_SNIPPETS, key=len, reverse=True)[:40]
+            CODEX_SENSITIVE_SNIPPETS.clear()
+            CODEX_SENSITIVE_SNIPPETS.update(kept)
+
+
+def _redact_codex_sensitive_text(value: str) -> str:
+    redacted = value
+    with CODEX_SENSITIVE_SNIPPETS_LOCK:
+        snippets = sorted(CODEX_SENSITIVE_SNIPPETS, key=len, reverse=True)
+    for snippet in snippets:
+        if snippet and snippet in redacted:
+            redacted = redacted.replace(snippet, "[REDACTED]")
+    return redacted
+
+
+def _extract_codex_session_id(value: Any) -> str | None:
+    text = str(value or "")
+    if not text:
+        return None
+    for line in text.splitlines() or [text]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parsed: Any | None = None
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+        if parsed is not None:
+            found = _extract_codex_session_id_from_json(parsed)
+            if found:
+                return found
+        contextual = re.search(
+            r"(?i)(?:session|conversation|rollout|thread)[-_ ]?id[^0-9a-fA-F]{0,32}"
+            r"(" + CODEX_SESSION_ID_RE.pattern + r")",
+            stripped,
+        )
+        if contextual:
+            return contextual.group(1)
+        if re.search(r"(?i)\b(session|conversation|rollout|thread)\b", stripped):
+            fallback = CODEX_SESSION_ID_RE.search(stripped)
+            if fallback:
+                return fallback.group(0)
+    return None
+
+
+def _extract_codex_session_id_from_json(value: Any, *, key_path: tuple[str, ...] = ()) -> str | None:
+    if isinstance(value, dict):
+        type_text = str(value.get("type") or value.get("event") or value.get("name") or "").lower()
+        for key, item in value.items():
+            lowered_key = str(key).lower()
+            child_path = (*key_path, lowered_key)
+            if isinstance(item, str):
+                match = CODEX_SESSION_ID_RE.search(item)
+                if match and (
+                    "session" in lowered_key
+                    or "conversation" in lowered_key
+                    or "rollout" in lowered_key
+                    or "thread" in lowered_key
+                    or "session" in type_text
+                    or "thread" in type_text
+                    or "session" in " ".join(key_path)
+                    or "thread" in " ".join(key_path)
+                ):
+                    return match.group(0)
+            found = _extract_codex_session_id_from_json(item, key_path=child_path)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _extract_codex_session_id_from_json(item, key_path=key_path)
+            if found:
+                return found
+    elif isinstance(value, str):
+        match = CODEX_SESSION_ID_RE.search(value)
+        if match and any("session" in part or "conversation" in part or "rollout" in part or "thread" in part for part in key_path):
+            return match.group(0)
+    return None
+
+
+def _clean_codex_continuation_prompt(prompt: str) -> str:
+    text = prompt.strip()
+    prefixes = [
+        r"(?is)^tell\s+(?:the\s+)?same\s+codex\s*:?\s*",
+        r"(?is)^tell\s+(?:the\s+)?same\s+codex\s+this\s*:?\s*",
+        r"(?is)^same\s+codex\s*:?\s*",
+        r"(?is)^continue\s+(?:the\s+)?same\s+codex\s*:?\s*",
+        r"(?is)^tell\s+codex\s+this\s*:?\s*",
+        r"(?is)^tell\s+codex\s*:?\s*",
+    ]
+    for pattern in prefixes:
+        cleaned = re.sub(pattern, "", text).strip()
+        if cleaned != text:
+            text = cleaned
+            break
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1].strip()
+    return text or prompt.strip()
+
+
+def _latest_codex_resume_target(*, history: list[dict[str, str]] | None = None) -> dict[str, Any] | None:
+    del history
+    with CODEX_JOBS_LOCK:
+        _ensure_codex_jobs_loaded_unlocked()
+        jobs = [dict(value) for value in CODEX_JOBS.values()]
+    recent_jobs = sorted(jobs, key=lambda item: float(item.get("started_at") or 0), reverse=True)
+    waiting_jobs = [job for job in recent_jobs if _codex_job_appears_to_wait_for_reply(job)]
+    if waiting_jobs:
+        return waiting_jobs[0]
+    for job in recent_jobs:
+        if str(job.get("status") or "") != "running":
+            return job
+    return recent_jobs[0] if recent_jobs else None
+
+
+def _codex_job_appears_to_wait_for_reply(job: dict[str, Any]) -> bool:
+    if str(job.get("status") or "") == "running":
+        return False
+    text = " ".join(
+        str(job.get(key) or "")
+        for key in ("reply", "conversation_tail", "cli_tail", "stderr_tail", "stdout_tail")
+    ).lower()
+    if not text:
+        return False
+    wait_cues = ("reply", "provide", "send", "need", "needs", "requires", "waiting", "permission", "approval")
+    sensitive_cues = ("secret code", "confirmation code", "authorization", "authorisation", "agents.md", "approval")
+    return any(cue in text for cue in wait_cues) and any(cue in text for cue in sensitive_cues)
 
 
 def _codex_job_reply(job: dict[str, Any]) -> str:
@@ -4907,6 +5541,16 @@ def _ensure_codex_jobs_loaded_unlocked() -> None:
             job["last_activity_at"] = time.time()
             job["reply"] = _codex_job_reply(job)
             changed = True
+        if not job.get("codex_session_id"):
+            session_id = _extract_codex_session_id(
+                "\n".join(
+                    str(job.get(key) or "")
+                    for key in ("stdout_tail", "stderr_tail", "cli_tail", "conversation_tail", "reply")
+                )
+            )
+            if session_id:
+                job["codex_session_id"] = session_id
+                changed = True
         CODEX_JOBS.setdefault(job_id, job)
     if changed:
         _persist_codex_jobs_unlocked()
@@ -4941,6 +5585,17 @@ def _codex_job_persistable(job: dict[str, Any]) -> dict[str, Any]:
         "phase",
         "model",
         "prompt_summary",
+        "parent_prompt_summary",
+        "ephemeral",
+        "codex_session_id",
+        "resume_session_id",
+        "continuation_of",
+        "continuation_contains_sensitive_followup",
+        "jarvis_generated_prompt",
+        "codex_chat_name",
+        "codex_chat_purpose",
+        "codex_chat_context",
+        "codex_chat_selection_reason",
         "started_at",
         "completed_at",
         "last_activity_at",
@@ -4960,6 +5615,8 @@ def _codex_job_persistable(job: dict[str, Any]) -> dict[str, Any]:
     clean.setdefault("tool", "codex.job")
     if "prompt_summary" in clean:
         clean["prompt_summary"] = _text_tail(str(clean["prompt_summary"]), 500)
+    if "parent_prompt_summary" in clean:
+        clean["parent_prompt_summary"] = _text_tail(str(clean["parent_prompt_summary"]), 500)
     if "reply" in clean:
         clean["reply"] = _codex_activity_tail(clean["reply"], 4000)
     if "error" in clean:
@@ -4970,6 +5627,10 @@ def _codex_job_persistable(job: dict[str, Any]) -> dict[str, Any]:
         "stderr_tail": 3000,
         "cli_tail": CODEX_ACTIVITY_TAIL_CHARS,
         "conversation_tail": 4000,
+        "codex_chat_name": 120,
+        "codex_chat_purpose": 500,
+        "codex_chat_context": 800,
+        "codex_chat_selection_reason": 500,
     }.items():
         if key in clean:
             clean[key] = _codex_activity_tail(clean[key], max_chars)
@@ -5364,7 +6025,18 @@ def _codex_job_counts() -> dict[str, Any]:
         "running_count": len(running),
         "latest_job_id": latest.get("job_id") if latest else None,
         "latest_status": latest.get("status") if latest else None,
+        "default_chat": _codex_default_chat_status(),
     }
+
+
+def _codex_default_chat_status() -> str:
+    registry = _load_codex_chat_registry()
+    chats = registry.get("chats") if isinstance(registry.get("chats"), list) else []
+    default_name = str(registry.get("default_chat") or "Default")
+    for chat in chats:
+        if str(chat.get("name") or "").lower() == default_name.lower():
+            return str(chat.get("name") or default_name)
+    return "not configured"
 
 
 def _cancel_active_timers() -> int:

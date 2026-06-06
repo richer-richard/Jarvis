@@ -82,6 +82,12 @@ DEFAULT_CODEX_MODEL = os.environ.get("JARVIS_CODEX_MODEL", "gpt-5.4-mini")
 DEFAULT_CODEX_REASONING_EFFORT = os.environ.get("JARVIS_CODEX_REASONING_EFFORT", "low")
 CODEX_TIMEOUT_SECONDS = env_int("JARVIS_CODEX_TIMEOUT_SECONDS", 210, minimum=10, maximum=300)
 CODEX_CHAT_TIMEOUT_SECONDS = env_int("JARVIS_CODEX_CHAT_TIMEOUT_SECONDS", 12, minimum=3, maximum=90)
+CODEX_CHAT_REGISTRY_PATH = Path(
+    os.environ.get("JARVIS_CODEX_CHAT_REGISTRY", str(RUNTIME_DIR / "codex_chats.json"))
+).expanduser()
+CODEX_DAILY_MEMORY_PATH = Path(
+    os.environ.get("JARVIS_CODEX_DAILY_MEMORY", str(RUNTIME_DIR / "codex_daily_memory.json"))
+).expanduser()
 FAST_MODEL_BACKEND = os.environ.get("JARVIS_FAST_MODEL_BACKEND", "ollama")
 FAST_MODEL_NAME = os.environ.get("JARVIS_FAST_MODEL", "qwen3:0.6b")
 FAST_MODEL_FALLBACK_BACKEND = os.environ.get("JARVIS_FAST_MODEL_FALLBACK_BACKEND", "ollama").strip().lower()

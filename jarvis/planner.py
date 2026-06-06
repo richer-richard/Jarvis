@@ -35,6 +35,7 @@ from .tools import (
     select_tool_intent,
     screenshot_capability,
     source_access_status,
+    start_codex_continue_job,
     start_codex_delegate_job,
     system_status,
     tts_status,
@@ -191,6 +192,10 @@ class Planner:
                     prototype_note="The prototype records this confirmation requirement but does not execute protected actions.",
                 ),
             )
+        if _looks_like_codex_continuation(text, history):
+            result = start_codex_continue_job(text, history=history)
+            summary = "Continued Codex CLI job." if result.get("status") == "running" else "Tried to continue Codex CLI job."
+            return self._result(text, "codex.job", summary, assessment, result, bool(result.get("executed")))
         wake_transcript = _extract_wake_transcript(text)
         if wake_transcript is not None:
             return self._result(text, "voice.wake_simulation", "Ran text-only wake phrase simulation.", assessment, wake_phrase_simulation(wake_transcript), True)
@@ -331,6 +336,18 @@ class Planner:
         codex_job_query = _extract_codex_job_query(text)
         if codex_job_query is not None:
             return self._preview_result(text, "codex.job", assessment, False)
+        if _looks_like_same_codex_reference(text):
+            return self._preview_result(
+                text,
+                "codex.job",
+                assessment,
+                True,
+                plan={
+                    "selected_tool": "codex.job",
+                    "execution_mode": "async_continuation",
+                    "continuation": True,
+                },
+            )
         if _looks_like_codex_speed_status(lower):
             return self._preview_result(text, "diagnostics.codex_speed", assessment, True)
         if lower.startswith("find ") or lower.startswith("search "):
@@ -841,6 +858,51 @@ def _looks_like_codex_speed_status(lower: str) -> bool:
     speed_cues = ("speed", "latency", "timing", "time", "slow", "performance")
     status_cues = ("status", "check", "show", "what", "how")
     return any(cue in lower for cue in speed_cues) and any(cue in lower for cue in status_cues)
+
+
+def _looks_like_codex_continuation(text: str, history: list[dict[str, str]] | None) -> bool:
+    if _looks_like_same_codex_reference(text):
+        return True
+    lower = text.strip().lower()
+    if re.match(r"(?is)^tell\s+codex\s+(?:this\s*:?)", text.strip()) and _history_shows_codex_waiting(history):
+        return True
+    if _looks_like_confirmation_code_reply(text) and _history_shows_codex_waiting(history):
+        return True
+    return False
+
+
+def _looks_like_same_codex_reference(text: str) -> bool:
+    lower = text.strip().lower()
+    return bool(
+        re.search(
+            r"\b(?:same|previous|last|that)\s+codex\b"
+            r"|\bcontinue\s+(?:the\s+)?(?:same\s+)?codex\b"
+            r"|\bresume\s+(?:the\s+)?(?:same\s+)?codex\b",
+            lower,
+        )
+    )
+
+
+def _looks_like_confirmation_code_reply(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) > 80:
+        return False
+    return re.fullmatch(r"(?:code\s*:?\s*)?\d{4,12}", stripped, re.IGNORECASE) is not None
+
+
+def _history_shows_codex_waiting(history: list[dict[str, str]] | None) -> bool:
+    if not history:
+        return False
+    for item in reversed(history[-12:]):
+        content = str(item.get("content") or "").lower()
+        if not content:
+            continue
+        if "codex" not in content and "agents.md" not in content:
+            continue
+        waiting_cues = ("secret code", "confirmation code", "reply with", "provide", "permission", "approval", "waiting")
+        if any(cue in content for cue in waiting_cues):
+            return True
+    return False
 
 
 def _should_run_codex_synchronously(lower: str) -> bool:

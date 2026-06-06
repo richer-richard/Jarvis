@@ -355,6 +355,58 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.executed)
         self.assertEqual(result.result["job_id"], "codex-explicit")
 
+    def test_same_codex_followup_uses_continuation_route(self):
+        fake_result = {
+            "tool": "codex.job",
+            "status": "running",
+            "executed": True,
+            "job_id": "codex-continued",
+            "continuation_of": "codex-original",
+            "reply": "I sent that to the same Codex session.",
+        }
+        with patch("jarvis.planner.start_codex_continue_job", return_value=fake_result) as continue_mock, \
+             patch("jarvis.planner.start_codex_delegate_job") as delegate_mock:
+            result = Planner().handle("tell the same Codex: 123456", history=[])
+
+        continue_mock.assert_called_once()
+        delegate_mock.assert_not_called()
+        self.assertEqual(result.tool, "codex.job")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["job_id"], "codex-continued")
+
+    def test_plain_code_reply_continues_codex_when_history_is_waiting(self):
+        fake_result = {
+            "tool": "codex.job",
+            "status": "running",
+            "executed": True,
+            "job_id": "codex-continued",
+            "continuation_of": "codex-original",
+            "reply": "I sent that to the same Codex session.",
+        }
+        history = [
+            {
+                "role": "assistant",
+                "content": "Codex job codex-original needs permission. Please reply with the secret code.",
+            }
+        ]
+        with patch("jarvis.planner.start_codex_continue_job", return_value=fake_result) as continue_mock, \
+             patch("jarvis.planner.start_codex_delegate_job") as delegate_mock:
+            result = Planner().handle("123456", history=history)
+
+        continue_mock.assert_called_once()
+        delegate_mock.assert_not_called()
+        self.assertEqual(result.tool, "codex.job")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["continuation_of"], "codex-original")
+
+    def test_same_codex_followup_cannot_bypass_confirmation_policy(self):
+        with patch("jarvis.planner.start_codex_continue_job") as continue_mock:
+            result = Planner().handle("tell the same Codex: delete my Desktop files")
+
+        continue_mock.assert_not_called()
+        self.assertEqual(result.tool, "policy.strong_confirmation")
+        self.assertFalse(result.executed)
+
     def test_explicit_codex_preview_bypasses_model_router(self):
         bad_intent = {"status": "completed", "selected_tool": "outlook.visible_summary", "confidence": 0.91, "entities": {}}
         with patch("jarvis.planner.select_tool_intent", return_value=bad_intent) as router_mock:
@@ -2868,6 +2920,177 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("--ephemeral", command)
         self.assertIn("Visible project file map:", command[-1])
         self.assertIn("swift-shell/Sources/JarvisMenuBar", command[-1])
+
+    def test_codex_delegate_plan_can_be_persistent_for_async_resume(self):
+        plan = codex_delegate_plan("ask Codex to inspect this prototype", ephemeral=False)
+        command = plan["planned_command"]
+
+        self.assertFalse(plan["ephemeral"])
+        self.assertNotIn("--ephemeral", command)
+        self.assertEqual(command[-1], plan["planned_command"][-1])
+        self.assertIn("Visible project file map:", command[-1])
+
+    def test_codex_delegate_job_uses_default_named_chat(self):
+        session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = Path(temp_dir) / "codex_jobs.json"
+            registry = Path(temp_dir) / "codex_chats.json"
+            memory = Path(temp_dir) / "codex_daily_memory.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.codex_chats.v1",
+                        "default_chat": "Default",
+                        "chats": [
+                            {
+                                "name": "Default",
+                                "session_id": session_id,
+                                "aliases": ["general"],
+                                "purpose": "General Jarvis-to-Codex work.",
+                                "context": "Use for ambiguous Jarvis project requests.",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                with patch("jarvis.tools.CODEX_JOB_STORE", store), \
+                     patch("jarvis.tools.CODEX_CHAT_REGISTRY_PATH", registry), \
+                     patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory), \
+                     patch("jarvis.tools._find_executable", return_value="/Applications/Codex.app/Contents/Resources/codex"), \
+                     patch("jarvis.tools._start_codex_job_thread") as thread_mock:
+                    with jarvis_tools.CODEX_JOBS_LOCK:
+                        jarvis_tools.CODEX_JOBS.clear()
+                        jarvis_tools.CODEX_JOBS_LOADED = True
+
+                    result = jarvis_tools.start_codex_delegate_job("ask Codex to inspect this prototype")
+                    with jarvis_tools.CODEX_JOBS_LOCK:
+                        serialized = json.dumps(jarvis_tools.CODEX_JOBS, ensure_ascii=False)
+            finally:
+                with jarvis_tools.CODEX_JOBS_LOCK:
+                    jarvis_tools.CODEX_JOBS.clear()
+                    jarvis_tools.CODEX_JOBS_LOADED = False
+
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["codex_chat_name"], "Default")
+        self.assertEqual(result["resume_session_id"], session_id)
+        self.assertTrue(result["jarvis_generated_prompt"])
+        self.assertIn("Default Codex chat", result["reply"])
+        thread_mock.assert_called_once()
+        self.assertEqual(thread_mock.call_args.kwargs["resume_session_id"], session_id)
+        delegated_prompt = thread_mock.call_args.args[1]
+        self.assertIn("This is a Jarvis-generated prompt", delegated_prompt)
+        self.assertIn("Original request from Leo to Jarvis", delegated_prompt)
+        self.assertIn("General Jarvis-to-Codex work.", delegated_prompt)
+        self.assertIn("MacBook Pro M4", delegated_prompt)
+        self.assertIn("codex_chat_name", serialized)
+        self.assertIn("Default", serialized)
+
+    def test_codex_daily_memory_refreshes_next_day(self):
+        yesterday = "2026-06-05"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memory = Path(temp_dir) / "codex_daily_memory.json"
+            memory.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.codex_daily_memory.v1",
+                        "date": yesterday,
+                        "events": [
+                            {
+                                "chat_name": "Default",
+                                "prompt_summary": "yesterday work",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory):
+                loaded = jarvis_tools._load_codex_daily_memory()
+
+        self.assertNotEqual(loaded["date"], yesterday)
+        self.assertEqual(loaded["events"], [])
+        self.assertIn("yesterday work", loaded["previous_day_summary"])
+
+    def test_remote_worker_status_reports_codex_cli_probe(self):
+        stdout = "\n".join(
+            [
+                "JARVIS_REMOTE_OK",
+                "hongyi-air",
+                "macOS",
+                "15.5",
+                "arm64",
+                str(8 * 1024 * 1024 * 1024),
+                "Apple M2",
+                "CODEX_PATH=/Applications/Codex.app/Contents/Resources/codex",
+                "codex-cli 0.137.0-alpha.4",
+            ]
+        )
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout=stdout, stderr="")
+        with patch("jarvis.tools._find_executable", return_value="/usr/bin/ssh"), \
+             patch("jarvis.tools.subprocess.run", return_value=completed):
+            result = jarvis_tools.remote_worker_status()
+
+        self.assertEqual(result["status"], "available")
+        self.assertTrue(result["codex_cli_available"])
+        self.assertEqual(result["codex_version"], "codex-cli 0.137.0-alpha.4")
+        self.assertIn("Codex CLI is available", result["reply"])
+
+    def test_codex_continue_job_does_not_persist_sensitive_followup(self):
+        session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = Path(temp_dir) / "codex_jobs.json"
+            try:
+                with patch("jarvis.tools.CODEX_JOB_STORE", store), \
+                     patch("jarvis.tools._find_executable", return_value="/Applications/Codex.app/Contents/Resources/codex"), \
+                     patch("jarvis.tools._start_codex_job_thread") as thread_mock:
+                    with jarvis_tools.CODEX_JOBS_LOCK:
+                        jarvis_tools.CODEX_JOBS.clear()
+                        jarvis_tools.CODEX_JOBS_LOADED = True
+                        jarvis_tools.CODEX_JOBS["codex-original"] = {
+                            "tool": "codex.job",
+                            "job_id": "codex-original",
+                            "status": "completed",
+                            "phase": "completed",
+                            "model": "gpt-5.4-mini",
+                            "started_at": 10.0,
+                            "last_activity_at": 11.0,
+                            "codex_session_id": session_id,
+                            "prompt_summary": "Create a test file.",
+                            "reply": "Please reply with the secret code before I write outside the workspace.",
+                        }
+
+                    result = jarvis_tools.start_codex_continue_job("tell the same Codex: 123456")
+                    with jarvis_tools.CODEX_JOBS_LOCK:
+                        serialized = json.dumps(jarvis_tools.CODEX_JOBS, ensure_ascii=False)
+            finally:
+                with jarvis_tools.CODEX_JOBS_LOCK:
+                    jarvis_tools.CODEX_JOBS.clear()
+                    jarvis_tools.CODEX_JOBS_LOADED = False
+                with jarvis_tools.CODEX_SENSITIVE_SNIPPETS_LOCK:
+                    jarvis_tools.CODEX_SENSITIVE_SNIPPETS.clear()
+
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["continuation_of"], "codex-original")
+        self.assertEqual(result["resume_session_id"], session_id)
+        thread_mock.assert_called_once()
+        self.assertEqual(thread_mock.call_args.kwargs["resume_session_id"], session_id)
+        self.assertTrue(thread_mock.call_args.kwargs["sensitive_stdin"])
+        self.assertNotIn("123456", serialized)
+        self.assertIn("Continue previous Codex job", serialized)
+
+    def test_codex_session_id_extracted_from_json_event(self):
+        session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        line = json.dumps({"type": "session_configured", "session_id": session_id})
+
+        self.assertEqual(jarvis_tools._extract_codex_session_id(line), session_id)
+
+    def test_codex_thread_id_extracted_from_json_event(self):
+        thread_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        line = json.dumps({"type": "thread.started", "thread_id": thread_id})
+
+        self.assertEqual(jarvis_tools._extract_codex_session_id(line), thread_id)
 
     def test_codex_delegate_executes_with_mocked_subprocess(self):
         completed = subprocess.CompletedProcess(
