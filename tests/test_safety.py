@@ -63,6 +63,7 @@ from jarvis.tools import (
     browser_open_url_plan,
     codex_chat_status,
     codex_delegate_plan,
+    deep_tool_catalog_status,
     email_backend_status,
     elevation_status,
     fast_model_status,
@@ -360,6 +361,8 @@ class PlannerTests(unittest.TestCase):
             "what do you feed the first model for 'hello Jarvis'": "diagnostics.model_context",
             "tool catalog status": "diagnostics.tool_catalog",
             "what tools are fed to the model": "diagnostics.tool_catalog",
+            "deep tool catalog": "tools.deep_catalog",
+            "show all tool layers": "tools.deep_catalog",
             "permissions status": "diagnostics.permissions",
             "microphone permission readiness": "diagnostics.permissions",
             "remote worker status": "diagnostics.remote_worker",
@@ -835,6 +838,38 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["called_fast_model"])
+        catalog_mock.assert_called_once()
+
+    def test_tools_more_deep_catalog_recommendation_previews_without_calling_models(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "tools.deep_catalog",
+            "entities": {},
+            "reply": "Yes sir, checking the deeper tool catalog now.",
+        }
+        fake_catalog = {
+            "tool": "tools.deep_catalog",
+            "status": "cataloged",
+            "executed": True,
+            "plan_only": True,
+            "called_fast_model": False,
+            "called_middle_model": False,
+            "called_codex": False,
+            "handoff_contract": {"execute_recommended_tools": False},
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.deep_tool_catalog_status", return_value=fake_catalog) as catalog_mock:
+            result = Planner().handle_selected_tool("Show me the deeper tools.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "tools.deep_catalog")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["called_middle_model"])
         catalog_mock.assert_called_once()
 
     def test_tools_more_permissions_recommendation_previews_without_prompting(self):
@@ -1835,6 +1870,29 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["first_model"]["duplicates"], [])
         self.assertEqual(result["middle_planner"]["duplicates"], [])
 
+    def test_deep_tool_catalog_status_groups_layers_without_side_effects(self):
+        tool_specs = [
+            {"tool": "outlook.visible_summary", "description": "Read email.", "entities": ["selection"]},
+            {"tool": "app.open", "description": "Open app.", "entities": ["app_name"]},
+        ]
+        result = deep_tool_catalog_status(tool_specs)
+
+        self.assertEqual(result["tool"], "tools.deep_catalog")
+        self.assertEqual(result["status"], "cataloged")
+        self.assertTrue(result["plan_only"])
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["called_fast_model"])
+        self.assertFalse(result["called_middle_model"])
+        self.assertFalse(result["called_codex"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["captured_screen"])
+        self.assertFalse(result["changed_state"])
+        self.assertEqual(result["layers"]["first_model"]["tool_ids"], ["outlook.visible_summary", "app.open"])
+        self.assertIn("tools.deep_catalog", result["layers"]["middle_planner"]["tool_ids"])
+        self.assertIn("tools.deep_catalog", result["layers"]["registry"]["tool_ids"])
+        self.assertIn("read_only", result["layers"]["registry"]["tools_by_mode"])
+        self.assertFalse(result["handoff_contract"]["execute_recommended_tools"])
+
     def test_planned_tool_status_reports_unavailable_future_tool_without_side_effects(self):
         result = planned_tool_status("teams.assignment")
 
@@ -2138,6 +2196,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("terminal.read_only", tool_ids)
         self.assertIn("terminal.plan", tool_ids)
         self.assertIn("tools.more", tool_ids)
+        self.assertIn("tools.deep_catalog", tool_ids)
         self.assertIn("workflow.app_task_plan", tool_ids)
         self.assertIn("app.list", tool_ids)
         self.assertIn("app.open", tool_ids)
@@ -5085,7 +5144,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("30/30", policy_gate["detail"])
+        self.assertIn("31/31", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

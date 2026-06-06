@@ -23,6 +23,7 @@ from .tools import (
     codex_speed_status,
     codex_job_status,
     codex_delegate_plan,
+    deep_tool_catalog_status,
     email_backend_status,
     elevation_status,
     fast_model_status,
@@ -105,6 +106,11 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     {
         "tool": "diagnostics.tool_catalog",
         "description": "Report the first-model, middle-planner, and registry tool catalog IDs and mismatches without calling any model.",
+        "entities": [],
+    },
+    {
+        "tool": "tools.deep_catalog",
+        "description": "Report the deeper grouped tool catalog and layered handoff contract without executing tools or calling any model.",
         "entities": [],
     },
     {
@@ -412,6 +418,8 @@ class Planner:
             return self._result(text, "diagnostics.latency", "Read local fast-latency status.", assessment, latest_latency_status(), True)
         if _looks_like_fast_model_status(lower):
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
+        if _looks_like_deep_tool_catalog_status(lower):
+            return self._result(text, "tools.deep_catalog", "Read layered deep tool catalog.", assessment, deep_tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
         if _looks_like_tool_catalog_status(lower):
             return self._result(text, "diagnostics.tool_catalog", "Read Jarvis tool catalog status.", assessment, tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
         if _looks_like_permissions_status(lower):
@@ -591,6 +599,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.latency", assessment, True)
         if _looks_like_fast_model_status(lower):
             return self._preview_result(text, "diagnostics.fast_model", assessment, True)
+        if _looks_like_deep_tool_catalog_status(lower):
+            return self._preview_result(text, "tools.deep_catalog", assessment, True)
         if _looks_like_tool_catalog_status(lower):
             return self._preview_result(text, "diagnostics.tool_catalog", assessment, True)
         if _looks_like_permissions_status(lower):
@@ -703,6 +713,10 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "diagnostics.tool_catalog", assessment, True, plan={"intent": intent})
             return self._result(text, "diagnostics.tool_catalog", "Read Jarvis tool catalog status.", assessment, tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
+        if selected_tool == "tools.deep_catalog":
+            if not execute:
+                return self._preview_result(text, "tools.deep_catalog", assessment, True, plan={"intent": intent})
+            return self._result(text, "tools.deep_catalog", "Read layered deep tool catalog.", assessment, deep_tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
         if selected_tool == "diagnostics.permissions":
             if not execute:
                 return self._preview_result(text, "diagnostics.permissions", assessment, True, plan={"intent": intent})
@@ -1059,6 +1073,13 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
         }
     if recommended == "diagnostics.tool_catalog":
         preview = tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "tools.deep_catalog":
+        preview = deep_tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS)
         return {
             "recommended_tool": recommended,
             "executed": False,
@@ -1518,6 +1539,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
         "diagnostics.final_qa": "Yes sir, checking the final QA plan now.",
         "diagnostics.model_context": "Yes sir, checking the model context now.",
         "diagnostics.tool_catalog": "Yes sir, checking the tool catalog now.",
+        "tools.deep_catalog": "Yes sir, checking the deeper tool catalog now.",
         "diagnostics.permissions": "Yes sir, checking permissions readiness now.",
         "voice.stt_candidates": "Yes sir, checking speech recognition options now.",
         "voice.stt_score": "Yes sir, scoring that transcript now.",
@@ -1611,6 +1633,22 @@ def _looks_like_model_context_status(lower: str) -> bool:
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
     )
+
+
+def _looks_like_deep_tool_catalog_status(lower: str) -> bool:
+    deep_cues = (
+        "deep tool catalog",
+        "deeper tool catalog",
+        "full tool catalog",
+        "expanded tool catalog",
+        "layered tool catalog",
+        "deep tools",
+        "more tools catalog",
+        "all tool layers",
+        "all tools by layer",
+    )
+    mutation_cues = ("change", "edit", "rewrite", "set ", "replace", "delete", "send ")
+    return any(cue in lower for cue in deep_cues) and not any(cue in lower for cue in mutation_cues)
 
 
 def _looks_like_tool_catalog_status(lower: str) -> bool:

@@ -86,6 +86,7 @@ def run_self_checks() -> dict[str, Any]:
     add("planner_app_quit_requires_confirmation", app_quit_result["tool"] == "app.quit" and app_quit_result["executed"] is False and app_quit_result["confirmation"]["kind"] == "standard")
     add("planner_model_context_routes", planner.handle("model inputs for hello Jarvis").tool == "diagnostics.model_context")
     add("planner_tool_catalog_routes", planner.handle("tool catalog status").tool == "diagnostics.tool_catalog")
+    add("planner_deep_tool_catalog_routes", planner.handle("deep tool catalog").tool == "tools.deep_catalog")
     add("planner_permissions_routes", planner.handle("permissions status").tool == "diagnostics.permissions")
     add("planner_final_qa_routes", planner.handle("final QA plan").tool == "diagnostics.final_qa")
     open_app_preview = planner.preview("open app Safari").to_dict()
@@ -151,6 +152,7 @@ def run_self_checks() -> dict[str, Any]:
         "terminal.read_only",
         "terminal.plan",
         "tools.more",
+        "tools.deep_catalog",
         "workflow.app_task_plan",
         "files.search",
         "app.availability",

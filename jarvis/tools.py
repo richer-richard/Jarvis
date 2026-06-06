@@ -536,6 +536,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Compares first-model tool specs, middle-planner tools, and the public registry to catch mismatched model-callable tool IDs.",
             },
             {
+                "id": "tools.deep_catalog",
+                "label": "Deep Tool Catalog",
+                "mode": "read_only",
+                "risk": "read_only_metadata",
+                "available": True,
+                "description": "Returns the grouped first, middle, and registry tool catalog for layered planning without executing tools or calling models.",
+            },
+            {
                 "id": "diagnostics.permissions",
                 "label": "Permissions Readiness",
                 "mode": "execute",
@@ -1979,6 +1987,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "screen.ocr", "kind": "planned_private_read", "description": "Future permission-gated screen OCR/find-text route; do not capture or read the screen until enabled."},
         {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
         {"id": "diagnostics.tool_catalog", "kind": "read_only", "description": "Compare model-callable tool specs against the public registry."},
+        {"id": "tools.deep_catalog", "kind": "read_only", "description": "Inspect the deeper grouped tool catalog for layered planning; catalog lookup only, no execution."},
         {"id": "diagnostics.permissions", "kind": "read_only", "description": "Report privacy-permission readiness without prompting or changing settings."},
         {"id": "diagnostics.codex_chats", "kind": "read_only", "description": "Report configured Codex chats, default route, and daily memory without exposing session IDs."},
         {"id": "codex.activity", "kind": "read_only", "description": "Show redacted recent Codex job activity without starting a new Codex request."},
@@ -3025,6 +3034,92 @@ def tool_catalog_status(first_tool_specs: list[dict[str, Any]] | None = None) ->
             "special_non_registry_ids": sorted(special_non_registry_ids & set(model_callable_ids)),
             "missing_from_registry": missing_from_registry,
             "registry_only_ids": registry_only_ids,
+        },
+        "reply": reply,
+    }
+
+
+def deep_tool_catalog_status(first_tool_specs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Return the broader grouped catalog for layered planning without executing tools."""
+    registry = tool_registry()
+    registry_tools = list(registry.get("tools") or [])
+    first_specs = list(first_tool_specs or [])
+    middle_tools = _middle_tool_catalog()
+    first_ids = [str(spec.get("tool") or "") for spec in first_specs if spec.get("tool")]
+    middle_ids = [str(tool.get("id") or "") for tool in middle_tools if tool.get("id")]
+    registry_ids = [str(tool.get("id") or "") for tool in registry_tools if tool.get("id")]
+    grouped_registry: dict[str, list[dict[str, Any]]] = {}
+    for tool in registry_tools:
+        mode = _clean_local_field(tool.get("mode")) or "unknown"
+        grouped_registry.setdefault(mode, []).append(
+            {
+                "id": _clean_local_field(tool.get("id")),
+                "label": _clean_local_field(tool.get("label")),
+                "risk": _clean_local_field(tool.get("risk")),
+                "available": bool(tool.get("available")),
+                "description": _clean_local_field(tool.get("description"))[:300],
+            }
+        )
+    for tools in grouped_registry.values():
+        tools.sort(key=lambda item: item["id"])
+    middle_by_kind: dict[str, list[dict[str, Any]]] = {}
+    for tool in middle_tools:
+        kind = _clean_local_field(tool.get("kind")) or "unknown"
+        middle_by_kind.setdefault(kind, []).append(
+            {
+                "id": _clean_local_field(tool.get("id")),
+                "description": _clean_local_field(tool.get("description"))[:300],
+            }
+        )
+    for tools in middle_by_kind.values():
+        tools.sort(key=lambda item: item["id"])
+    unavailable_registry_ids = sorted(
+        str(tool.get("id") or "")
+        for tool in registry_tools
+        if tool.get("id") and not tool.get("available")
+    )
+    reply = (
+        f"Deep tool catalog: first layer {len(first_ids)} tools, "
+        f"middle layer {len(middle_ids)} tools, registry {len(registry_ids)} tools. "
+        "This is catalog lookup only; any chosen tool must be routed back through Jarvis policy."
+    )
+    return {
+        "tool": "tools.deep_catalog",
+        "executed": True,
+        "status": "cataloged",
+        "plan_only": True,
+        "read_private_content": False,
+        "called_fast_model": False,
+        "called_middle_model": False,
+        "called_codex": False,
+        "opened_app": False,
+        "captured_screen": False,
+        "changed_state": False,
+        "layers": {
+            "first_model": {
+                "tool_count": len(first_ids),
+                "tool_ids": first_ids,
+                "purpose": "Fast visible/spoken response and first-level tool request.",
+            },
+            "middle_planner": {
+                "tool_count": len(middle_ids),
+                "tool_ids": middle_ids,
+                "purpose": "Slower plan-only routing across broader tools.",
+                "tools_by_kind": middle_by_kind,
+            },
+            "registry": {
+                "tool_count": len(registry_ids),
+                "tool_ids": registry_ids,
+                "available_count": sum(1 for tool in registry_tools if tool.get("available")),
+                "unavailable_ids": unavailable_registry_ids,
+                "tools_by_mode": grouped_registry,
+            },
+        },
+        "handoff_contract": {
+            "catalog_lookup_only": True,
+            "execute_recommended_tools": False,
+            "next_step": "Route any selected tool ID back through Planner.handle_selected_tool or Planner.preview before execution.",
+            "confirmation_boundary": registry.get("execution_boundary"),
         },
         "reply": reply,
     }
