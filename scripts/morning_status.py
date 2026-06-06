@@ -9,6 +9,7 @@ import os
 import plistlib
 import shlex
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -53,6 +54,30 @@ VERIFICATION_HIGHLIGHTS = {
     "temporary_app_autostart_disabled_self_test": "bundled autostart opt-out",
     "temporary_app_autostart_disabled_no_worker": "bundled opt-out no-worker guard",
 }
+REQUIREMENT_AUDIT_IDS = {
+    "stronger_layered_tool_loop",
+    "app_opening_groundwork",
+    "safe_terminal_groundwork",
+    "voice_recognition_audition_prep",
+    "morning_report",
+    "rebuilt_bundle",
+}
+REQUIREMENT_STATUS_LABELS = {
+    "implemented_terminal_verified": "implemented terminal-verified",
+    "prepared": "prepared",
+    "available": "available",
+    "partial": "partial",
+    "missing": "missing",
+    "artifact_missing": "artifact missing",
+}
+REQUIREMENT_STATUS_ORDER = [
+    "implemented terminal-verified",
+    "prepared",
+    "available",
+    "partial",
+    "artifact missing",
+    "missing",
+]
 
 
 def main() -> int:
@@ -65,6 +90,7 @@ def main() -> int:
     print(f"Project: {PROJECT_ROOT}")
     print_worker_status(base_url)
     print_latest_verification()
+    print_requirement_audit()
     print_latest_latency_smoke()
     print_current_bundle()
     print_process_status()
@@ -177,6 +203,57 @@ def print_latest_verification() -> None:
     highlights = verification_highlights(results)
     if highlights:
         print(f"Verification includes: {', '.join(highlights)}")
+
+
+def print_requirement_audit() -> None:
+    try:
+        project_root_text = str(PROJECT_ROOT)
+        if project_root_text not in sys.path:
+            sys.path.insert(0, project_root_text)
+        from jarvis.tools import final_qa_plan_status
+
+        data = final_qa_plan_status()
+    except Exception as error:  # pragma: no cover - defensive status reporting
+        print(f"Requirement audit: unavailable ({error})")
+        return
+
+    audit = data.get("requirement_audit") if isinstance(data, dict) else None
+    if not isinstance(audit, list) or not audit:
+        print("Requirement audit: unavailable")
+        return
+    print(f"Requirement audit: {requirement_audit_summary(audit)}")
+
+
+def requirement_audit_summary(audit: list[dict[str, Any]]) -> str:
+    status_counts: dict[str, int] = {}
+    remaining: list[str] = []
+    seen_ids: set[str] = set()
+    for item in audit:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "")
+        if item_id:
+            seen_ids.add(item_id)
+        raw_status = str(item.get("status") or "unknown")
+        status = REQUIREMENT_STATUS_LABELS.get(raw_status, raw_status.replace("_", " "))
+        status_counts[status] = status_counts.get(status, 0) + 1
+        note = str(item.get("remaining") or "").strip()
+        if note and note not in remaining:
+            remaining.append(note)
+
+    parts: list[str] = []
+    if status_counts:
+        ordered_statuses = [status for status in REQUIREMENT_STATUS_ORDER if status in status_counts]
+        ordered_statuses.extend(sorted(status for status in status_counts if status not in set(REQUIREMENT_STATUS_ORDER)))
+        parts.append(", ".join(f"{status} {status_counts[status]}" for status in ordered_statuses))
+    missing = sorted(REQUIREMENT_AUDIT_IDS - seen_ids)
+    if missing:
+        parts.append(f"missing audit rows: {', '.join(missing)}")
+    if remaining:
+        shown = remaining[:4]
+        suffix = "; ..." if len(remaining) > len(shown) else ""
+        parts.append(f"remaining: {'; '.join(shown)}{suffix}")
+    return "; ".join(parts) if parts else "no status rows"
 
 
 def print_latest_latency_smoke() -> None:

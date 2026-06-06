@@ -117,6 +117,7 @@ from scripts.morning_status import (
     format_uptime,
     latency_smoke_summary,
     normalize_base_url,
+    requirement_audit_summary,
     time_since,
     verification_action,
     verification_highlights,
@@ -6348,6 +6349,40 @@ class RuntimeSurfaceTests(unittest.TestCase):
             }
         )
         self.assertFalse(slow_after_first["ok"])
+
+    def test_morning_status_requirement_audit_summary(self):
+        summary = requirement_audit_summary(
+            [
+                {
+                    "id": "stronger_layered_tool_loop",
+                    "status": "implemented_terminal_verified",
+                    "remaining": "Foreground live-app QA is deferred.",
+                },
+                {
+                    "id": "app_opening_groundwork",
+                    "status": "implemented_terminal_verified",
+                    "remaining": "Live app launch/focus QA is deferred.",
+                },
+                {
+                    "id": "safe_terminal_groundwork",
+                    "status": "implemented_terminal_verified",
+                    "remaining": "Write/destructive terminal automation remains blocked or confirmation-gated.",
+                },
+                {
+                    "id": "voice_recognition_audition_prep",
+                    "status": "implemented_terminal_verified",
+                    "remaining": "Real microphone wake/STT is not enabled yet.",
+                },
+                {"id": "morning_report", "status": "prepared", "remaining": "Foreground visual QA is deferred."},
+                {"id": "rebuilt_bundle", "status": "available", "remaining": "Live app relaunch is deferred."},
+            ]
+        )
+
+        self.assertIn("implemented terminal-verified 4", summary)
+        self.assertIn("prepared 1", summary)
+        self.assertIn("available 1", summary)
+        self.assertIn("Foreground live-app QA is deferred.", summary)
+        self.assertNotIn("missing audit rows", summary)
 
     def test_morning_status_verification_highlights(self):
         highlights = verification_highlights(
