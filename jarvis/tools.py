@@ -528,6 +528,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Runs argv-only project-local reads and version checks; code runners, shell chaining, secret paths, secret-bearing filenames, and outside-project paths stop at policy gates.",
             },
             {
+                "id": "terminal.read_only",
+                "label": "Terminal Read-only Command",
+                "mode": "execute",
+                "risk": "read_only_allowlist",
+                "available": True,
+                "description": "Model-callable alias for the same argv-only read-only command runner; unsafe, external, secret, chained, write, install, and settings commands remain blocked by policy.",
+            },
+            {
                 "id": "terminal.plan",
                 "label": "Terminal Command Plan",
                 "mode": "plan_only",

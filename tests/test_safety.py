@@ -1608,6 +1608,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("planner.preview", tool_ids)
         self.assertIn("system.status", tool_ids)
         self.assertIn("shell.read_only", tool_ids)
+        self.assertIn("terminal.read_only", tool_ids)
         self.assertIn("terminal.plan", tool_ids)
         self.assertIn("tools.more", tool_ids)
         self.assertIn("app.list", tool_ids)
@@ -4493,7 +4494,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("21/21", policy_gate["detail"])
+        self.assertIn("22/22", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
