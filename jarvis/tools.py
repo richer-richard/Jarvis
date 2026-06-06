@@ -310,6 +310,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Summarizes persisted Codex job timings without starting a new Codex request.",
             },
             {
+                "id": "diagnostics.codex_chats",
+                "label": "Codex Chat Status",
+                "mode": "execute",
+                "risk": "read_only_no_session_ids",
+                "available": True,
+                "description": "Reports configured Codex chat names, purposes, default route, and daily memory counts without exposing session IDs.",
+            },
+            {
                 "id": "codex.activity",
                 "label": "Codex Activity",
                 "mode": "read_only",
@@ -4759,6 +4767,67 @@ def codex_speed_status() -> dict[str, Any]:
     }
 
 
+def codex_chat_status() -> dict[str, Any]:
+    registry = _load_codex_chat_registry()
+    memory = _load_codex_daily_memory()
+    chats = registry.get("chats") if isinstance(registry.get("chats"), list) else []
+    safe_chats = [
+        {
+            "name": str(chat.get("name") or ""),
+            "purpose": _codex_activity_tail(chat.get("purpose"), 500),
+            "context": _codex_activity_tail(chat.get("context"), 800),
+            "aliases": [str(alias) for alias in chat.get("aliases", [])[:6]],
+            "session_id_configured": bool(chat.get("session_id")),
+        }
+        for chat in chats
+    ]
+    events = memory.get("events") if isinstance(memory.get("events"), list) else []
+    latest_events = [
+        {
+            "chat_name": _codex_activity_tail(event.get("chat_name"), 120),
+            "kind": str(event.get("kind") or ""),
+            "prompt_summary": _codex_activity_tail(event.get("prompt_summary"), 260),
+            "detail": _codex_activity_tail(event.get("detail"), 260),
+        }
+        for event in events[-5:]
+        if isinstance(event, dict)
+    ]
+    default_chat = str(registry.get("default_chat") or "Default")
+    configured_default = next((chat for chat in safe_chats if chat["name"].lower() == default_chat.lower()), None)
+    default_text = configured_default["name"] if configured_default else "not configured"
+    if safe_chats:
+        reply = (
+            f"Codex chat status: {len(safe_chats)} chat{'s' if len(safe_chats) != 1 else ''} configured; "
+            f"default is {default_text}; today's Jarvis-Codex memory has {len(events)} event"
+            f"{'s' if len(events) != 1 else ''}. Session IDs are configured but hidden."
+        )
+    else:
+        reply = "Codex chat status: no named Codex chats are configured yet, so Jarvis will start normal Codex jobs."
+    return {
+        "tool": "diagnostics.codex_chats",
+        "status": "checked",
+        "executed": True,
+        "read_private_content": False,
+        "session_ids_hidden": True,
+        "registry_path": registry.get("path"),
+        "registry_status": registry.get("status"),
+        "default_chat": default_text,
+        "configured_count": len(safe_chats),
+        "selector": registry.get("selector"),
+        "future_selector": "GPT OSS can choose among configured chats once more than one meaningful chat exists.",
+        "chats": safe_chats,
+        "daily_memory": {
+            "path": str(CODEX_DAILY_MEMORY_PATH),
+            "date": memory.get("date"),
+            "event_count": len(events),
+            "compiled_summary": _codex_activity_tail(memory.get("compiled_summary"), 800),
+            "previous_day_summary": _codex_activity_tail(memory.get("previous_day_summary"), 800),
+            "latest_events": latest_events,
+        },
+        "reply": reply,
+    }
+
+
 def codex_activity_snapshot(limit: int = 3) -> dict[str, Any]:
     with CODEX_JOBS_LOCK:
         _ensure_codex_jobs_loaded_unlocked()
@@ -4859,6 +4928,19 @@ def _select_codex_chat(prompt: str, history: list[dict[str, str]] | None = None)
                 "chat": chat,
                 "reason": f"The prompt mentioned the {chat['name']} Codex chat.",
             }
+    scored = sorted(
+        ((chat, _score_codex_chat(prompt, chat)) for chat in chats),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if scored and scored[0][1] >= 2 and (len(scored) == 1 or scored[0][1] > scored[1][1]):
+        chat = scored[0][0]
+        return {
+            "status": "selected",
+            "registry_path": registry["path"],
+            "chat": chat,
+            "reason": f"Jarvis matched the request to the {chat['name']} Codex chat from its purpose/context.",
+        }
     default_name = registry["default_chat"].lower()
     for chat in chats:
         if str(chat.get("name") or "").lower() == default_name:
@@ -4886,6 +4968,58 @@ def _extract_requested_codex_chat_name(prompt: str) -> str | None:
         if match:
             return match.group(1).strip(" .,:;\"'")
     return None
+
+
+def _score_codex_chat(prompt: str, chat: dict[str, Any]) -> int:
+    lower_prompt = prompt.lower()
+    score = 0
+    names = [str(chat.get("name") or ""), *chat.get("aliases", [])]
+    for name in names:
+        lowered = name.lower().strip()
+        if lowered and re.search(rf"\b{re.escape(lowered)}\b", lower_prompt):
+            score += 8
+    haystack = " ".join(
+        [
+            str(chat.get("name") or ""),
+            " ".join(str(alias) for alias in chat.get("aliases", [])),
+            str(chat.get("purpose") or ""),
+            str(chat.get("context") or ""),
+        ]
+    ).lower()
+    for token in _codex_selector_tokens(prompt):
+        if re.search(rf"\b{re.escape(token)}\b", haystack):
+            score += 1
+    return score
+
+
+def _codex_selector_tokens(prompt: str) -> list[str]:
+    stopwords = {
+        "about",
+        "after",
+        "again",
+        "also",
+        "answer",
+        "chat",
+        "check",
+        "codex",
+        "could",
+        "from",
+        "have",
+        "into",
+        "jarvis",
+        "make",
+        "need",
+        "please",
+        "reply",
+        "same",
+        "that",
+        "this",
+        "with",
+        "would",
+        "your",
+    }
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", prompt)]
+    return [token for token in tokens if len(token) >= 4 and token not in stopwords][:80]
 
 
 def _codex_chat_selection_from_job(job: dict[str, Any]) -> dict[str, Any]:

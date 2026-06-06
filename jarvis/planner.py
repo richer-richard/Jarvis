@@ -12,6 +12,7 @@ from .tools import (
     app_availability,
     browser_open_url_plan,
     capabilities_status,
+    codex_chat_status,
     codex_speed_status,
     codex_job_status,
     codex_delegate_plan,
@@ -158,6 +159,8 @@ class Planner:
         if codex_job_query is not None:
             result = codex_job_status(codex_job_query)
             return self._result(text, "codex.job", "Checked Codex job status.", assessment, result, False)
+        if _looks_like_codex_chat_status(lower):
+            return self._result(text, "diagnostics.codex_chats", "Read Codex chat routing status.", assessment, codex_chat_status(), True)
         if _looks_like_codex_speed_status(lower):
             return self._result(text, "diagnostics.codex_speed", "Read local Codex speed status.", assessment, codex_speed_status(), True)
         if assessment.requires_typed_confirmation:
@@ -336,6 +339,8 @@ class Planner:
         codex_job_query = _extract_codex_job_query(text)
         if codex_job_query is not None:
             return self._preview_result(text, "codex.job", assessment, False)
+        if _looks_like_codex_chat_status(lower):
+            return self._preview_result(text, "diagnostics.codex_chats", assessment, True)
         if _looks_like_same_codex_reference(text):
             return self._preview_result(
                 text,
@@ -858,6 +863,27 @@ def _looks_like_codex_speed_status(lower: str) -> bool:
     speed_cues = ("speed", "latency", "timing", "time", "slow", "performance")
     status_cues = ("status", "check", "show", "what", "how")
     return any(cue in lower for cue in speed_cues) and any(cue in lower for cue in status_cues)
+
+
+def _looks_like_codex_chat_status(lower: str) -> bool:
+    if "codex" not in lower:
+        return False
+    chat_cues = (
+        "codex chat",
+        "codex chats",
+        "default chat",
+        "default codex",
+        "jarvis-codex memory",
+        "jarvis codex memory",
+        "codex memory",
+    )
+    status_cues = ("status", "check", "show", "what", "which", "configured", "using", "default")
+    mutation_cues = ("change", "switch", "set ", "delete", "remove", "rename", "edit")
+    return (
+        any(cue in lower for cue in chat_cues)
+        and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
 
 
 def _looks_like_codex_continuation(text: str, history: list[dict[str, str]] | None) -> bool:

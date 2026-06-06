@@ -389,11 +389,24 @@ def classify_shell_command(command: str) -> SafetyAssessment:
 def _looks_like_codex_job_status_query(command: str) -> bool:
     stripped = command.strip()
     lower = stripped.lower()
-    if lower in {"codex jobs", "codex job status", "check codex jobs", "codex status"}:
+    if lower in {
+        "codex jobs",
+        "codex job status",
+        "check codex jobs",
+        "codex status",
+        "codex speed status",
+        "codex chat status",
+        "codex chats",
+        "codex memory status",
+        "jarvis codex memory status",
+        "jarvis-codex memory status",
+    }:
         return True
     if re.match(r"(?i)^codex\s+job(?:\s+(?:status|result))?\s+[A-Za-z0-9-]+$", stripped):
         return True
     if re.match(r"(?i)^(?:check|get|show)\s+codex\s+job\s+[A-Za-z0-9-]+$", stripped):
+        return True
+    if re.match(r"(?i)^(?:check|get|show|what|which)\b.*\bcodex\b.*\b(?:status|speed|latency|chat|chats|default|memory)\b", stripped):
         return True
     return False
 

@@ -52,6 +52,7 @@ from jarvis.server import (
 from jarvis.tools import (
     app_availability,
     browser_open_url_plan,
+    codex_chat_status,
     codex_delegate_plan,
     email_backend_status,
     elevation_status,
@@ -256,6 +257,15 @@ class SafetyPolicyTests(unittest.TestCase):
                 self.assertFalse(assessment.requires_confirmation)
                 self.assertIn("Codex job status", assessment.reasons[0])
 
+    def test_codex_read_only_diagnostics_stay_read_only(self):
+        for command in ["codex chat status", "which default Codex chat are you using", "codex speed status"]:
+            with self.subTest(command=command):
+                assessment = classify_command(command)
+                self.assertEqual(assessment.risk_level, 1)
+                self.assertEqual(assessment.decision, "allowed")
+                self.assertFalse(assessment.requires_confirmation)
+                self.assertFalse(assessment.requires_typed_confirmation)
+
 
 class PlannerTests(unittest.TestCase):
     def test_status_executes(self):
@@ -307,6 +317,8 @@ class PlannerTests(unittest.TestCase):
             "tts status": "diagnostics.tts",
             "can you speak": "diagnostics.tts",
             "screen status": "screenshot.capability",
+            "codex chat status": "diagnostics.codex_chats",
+            "which default Codex chat are you using": "diagnostics.codex_chats",
             "codex speed status": "diagnostics.codex_speed",
             "codex jobs": "codex.job",
             "open browser https://example.com": "browser.open_url",
@@ -2987,6 +2999,60 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("codex_chat_name", serialized)
         self.assertIn("Default", serialized)
 
+    def test_codex_delegate_job_selects_specialized_chat_by_context(self):
+        default_session = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        music_session = "019effff-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = Path(temp_dir) / "codex_jobs.json"
+            registry = Path(temp_dir) / "codex_chats.json"
+            memory = Path(temp_dir) / "codex_daily_memory.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.codex_chats.v1",
+                        "default_chat": "Default",
+                        "chats": [
+                            {
+                                "name": "Default",
+                                "session_id": default_session,
+                                "purpose": "General Jarvis-to-Codex work.",
+                                "context": "Use for ambiguous project requests.",
+                            },
+                            {
+                                "name": "Music",
+                                "session_id": music_session,
+                                "aliases": ["music assignment"],
+                                "purpose": "Teams Music class assignments, posters, rubrics, and school creative deliverables.",
+                                "context": "Use when Leo asks Jarvis to inspect Teams Music work or make a poster from a rubric.",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                with patch("jarvis.tools.CODEX_JOB_STORE", store), \
+                     patch("jarvis.tools.CODEX_CHAT_REGISTRY_PATH", registry), \
+                     patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory), \
+                     patch("jarvis.tools._find_executable", return_value="/Applications/Codex.app/Contents/Resources/codex"), \
+                     patch("jarvis.tools._start_codex_job_thread") as thread_mock:
+                    with jarvis_tools.CODEX_JOBS_LOCK:
+                        jarvis_tools.CODEX_JOBS.clear()
+                        jarvis_tools.CODEX_JOBS_LOADED = True
+
+                    result = jarvis_tools.start_codex_delegate_job("inspect the newest Teams creative rubric and make the poster")
+            finally:
+                with jarvis_tools.CODEX_JOBS_LOCK:
+                    jarvis_tools.CODEX_JOBS.clear()
+                    jarvis_tools.CODEX_JOBS_LOADED = False
+
+        self.assertEqual(result["codex_chat_name"], "Music")
+        self.assertEqual(result["resume_session_id"], music_session)
+        self.assertIn("matched the request", result["codex_chat_selection_reason"])
+        delegated_prompt = thread_mock.call_args.args[1]
+        self.assertIn("Name: Music", delegated_prompt)
+        self.assertIn("Teams Music class assignments", delegated_prompt)
+
     def test_codex_daily_memory_refreshes_next_day(self):
         yesterday = "2026-06-05"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3012,6 +3078,61 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotEqual(loaded["date"], yesterday)
         self.assertEqual(loaded["events"], [])
         self.assertIn("yesterday work", loaded["previous_day_summary"])
+
+    def test_codex_chat_status_hides_session_ids_and_reports_memory(self):
+        session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            registry = Path(temp_dir) / "codex_chats.json"
+            memory = Path(temp_dir) / "codex_daily_memory.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.codex_chats.v1",
+                        "default_chat": "Default",
+                        "selector": "registry_first_then_future_gpt_oss",
+                        "chats": [
+                            {
+                                "name": "Default",
+                                "session_id": session_id,
+                                "purpose": "General Jarvis-to-Codex work.",
+                                "context": "Use when no specialized chat applies.",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            memory.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.codex_daily_memory.v1",
+                        "date": time.strftime("%Y-%m-%d"),
+                        "events": [
+                            {
+                                "kind": "codex_job_started",
+                                "chat_name": "Default",
+                                "prompt_summary": "inspected Jarvis",
+                                "detail": "default route",
+                            }
+                        ],
+                        "compiled_summary": "Today Jarvis used Default.",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("jarvis.tools.CODEX_CHAT_REGISTRY_PATH", registry), \
+                 patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory):
+                result = codex_chat_status()
+
+        serialized = json.dumps(result, ensure_ascii=False)
+        self.assertEqual(result["tool"], "diagnostics.codex_chats")
+        self.assertEqual(result["default_chat"], "Default")
+        self.assertEqual(result["configured_count"], 1)
+        self.assertTrue(result["session_ids_hidden"])
+        self.assertTrue(result["chats"][0]["session_id_configured"])
+        self.assertEqual(result["daily_memory"]["event_count"], 1)
+        self.assertIn("Session IDs are configured but hidden", result["reply"])
+        self.assertNotIn(session_id, serialized)
 
     def test_remote_worker_status_reports_codex_cli_probe(self):
         stdout = "\n".join(
