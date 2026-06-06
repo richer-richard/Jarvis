@@ -64,6 +64,7 @@ from jarvis.tools import (
     latest_latency_status,
     launch_status,
     memory_status,
+    overnight_work_status,
     outlook_visible_text_summary,
     outlook_read_only_check,
     outlook_read_only_plan,
@@ -308,6 +309,8 @@ class PlannerTests(unittest.TestCase):
             "wake status": "diagnostics.wake",
             "stt audition status": "voice.stt_audition",
             "speech recognition audition page": "voice.stt_audition",
+            "overnight status": "diagnostics.overnight",
+            "morning report draft status": "diagnostics.overnight",
             "email backend status": "diagnostics.email",
             "capabilities status": "diagnostics.capabilities",
             "what can you do right now": "diagnostics.capabilities",
@@ -1088,6 +1091,32 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["opened_browser"])
         self.assertIn("word_accuracy", result["metrics"])
 
+    def test_overnight_work_status_reports_paths_without_foreground_activity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workboard = root / "runtime" / "overnight_status" / "index.html"
+            report = root / "runtime" / "overnight_status" / "report.html"
+            stt_page = root / "runtime" / "stt_audition" / "index.html"
+            workboard.parent.mkdir(parents=True)
+            stt_page.parent.mkdir(parents=True)
+            workboard.write_text("<!doctype html><title>Jarvis Overnight Status</title>", encoding="utf-8")
+            report.write_text("<!doctype html><title>Jarvis Morning Report</title>", encoding="utf-8")
+            stt_page.write_text("<!doctype html><title>Jarvis STT Audition</title>", encoding="utf-8")
+            with patch("jarvis.tools.PROJECT_ROOT", root):
+                result = overnight_work_status()
+
+        self.assertEqual(result["tool"], "diagnostics.overnight")
+        self.assertEqual(result["status"], "available")
+        self.assertTrue(result["artifacts"]["workboard"]["exists"])
+        self.assertTrue(result["artifacts"]["morning_report"]["exists"])
+        self.assertTrue(result["artifacts"]["stt_audition"]["exists"])
+        self.assertFalse(result["opened_browser"])
+        self.assertFalse(result["launched_app"])
+        self.assertFalse(result["foreground_activity"])
+        self.assertFalse(result["recorded_audio"])
+        self.assertFalse(result["sent_network_request"])
+        self.assertIn("Workboard:", result["reply"])
+
     def test_latest_latency_status_reads_local_smoke_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1256,6 +1285,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("quick.local_control", tool_ids)
         self.assertIn("voice.wake_simulation", tool_ids)
         self.assertIn("voice.stt_audition", tool_ids)
+        self.assertIn("diagnostics.overnight", tool_ids)
         self.assertIn("safety.injection_scan", tool_ids)
         self.assertIn("codex.delegate", tool_ids)
         self.assertIn("codex.job", tool_ids)
@@ -4020,7 +4050,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("12/12", policy_gate["detail"])
+        self.assertIn("13/13", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

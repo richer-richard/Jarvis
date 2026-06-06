@@ -25,6 +25,7 @@ from .tools import (
     latest_latency_status,
     memory_status,
     more_tools_plan,
+    overnight_work_status,
     outlook_read_only_check,
     outlook_read_only_plan,
     prompt_injection_scan,
@@ -70,6 +71,11 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     {
         "tool": "diagnostics.email",
         "description": "Report email backend or route readiness without reading email content.",
+        "entities": [],
+    },
+    {
+        "tool": "diagnostics.overnight",
+        "description": "Report the overnight workboard, morning report draft, and deferred QA paths without opening apps or browsers.",
         "entities": [],
     },
     {
@@ -213,6 +219,8 @@ class Planner:
             return self._result(text, "diagnostics.codex_chats", "Read Codex chat routing status.", assessment, codex_chat_status(), True)
         if _looks_like_codex_speed_status(lower):
             return self._result(text, "diagnostics.codex_speed", "Read local Codex speed status.", assessment, codex_speed_status(), True)
+        if _looks_like_overnight_work_status(lower):
+            return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
         if assessment.requires_typed_confirmation:
             return self._result(
                 text,
@@ -294,6 +302,8 @@ class Planner:
             return self._result(text, "diagnostics.wake", "Read local Jarvis wake status.", assessment, wake_status(), True)
         if _looks_like_stt_audition_status(lower):
             return self._result(text, "voice.stt_audition", "Read local STT audition status.", assessment, stt_audition_status(), True)
+        if _looks_like_overnight_work_status(lower):
+            return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
         if _is_exact_email_status_command(lower):
             return self._result(text, "diagnostics.email", "Read local email backend status without reading email content.", assessment, email_backend_status(), True)
         if _looks_like_capability_status(lower):
@@ -361,6 +371,8 @@ class Planner:
 
         if assessment.blocked:
             return self._preview_result(text, "policy.block", assessment, False)
+        if _looks_like_overnight_work_status(lower):
+            return self._preview_result(text, "diagnostics.overnight", assessment, True)
         if assessment.requires_typed_confirmation:
             return self._preview_result(
                 text,
@@ -432,6 +444,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.wake", assessment, True)
         if _looks_like_stt_audition_status(lower):
             return self._preview_result(text, "voice.stt_audition", assessment, True)
+        if _looks_like_overnight_work_status(lower):
+            return self._preview_result(text, "diagnostics.overnight", assessment, True)
         if _is_exact_email_status_command(lower):
             return self._preview_result(text, "diagnostics.email", assessment, True)
         if _looks_like_capability_status(lower):
@@ -489,6 +503,10 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "diagnostics.email", assessment, True, plan={"intent": intent})
             return self._result(text, "diagnostics.email", "Read local email backend status without reading email content.", assessment, email_backend_status(), True)
+        if selected_tool == "diagnostics.overnight":
+            if not execute:
+                return self._preview_result(text, "diagnostics.overnight", assessment, True, plan={"intent": intent})
+            return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
         if selected_tool == "outlook.visible_summary":
             sender_query = _clean_optional_entity(entities.get("sender_query")) or _extract_email_sender_constraint(text)
             selection = (
@@ -957,6 +975,28 @@ def _looks_like_stt_audition_status(lower: str) -> bool:
     return (
         any(cue in lower for cue in stt_cues)
         and any(cue in lower for cue in audition_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_overnight_work_status(lower: str) -> bool:
+    overnight_cues = (
+        "overnight",
+        "workboard",
+        "work board",
+        "status board",
+        "progress board",
+        "morning report",
+        "report draft",
+        "8am report",
+        "8:00am report",
+        "8:00 am report",
+    )
+    status_cues = ("status", "check", "show", "where", "path", "progress", "report", "working", "done", "finished")
+    mutation_cues = ("open ", "launch ", "start ", "edit ", "write ", "delete ", "move ", "sync ", "send ")
+    return (
+        any(cue in lower for cue in overnight_cues)
+        and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
     )
 

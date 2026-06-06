@@ -313,6 +313,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Reports the local speech-recognition audition page and what it can test without recording audio.",
             },
             {
+                "id": "diagnostics.overnight",
+                "label": "Overnight Work Status",
+                "mode": "read_only",
+                "risk": "local_metadata",
+                "available": True,
+                "description": "Reports the overnight workboard, morning report draft, and deferred foreground QA paths without opening apps or browsers.",
+            },
+            {
                 "id": "diagnostics.email",
                 "label": "Email Backend Status",
                 "mode": "execute",
@@ -2042,6 +2050,82 @@ def stt_audition_status() -> dict[str, Any]:
     }
 
 
+def _runtime_file_status(path: Path) -> dict[str, Any]:
+    access = _path_access_status(path)
+    exists = bool(access.get("accessible")) and not bool(access.get("is_dir"))
+    modified_at = None
+    mtime = access.get("mtime")
+    if isinstance(mtime, (int, float)):
+        modified_at = datetime.fromtimestamp(mtime).isoformat(timespec="seconds")
+    bytes_count = None
+    if exists:
+        try:
+            bytes_count = path.stat().st_size
+        except OSError:
+            bytes_count = None
+    return {
+        **access,
+        "exists": exists,
+        "bytes": bytes_count,
+        "modified_at": modified_at,
+    }
+
+
+def overnight_work_status() -> dict[str, Any]:
+    """Report overnight work surfaces without opening foreground UI."""
+    workboard_path = PROJECT_ROOT / "runtime" / "overnight_status" / "index.html"
+    report_path = PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"
+    stt_path = PROJECT_ROOT / "runtime" / "stt_audition" / "index.html"
+    bundle_path = PROJECT_ROOT / "output" / "Jarvis.app"
+    artifacts = {
+        "workboard": _runtime_file_status(workboard_path),
+        "morning_report": _runtime_file_status(report_path),
+        "stt_audition": _runtime_file_status(stt_path),
+    }
+    workboard_exists = bool(artifacts["workboard"]["exists"])
+    report_exists = bool(artifacts["morning_report"]["exists"])
+    if workboard_exists and report_exists:
+        status = "available"
+    elif workboard_exists or report_exists:
+        status = "partial"
+    else:
+        status = "missing"
+    metadata = _bundle_metadata(bundle_path)
+    reply = (
+        "Overnight status: the workboard is "
+        f"{'available' if workboard_exists else 'missing'} and the morning report draft is "
+        f"{'available' if report_exists else 'missing'}. "
+        "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
+        f"Workboard: {workboard_path}. Report: {report_path}."
+    )
+    return {
+        "tool": "diagnostics.overnight",
+        "executed": True,
+        "status": status,
+        "read_private_content": False,
+        "opened_browser": False,
+        "launched_app": False,
+        "foreground_activity": False,
+        "recorded_audio": False,
+        "sent_network_request": False,
+        "workboard_path": str(workboard_path),
+        "report_path": str(report_path),
+        "stt_audition_path": str(stt_path),
+        "artifacts": artifacts,
+        "bundle_path": str(bundle_path),
+        "bundle_exists": bundle_path.exists(),
+        "bundle_metadata": metadata,
+        "full_visual_qa_deferred": True,
+        "deferred_reason": "Leo has not said he is asleep; foreground browser and app checks could interrupt current work.",
+        "next_foreground_checks": [
+            "Open the overnight workboard in a browser and visually inspect layout.",
+            "Launch the rebuilt Jarvis app and check live startup/status text.",
+            "Run the full safe verifier once foreground app/browser checks are allowed.",
+        ],
+        "reply": reply,
+    }
+
+
 def capabilities_status() -> dict[str, Any]:
     """Return a compact product-level capability snapshot without private reads."""
     latency = latest_latency_status()
@@ -2107,7 +2191,7 @@ def capabilities_status() -> dict[str, Any]:
         {
             "id": "elevation",
             "status": "partial",
-            "summary": "Deterministic local, fast-model, and async Codex layers exist; the smarter middle planner is designed but not built yet.",
+            "summary": "Deterministic local, fast-model, plan-only middle planning, and async Codex layers exist; execution handoff for broad middle tools is still guarded.",
             "test_prompt": "elevation status",
             "needs_leo": False,
         },
@@ -2139,6 +2223,13 @@ def capabilities_status() -> dict[str, Any]:
             "test_prompt": "stt audition status",
             "needs_leo": True,
             "audition_page": stt.get("page_path"),
+        },
+        {
+            "id": "overnight_workboard",
+            "status": "working" if (PROJECT_ROOT / "runtime" / "overnight_status" / "index.html").exists() else "not_built",
+            "summary": "The overnight progress workboard and report draft have a read-only status route so Jarvis can show their paths without opening anything.",
+            "test_prompt": "overnight status",
+            "needs_leo": False,
         },
         {
             "id": "tts",
@@ -2177,8 +2268,8 @@ def capabilities_status() -> dict[str, Any]:
     not_ready = sum(1 for item in capabilities if item["status"] in {"not_built", "unavailable", "missing", "needs_attention"})
     reply = (
         f"Capability status: {working} working, {partial} partial, {not_ready} not ready. "
-        "Working now includes typed chat, fast casual chat, latency status, Codex async delegation, launch diagnostics, and source-access diagnostics. "
-        "Partial work includes email, quick device controls, elevation routing, remote helper diagnostics, wake, TTS, and computer control. "
+        "Working now includes typed chat, fast casual chat, latency status, Codex async delegation, launch diagnostics, source-access diagnostics, and the overnight workboard route. "
+        "Partial work includes email, quick device controls, guarded middle planning, remote helper diagnostics, wake, TTS, and computer control. "
         "Not active yet: real microphone speech-to-text, memory summarization, and background wake-word listening. "
         "This diagnostic did not read email, screenshots, microphone audio, or files."
     )
@@ -2427,10 +2518,10 @@ def elevation_status() -> dict[str, Any]:
         },
         {
             "id": "smarter_planner",
-            "status": "planned",
+            "status": "active_plan_only",
             "target_latency": "under_5s_when_possible",
-            "route": "future conversation.elevated_planner",
-            "purpose": "Ambiguous multi-step requests, careful email summaries, and deciding whether Codex is needed.",
+            "route": "tools.more",
+            "purpose": "Ambiguous multi-step requests, broad tool discovery, careful email-summary planning, and deciding whether Codex is needed.",
         },
         {
             "id": "codex",
@@ -2442,8 +2533,8 @@ def elevation_status() -> dict[str, Any]:
     ]
     reply = (
         "Elevation status: Jarvis already has the bottom and top of the ladder: deterministic local commands for instant actions, "
-        f"fast chat through {fast.get('backend')}/{fast.get('model')}, and async Codex for project work. "
-        "The missing middle is a smarter planner route that can decide when the fast model is not enough without making every reply wait for Codex. "
+        f"fast chat through {fast.get('backend')}/{fast.get('model')}, a guarded plan-only middle route, and async Codex for project work. "
+        "The missing middle work is execution handoff and richer tool catalogs, not the planner itself. "
         "This diagnostic did not call any model."
     )
     return {
