@@ -3221,8 +3221,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
         with tempfile.TemporaryDirectory() as temp_dir:
             store = Path(temp_dir) / "codex_jobs.json"
+            memory = Path(temp_dir) / "codex_daily_memory.json"
             try:
                 with patch("jarvis.tools.CODEX_JOB_STORE", store), \
+                     patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory), \
                      patch("jarvis.tools._find_executable", return_value="/Applications/Codex.app/Contents/Resources/codex"), \
                      patch("jarvis.tools._start_codex_job_thread") as thread_mock:
                     with jarvis_tools.CODEX_JOBS_LOCK:
