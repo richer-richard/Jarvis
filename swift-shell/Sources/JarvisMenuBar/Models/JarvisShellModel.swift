@@ -899,6 +899,10 @@ final class JarvisShellModel: ObservableObject {
     }
 
     private func conversationHistoryPayload(currentCommand: String) -> [[String: String]] {
+        Self.conversationHistoryPayload(from: messages, currentCommand: currentCommand)
+    }
+
+    static func conversationHistoryPayload(from messages: [ChatMessage], currentCommand: String) -> [[String: String]] {
         let current = currentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         return messages.suffix(12).compactMap { message in
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
