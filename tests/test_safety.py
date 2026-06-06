@@ -854,6 +854,31 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["next_tool_preview"]["preview"]["changed_state"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["read_private_content"])
 
+    def test_tools_more_screen_ocr_recommendation_returns_plan_only_status(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "screen.ocr",
+            "entities": {"target_app": "Microsoft Teams"},
+            "reply": "Yes sir, preparing the screen check now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan):
+            result = Planner().handle_selected_tool("Read the newest Teams assignment on screen.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "screen.ocr")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        preview = result.result["next_tool_preview"]["preview"]
+        self.assertEqual(preview["tool"], "screen.ocr")
+        self.assertEqual(preview["status"], "planned_unavailable")
+        self.assertTrue(preview["planned_only"])
+        self.assertFalse(preview["available"])
+        self.assertFalse(preview["captured_screen"])
+        self.assertFalse(preview["read_private_content"])
+        self.assertFalse(preview["changed_state"])
+
     def test_tools_more_codex_activity_recommendation_previews_without_starting_codex(self):
         fake_plan = {
             "tool": "tools.more",
@@ -1629,6 +1654,20 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result["requires_leo"])
         self.assertIn("confirmation", " ".join(result["next_steps"]).lower())
 
+    def test_planned_screen_ocr_status_does_not_capture_or_read_screen(self):
+        result = planned_tool_status("screen.ocr")
+
+        self.assertEqual(result["tool"], "screen.ocr")
+        self.assertEqual(result["status"], "planned_unavailable")
+        self.assertFalse(result["executed"])
+        self.assertTrue(result["planned_only"])
+        self.assertFalse(result["available"])
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["captured_screen"])
+        self.assertFalse(result["changed_state"])
+        self.assertEqual(result["category"], "future_private_screen_read")
+        self.assertIn("Screen Recording", " ".join(result["next_steps"]))
+
     def test_permissions_status_reports_metadata_without_prompting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             bundle = Path(temp_dir) / "Jarvis.app"
@@ -1854,6 +1893,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("app.status", tool_ids)
         self.assertIn("app.running", tool_ids)
         self.assertIn("app.quit", tool_ids)
+        self.assertIn("screen.ocr", tool_ids)
         self.assertIn("conversation.fast_local", tool_ids)
         self.assertIn("quick.local_control", tool_ids)
         self.assertIn("voice.wake_simulation", tool_ids)
@@ -4760,7 +4800,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("25/25", policy_gate["detail"])
+        self.assertIn("26/26", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

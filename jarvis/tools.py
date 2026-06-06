@@ -672,6 +672,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Detects whether screenshot tooling exists; screenshots are not stored by default.",
             },
             {
+                "id": "screen.ocr",
+                "label": "Screen OCR Plan",
+                "mode": "planned",
+                "risk": "future_private_screen_read",
+                "available": False,
+                "description": "Future permission-gated route for reading visible app text; registered as planned so the middle planner cannot invent an invisible screen-reading tool.",
+            },
+            {
                 "id": "browser.open_url",
                 "label": "Browser Open URL",
                 "mode": "plan_only",
@@ -1936,6 +1944,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "browser.open_url", "kind": "plan_only", "description": "Prepare opening a browser URL."},
         {"id": "files.search", "kind": "read_only", "description": "Search project filenames."},
         {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
+        {"id": "screen.ocr", "kind": "planned_private_read", "description": "Future permission-gated screen OCR/find-text route; do not capture or read the screen until enabled."},
         {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
         {"id": "diagnostics.tool_catalog", "kind": "read_only", "description": "Compare model-callable tool specs against the public registry."},
         {"id": "diagnostics.permissions", "kind": "read_only", "description": "Report privacy-permission readiness without prompting or changing settings."},
@@ -2897,6 +2906,16 @@ def planned_tool_status(tool_id: str) -> dict[str, Any]:
                 "Build app/screen navigation tools with permission checks.",
                 "Find newest Teams assignments and download rubrics without submitting anything.",
                 "Require explicit confirmation before sending, submitting, or changing schoolwork.",
+            ],
+        },
+        "screen.ocr": {
+            "status": "planned_unavailable",
+            "category": "future_private_screen_read",
+            "requires_leo": True,
+            "next_steps": [
+                "Define the exact target app/window and visible-text question before reading the screen.",
+                "Verify Screen Recording and Accessibility readiness without interrupting Leo's current foreground work.",
+                "Implement ephemeral screenshot/OCR with no stored image by default and clear user-visible status text.",
             ],
         },
     }
