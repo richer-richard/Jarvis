@@ -584,6 +584,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Future Hey Siri-like visible Jarvis overlay/popup route; registered so model planning cannot refer to an invisible tool.",
             },
             {
+                "id": "ui.automation",
+                "label": "UI Automation Plan",
+                "mode": "planned",
+                "risk": "future_private_app_control",
+                "available": False,
+                "description": "Future permission-gated route for clicking, typing, and navigating app UI; never sends, submits, deletes, or changes private data without confirmation.",
+            },
+            {
                 "id": "memory.daily_summary",
                 "label": "Daily Memory Summary Plan",
                 "mode": "planned",
@@ -1973,6 +1981,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "voice.stt_score", "kind": "read_only", "description": "Score a pasted STT transcript against a reference sentence without recording audio."},
         {"id": "voice.loop_simulation", "kind": "read_only_text_only", "description": "Simulate wake, greeting, command capture, and command preview without microphone or audio."},
         {"id": "ui.overlay", "kind": "planned", "description": "Future visible Jarvis overlay/popup UI."},
+        {"id": "ui.automation", "kind": "planned_private_app_control", "description": "Future app UI clicking/typing/navigation route with permission checks and confirmation gates."},
         {"id": "memory.daily_summary", "kind": "planned", "description": "Future daily memory summary route."},
         {"id": "teams.assignment", "kind": "planned_private_workflow", "description": "Future Teams assignment workflow; never submit without confirmation."},
     ]
@@ -2996,6 +3005,16 @@ def planned_tool_status(tool_id: str) -> dict[str, Any]:
                 "Define retention, redaction, and sync boundaries before reading daily chat history.",
                 "Build a local summary format that refreshes the next morning.",
                 "Only enable MacBook Air sync after explicit approval.",
+            ],
+        },
+        "ui.automation": {
+            "status": "planned_unavailable",
+            "category": "future_private_app_control",
+            "requires_leo": True,
+            "next_steps": [
+                "Verify Accessibility and Screen Recording readiness without interrupting Leo's current foreground work.",
+                "Require a target app, visible UI goal, and safe stopping condition before any click/type workflow.",
+                "Keep send, submit, delete, purchase, settings, credential, and schoolwork-changing actions behind explicit confirmation.",
             ],
         },
         "teams.assignment": {

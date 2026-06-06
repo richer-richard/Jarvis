@@ -158,6 +158,7 @@ def run_self_checks() -> dict[str, Any]:
         "app.running",
         "app.quit",
         "screen.ocr",
+        "ui.automation",
         "diagnostics.overnight",
         "diagnostics.final_qa",
         "diagnostics.model_context",

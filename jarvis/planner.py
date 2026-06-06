@@ -803,7 +803,7 @@ class Planner:
                 result = {**result, "next_tool_preview": next_preview}
             summary = "Prepared middle-layer tool plan." if result.get("status") == "planned" else "Tried middle-layer tool planning."
             return self._result(text, "tools.more", summary, assessment, result, False)
-        if selected_tool in {"ui.overlay", "memory.daily_summary", "teams.assignment", "screen.ocr"}:
+        if selected_tool in {"ui.overlay", "ui.automation", "memory.daily_summary", "teams.assignment", "screen.ocr"}:
             result = planned_tool_status(selected_tool)
             return self._result(text, selected_tool, "Prepared planned future tool status.", assessment, result, False)
         if selected_tool == "diagnostics.codex_chats":
@@ -1062,7 +1062,7 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "executed": False,
             "preview": {**preview, "executed": False, "planned_only": True},
         }
-    if recommended in {"ui.overlay", "memory.daily_summary", "teams.assignment", "screen.ocr"}:
+    if recommended in {"ui.overlay", "ui.automation", "memory.daily_summary", "teams.assignment", "screen.ocr"}:
         preview = planned_tool_status(recommended)
         return {
             "recommended_tool": recommended,

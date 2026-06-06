@@ -925,6 +925,32 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["next_tool_preview"]["preview"]["changed_state"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["read_private_content"])
 
+    def test_tools_more_ui_automation_recommendation_returns_plan_only_status(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "ui.automation",
+            "entities": {"target_app": "Microsoft Teams"},
+            "reply": "Yes sir, preparing the app-control plan now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan):
+            result = Planner().handle_selected_tool("Click through Teams to find the newest assignment.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "ui.automation")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        preview = result.result["next_tool_preview"]["preview"]
+        self.assertEqual(preview["tool"], "ui.automation")
+        self.assertEqual(preview["status"], "planned_unavailable")
+        self.assertTrue(preview["planned_only"])
+        self.assertFalse(preview["available"])
+        self.assertFalse(preview["opened_app"])
+        self.assertFalse(preview["captured_screen"])
+        self.assertFalse(preview["changed_state"])
+        self.assertIn("confirmation", " ".join(preview["next_steps"]).lower())
+
     def test_tools_more_screen_ocr_recommendation_returns_plan_only_status(self):
         fake_plan = {
             "tool": "tools.more",
@@ -1774,6 +1800,23 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["category"], "future_private_screen_read")
         self.assertIn("Screen Recording", " ".join(result["next_steps"]))
 
+    def test_planned_ui_automation_status_requires_permissions_and_confirmation(self):
+        result = planned_tool_status("ui.automation")
+
+        self.assertEqual(result["tool"], "ui.automation")
+        self.assertEqual(result["status"], "planned_unavailable")
+        self.assertFalse(result["executed"])
+        self.assertTrue(result["planned_only"])
+        self.assertFalse(result["available"])
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["captured_screen"])
+        self.assertFalse(result["changed_state"])
+        self.assertEqual(result["category"], "future_private_app_control")
+        next_steps = " ".join(result["next_steps"]).lower()
+        self.assertIn("accessibility", next_steps)
+        self.assertIn("confirmation", next_steps)
+
     def test_final_qa_plan_status_reports_deferred_no_foreground_work(self):
         result = final_qa_plan_status()
 
@@ -2015,6 +2058,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("app.running", tool_ids)
         self.assertIn("app.quit", tool_ids)
         self.assertIn("screen.ocr", tool_ids)
+        self.assertIn("ui.automation", tool_ids)
         self.assertIn("conversation.fast_local", tool_ids)
         self.assertIn("quick.local_control", tool_ids)
         self.assertIn("voice.wake_simulation", tool_ids)
@@ -4923,7 +4967,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("28/28", policy_gate["detail"])
+        self.assertIn("29/29", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
