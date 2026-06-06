@@ -520,6 +520,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Reports project-root, Git metadata, source write-open, running bundle, and hardened patch-artifact status without changing source files.",
             },
             {
+                "id": "diagnostics.tool_catalog",
+                "label": "Tool Catalog Status",
+                "mode": "execute",
+                "risk": "read_only_metadata",
+                "available": True,
+                "description": "Compares first-model tool specs, middle-planner tools, and the public registry to catch mismatched model-callable tool IDs.",
+            },
+            {
                 "id": "shell.read_only",
                 "label": "Read-only Shell",
                 "mode": "execute",
@@ -550,6 +558,30 @@ def tool_registry() -> dict[str, Any]:
                 "risk": "opt_in_cloud_model_possible",
                 "available": bool(ollama_path),
                 "description": "Asks the configured middle model to choose from a broader tool catalog, returning a plan only.",
+            },
+            {
+                "id": "ui.overlay",
+                "label": "Overlay UI Plan",
+                "mode": "planned",
+                "risk": "future_ui",
+                "available": False,
+                "description": "Future Hey Siri-like visible Jarvis overlay/popup route; registered so model planning cannot refer to an invisible tool.",
+            },
+            {
+                "id": "memory.daily_summary",
+                "label": "Daily Memory Summary Plan",
+                "mode": "planned",
+                "risk": "future_private_memory",
+                "available": False,
+                "description": "Future daily memory summarization route; not enabled until retention/sync boundaries are approved.",
+            },
+            {
+                "id": "teams.assignment",
+                "label": "Teams Assignment Workflow Plan",
+                "mode": "planned",
+                "risk": "future_private_app_workflow",
+                "available": False,
+                "description": "Future Teams assignment workflow route; never submits, sends, or changes schoolwork without explicit confirmation.",
             },
             {
                 "id": "files.search",
@@ -1888,6 +1920,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "files.search", "kind": "read_only", "description": "Search project filenames."},
         {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
         {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
+        {"id": "diagnostics.tool_catalog", "kind": "read_only", "description": "Compare model-callable tool specs against the public registry."},
         {"id": "diagnostics.codex_chats", "kind": "read_only", "description": "Report configured Codex chats, default route, and daily memory without exposing session IDs."},
         {"id": "codex.activity", "kind": "read_only", "description": "Show redacted recent Codex job activity without starting a new Codex request."},
         {"id": "codex.job", "kind": "async_deep_work", "description": "Delegate broad coding/project work to Codex."},
@@ -2698,6 +2731,80 @@ def model_context_status(
             "spoken_status_enabled": TTS_SPEAK_STATUS,
             "max_chars": TTS_MAX_CHARS,
             "sample_input": sample_tts_reply,
+        },
+        "reply": reply,
+    }
+
+
+def tool_catalog_status(first_tool_specs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Compare model-callable tool specs with the public registry without calling models."""
+    registry = tool_registry()
+    registry_tools = list(registry.get("tools") or [])
+    registry_ids = [str(tool.get("id") or "") for tool in registry_tools if tool.get("id")]
+    first_specs = list(first_tool_specs or [])
+    first_ids = [str(spec.get("tool") or "") for spec in first_specs if spec.get("tool")]
+    middle_tools = _middle_tool_catalog()
+    middle_ids = [str(tool.get("id") or "") for tool in middle_tools if tool.get("id")]
+    model_callable_ids = sorted(set(first_ids) | set(middle_ids))
+    special_non_registry_ids = {"conversation.fast_local"}
+    missing_from_registry = [
+        tool_id
+        for tool_id in model_callable_ids
+        if tool_id not in registry_ids and tool_id not in special_non_registry_ids
+    ]
+    registry_only_ids = sorted(
+        tool_id
+        for tool_id in registry_ids
+        if tool_id not in set(model_callable_ids) and not tool_id.startswith(("policy.", "control.", "conversation."))
+    )
+    duplicated_first_ids = sorted({tool_id for tool_id in first_ids if first_ids.count(tool_id) > 1})
+    duplicated_middle_ids = sorted({tool_id for tool_id in middle_ids if middle_ids.count(tool_id) > 1})
+    status = "consistent" if not missing_from_registry and not duplicated_first_ids and not duplicated_middle_ids else "needs_attention"
+    reply = (
+        f"Tool catalog status: the first model sees {len(first_ids)} tools, "
+        f"the middle planner sees {len(middle_ids)} tools, and the public registry exposes {len(registry_ids)} tools. "
+    )
+    if missing_from_registry:
+        reply += f"{len(missing_from_registry)} model-callable tool ID(s) are missing from the registry."
+    else:
+        reply += "No model-callable tool IDs are missing from the registry."
+    return {
+        "tool": "diagnostics.tool_catalog",
+        "executed": True,
+        "status": status,
+        "read_private_content": False,
+        "called_fast_model": False,
+        "called_middle_model": False,
+        "called_codex": False,
+        "first_model": {
+            "tool_count": len(first_ids),
+            "tool_ids": first_ids,
+            "duplicates": duplicated_first_ids,
+            "tools": [
+                {
+                    "tool": str(spec.get("tool") or ""),
+                    "description": _clean_local_field(spec.get("description"))[:500],
+                    "entities": list(spec.get("entities") or []),
+                }
+                for spec in first_specs
+            ],
+        },
+        "middle_planner": {
+            "tool_count": len(middle_ids),
+            "tool_ids": middle_ids,
+            "duplicates": duplicated_middle_ids,
+            "tools": list(middle_tools),
+        },
+        "registry": {
+            "tool_count": len(registry_ids),
+            "tool_ids": registry_ids,
+            "available_count": sum(1 for tool in registry_tools if tool.get("available")),
+        },
+        "comparison": {
+            "model_callable_ids": model_callable_ids,
+            "special_non_registry_ids": sorted(special_non_registry_ids & set(model_callable_ids)),
+            "missing_from_registry": missing_from_registry,
+            "registry_only_ids": registry_only_ids,
         },
         "reply": reply,
     }

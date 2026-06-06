@@ -84,6 +84,7 @@ from jarvis.tools import (
     stt_audition_status,
     stt_candidate_status,
     stt_score_transcript,
+    tool_catalog_status,
     tts_status,
     tool_registry,
     wake_status,
@@ -336,6 +337,8 @@ class PlannerTests(unittest.TestCase):
             "model status": "diagnostics.fast_model",
             "model inputs for hello Jarvis": "diagnostics.model_context",
             "what do you feed the first model for 'hello Jarvis'": "diagnostics.model_context",
+            "tool catalog status": "diagnostics.tool_catalog",
+            "what tools are fed to the model": "diagnostics.tool_catalog",
             "remote worker status": "diagnostics.remote_worker",
             "MacBook Air SSH status": "diagnostics.remote_worker",
             "elevation status": "diagnostics.elevation",
@@ -680,6 +683,37 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["called_fast_model"])
         context_mock.assert_called_once()
+
+    def test_tools_more_tool_catalog_recommendation_previews_without_calling_models(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "diagnostics.tool_catalog",
+            "entities": {},
+            "reply": "Yes sir, checking the tool catalog now.",
+        }
+        fake_catalog = {
+            "tool": "diagnostics.tool_catalog",
+            "status": "consistent",
+            "executed": True,
+            "called_fast_model": False,
+            "called_middle_model": False,
+            "called_codex": False,
+            "comparison": {"missing_from_registry": []},
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.tool_catalog_status", return_value=fake_catalog) as catalog_mock:
+            result = Planner().handle_selected_tool("Show me the tool catalog.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "diagnostics.tool_catalog")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["called_fast_model"])
+        catalog_mock.assert_called_once()
 
     def test_tools_more_codex_activity_recommendation_previews_without_starting_codex(self):
         fake_plan = {
@@ -1421,6 +1455,26 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["tts"]["sample_input"], "Hello sir. What would you like me to do?")
         self.assertNotIn("254118", str(result))
 
+    def test_tool_catalog_status_compares_model_tools_and_registry(self):
+        tool_specs = [
+            {"tool": "outlook.visible_summary", "description": "Read email.", "entities": ["selection"]},
+            {"tool": "terminal.read_only", "description": "Run safe command.", "entities": ["command"]},
+        ]
+        result = tool_catalog_status(tool_specs)
+
+        self.assertEqual(result["tool"], "diagnostics.tool_catalog")
+        self.assertEqual(result["status"], "consistent")
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["called_fast_model"])
+        self.assertFalse(result["called_middle_model"])
+        self.assertFalse(result["called_codex"])
+        self.assertIn("terminal.read_only", result["first_model"]["tool_ids"])
+        self.assertIn("terminal.read_only", result["registry"]["tool_ids"])
+        self.assertIn("terminal.read_only", result["comparison"]["model_callable_ids"])
+        self.assertEqual(result["comparison"]["missing_from_registry"], [])
+        self.assertEqual(result["first_model"]["duplicates"], [])
+        self.assertEqual(result["middle_planner"]["duplicates"], [])
+
     def test_overnight_work_status_reports_paths_without_foreground_activity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1623,6 +1677,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("voice.stt_score", tool_ids)
         self.assertIn("diagnostics.overnight", tool_ids)
         self.assertIn("diagnostics.model_context", tool_ids)
+        self.assertIn("diagnostics.tool_catalog", tool_ids)
         self.assertIn("safety.injection_scan", tool_ids)
         self.assertIn("diagnostics.codex_chats", tool_ids)
         self.assertIn("codex.activity", tool_ids)
@@ -4494,7 +4549,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("22/22", policy_gate["detail"])
+        self.assertIn("23/23", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

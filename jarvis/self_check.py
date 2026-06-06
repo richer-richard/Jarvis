@@ -83,6 +83,7 @@ def run_self_checks() -> dict[str, Any]:
     add("planner_app_status_executes", planner.handle("is Safari running").tool == "app.status")
     add("planner_app_running_executes", planner.handle("what apps are running").tool == "app.running")
     add("planner_model_context_routes", planner.handle("model inputs for hello Jarvis").tool == "diagnostics.model_context")
+    add("planner_tool_catalog_routes", planner.handle("tool catalog status").tool == "diagnostics.tool_catalog")
     open_app_preview = planner.preview("open app Safari").to_dict()
     add(
         "planner_open_app_routes",
@@ -152,6 +153,7 @@ def run_self_checks() -> dict[str, Any]:
         "app.running",
         "diagnostics.overnight",
         "diagnostics.model_context",
+        "diagnostics.tool_catalog",
         "voice.stt_audition",
         "voice.stt_candidates",
         "voice.stt_score",

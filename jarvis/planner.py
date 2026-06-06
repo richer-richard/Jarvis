@@ -51,6 +51,7 @@ from .tools import (
     stt_score_transcript,
     system_status,
     terminal_command_plan,
+    tool_catalog_status,
     tts_status,
     wake_status,
     wake_phrase_simulation,
@@ -89,6 +90,11 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "diagnostics.model_context",
         "description": "Preview what Jarvis would feed its first model, middle planner, Codex, and TTS without calling any model.",
         "entities": ["sample_prompt"],
+    },
+    {
+        "tool": "diagnostics.tool_catalog",
+        "description": "Report the first-model, middle-planner, and registry tool catalog IDs and mismatches without calling any model.",
+        "entities": [],
     },
     {
         "tool": "voice.stt_candidates",
@@ -350,6 +356,8 @@ class Planner:
             return self._result(text, "diagnostics.latency", "Read local fast-latency status.", assessment, latest_latency_status(), True)
         if _looks_like_fast_model_status(lower):
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
+        if _looks_like_tool_catalog_status(lower):
+            return self._result(text, "diagnostics.tool_catalog", "Read Jarvis tool catalog status.", assessment, tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
         if _looks_like_model_context_status(lower):
             return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(_extract_model_context_sample(text), tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
         if _looks_like_remote_worker_status(lower):
@@ -515,6 +523,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.latency", assessment, True)
         if _looks_like_fast_model_status(lower):
             return self._preview_result(text, "diagnostics.fast_model", assessment, True)
+        if _looks_like_tool_catalog_status(lower):
+            return self._preview_result(text, "diagnostics.tool_catalog", assessment, True)
         if _looks_like_model_context_status(lower):
             return self._preview_result(text, "diagnostics.model_context", assessment, True)
         if _looks_like_source_access_status(lower):
@@ -615,6 +625,10 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "diagnostics.model_context", assessment, True, plan={"intent": intent, "sample_prompt": sample})
             return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(sample, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
+        if selected_tool == "diagnostics.tool_catalog":
+            if not execute:
+                return self._preview_result(text, "diagnostics.tool_catalog", assessment, True, plan={"intent": intent})
+            return self._result(text, "diagnostics.tool_catalog", "Read Jarvis tool catalog status.", assessment, tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
         if selected_tool == "voice.stt_candidates":
             if not execute:
                 return self._preview_result(text, "voice.stt_candidates", assessment, True, plan={"intent": intent})
@@ -897,6 +911,13 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
         }
     if recommended == "diagnostics.model_context":
         preview = model_context_status(text, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS)
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "diagnostics.tool_catalog":
+        preview = tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS)
         return {
             "recommended_tool": recommended,
             "executed": False,
@@ -1347,6 +1368,38 @@ def _looks_like_model_context_status(lower: str) -> bool:
     mutation_cues = ("change", "edit", "rewrite", "set ", "replace", "delete", "send ")
     return (
         any(cue in lower for cue in model_cues)
+        and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_tool_catalog_status(lower: str) -> bool:
+    tool_cues = (
+        "tool catalog",
+        "tool list",
+        "tool registry",
+        "skill catalog",
+        "skill list",
+        "available tools",
+        "model-callable tools",
+        "what tools",
+        "which tools",
+    )
+    status_cues = (
+        "status",
+        "show",
+        "what",
+        "which",
+        "debug",
+        "registry",
+        "catalog",
+        "fed to the model",
+        "model sees",
+        "mismatches",
+    )
+    mutation_cues = ("change", "edit", "rewrite", "set ", "replace", "delete", "send ")
+    return (
+        any(cue in lower for cue in tool_cues)
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
     )
