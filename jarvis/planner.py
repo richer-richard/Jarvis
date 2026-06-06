@@ -15,6 +15,7 @@ from .tools import (
     app_quit_plan,
     app_running,
     app_status,
+    app_task_workflow_plan,
     browser_open_url_plan,
     capabilities_status,
     codex_activity_snapshot,
@@ -209,6 +210,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": [],
     },
     {
+        "tool": "workflow.app_task_plan",
+        "description": "Prepare a safe structured plan for a multi-step app task, including app opening, screen/OCR, UI automation, Codex delegation, and confirmation gates, without executing the workflow.",
+        "entities": ["goal", "target_app"],
+        "examples": [
+            'Yes sir, preparing the app workflow plan now. \\tool({"tool":"workflow.app_task_plan","entities":{"goal":"Go to Teams, open Music class, and find the newest assignment.","target_app":"Microsoft Teams"}})',
+        ],
+    },
+    {
         "tool": "diagnostics.codex_chats",
         "description": "Report configured Codex chat names, purposes, default route, and daily Jarvis-to-Codex memory without exposing session IDs.",
         "entities": [],
@@ -335,6 +344,8 @@ class Planner:
             return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
         if _looks_like_final_qa_status(lower):
             return self._result(text, "diagnostics.final_qa", "Read deferred final QA plan.", assessment, final_qa_plan_status(), True)
+        if _looks_like_workflow_plan_request(lower):
+            return self._result(text, "workflow.app_task_plan", "Prepared safe app-task workflow plan.", assessment, app_task_workflow_plan(text), True)
         app_quit_name = _extract_app_quit_name(text)
         if app_quit_name is not None:
             return self._app_quit_confirmation_result(text, assessment, app_quit_name)
@@ -514,6 +525,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.overnight", assessment, True)
         if _looks_like_final_qa_status(lower):
             return self._preview_result(text, "diagnostics.final_qa", assessment, True)
+        if _looks_like_workflow_plan_request(lower):
+            return self._preview_result(text, "workflow.app_task_plan", assessment, True, plan={"goal": text})
         app_quit_name = _extract_app_quit_name(text)
         if app_quit_name is not None:
             return self._app_quit_confirmation_result(text, assessment, app_quit_name)
@@ -803,6 +816,12 @@ class Planner:
                 result = {**result, "next_tool_preview": next_preview}
             summary = "Prepared middle-layer tool plan." if result.get("status") == "planned" else "Tried middle-layer tool planning."
             return self._result(text, "tools.more", summary, assessment, result, False)
+        if selected_tool == "workflow.app_task_plan":
+            goal = _clean_optional_entity(entities.get("goal")) or text
+            target_app = _clean_optional_entity(entities.get("target_app"))
+            if not execute:
+                return self._preview_result(text, "workflow.app_task_plan", assessment, True, plan={"intent": intent, "goal": goal, "target_app": target_app})
+            return self._result(text, "workflow.app_task_plan", "Prepared safe app-task workflow plan.", assessment, app_task_workflow_plan(goal, target_app=target_app), True)
         if selected_tool in {"ui.overlay", "ui.automation", "memory.daily_summary", "teams.assignment", "screen.ocr"}:
             result = planned_tool_status(selected_tool)
             return self._result(text, selected_tool, "Prepared planned future tool status.", assessment, result, False)
@@ -1057,6 +1076,15 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
         }
     if recommended == "diagnostics.final_qa":
         preview = final_qa_plan_status()
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": {**preview, "executed": False, "planned_only": True},
+        }
+    if recommended == "workflow.app_task_plan":
+        goal = _clean_optional_entity(entities.get("goal")) or text
+        target_app = _clean_optional_entity(entities.get("target_app"))
+        preview = app_task_workflow_plan(goal, target_app=target_app)
         return {
             "recommended_tool": recommended,
             "executed": False,
@@ -1751,6 +1779,28 @@ def _looks_like_final_qa_status(lower: str) -> bool:
         any(cue in lower for cue in qa_cues)
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_workflow_plan_request(lower: str) -> bool:
+    workflow_cues = (
+        "workflow plan",
+        "app task plan",
+        "multi-app plan",
+        "multi app plan",
+        "teams assignment plan",
+        "plan the teams assignment",
+        "plan a teams workflow",
+        "plan how to",
+        "how would jarvis",
+        "what would jarvis do",
+    )
+    app_task_cues = ("teams", "assignment", "app", "workflow", "screen", "click", "open", "rubric", "poster")
+    action_without_plan = ("do it now", "run it now", "open it now", "click it now", "start now")
+    return (
+        any(cue in lower for cue in workflow_cues)
+        and any(cue in lower for cue in app_task_cues)
+        and not any(cue in lower for cue in action_without_plan)
     )
 
 

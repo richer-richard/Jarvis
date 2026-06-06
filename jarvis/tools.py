@@ -576,6 +576,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Asks the configured middle model to choose from a broader tool catalog, returning a plan only.",
             },
             {
+                "id": "workflow.app_task_plan",
+                "label": "App Task Workflow Plan",
+                "mode": "read_only_plan",
+                "risk": "local_metadata_and_future_private_workflow",
+                "available": True,
+                "description": "Builds a structured plan for a multi-step app task using known safe/planned tools; does not open apps, read screens, click, type, download, submit, or run Codex.",
+            },
+            {
                 "id": "ui.overlay",
                 "label": "Overlay UI Plan",
                 "mode": "planned",
@@ -1976,6 +1984,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "codex.activity", "kind": "read_only", "description": "Show redacted recent Codex job activity without starting a new Codex request."},
         {"id": "codex.job", "kind": "async_deep_work", "description": "Delegate broad coding/project work to Codex."},
         {"id": "diagnostics.final_qa", "kind": "read_only", "description": "Report the deferred foreground QA plan without opening apps or browsers."},
+        {"id": "workflow.app_task_plan", "kind": "read_only_plan", "description": "Create a structured safe plan for future multi-step app work without executing the workflow."},
         {"id": "voice.stt_audition", "kind": "planned", "description": "Prepare a speech-recognition audition workflow."},
         {"id": "voice.stt_candidates", "kind": "read_only", "description": "List speech-recognition candidates and installed local engine evidence."},
         {"id": "voice.stt_score", "kind": "read_only", "description": "Score a pasted STT transcript against a reference sentence without recording audio."},
@@ -3074,6 +3083,144 @@ def planned_tool_status(tool_id: str) -> dict[str, Any]:
         "next_steps": list(definition["next_steps"]),
         "reply": reply,
     }
+
+
+def app_task_workflow_plan(goal: str, *, target_app: str | None = None) -> dict[str, Any]:
+    """Create a safe plan for a future multi-step app workflow without executing it."""
+    clean_goal = re.sub(r"\s+", " ", str(goal or "")).strip()[:700]
+    requested_target = re.sub(r"\s+", " ", str(target_app or "")).strip()
+    inferred_target = requested_target or _infer_workflow_target_app(clean_goal)
+    resolved_target = _resolve_app_name(inferred_target) if inferred_target else ""
+    availability = app_availability(resolved_target) if resolved_target else {"app": "", "available": False, "matches": []}
+    schoolwork_cues = bool(re.search(r"(?i)\b(?:assignment|homework|rubric|teams|class|submit|poster|music)\b", clean_goal))
+    phases = [
+        {
+            "id": "understand_goal",
+            "status": "ready",
+            "tool": "conversation.fast_local",
+            "summary": "Confirm the target app, exact class/item, and whether this is a read-only task or a task that may create/change files.",
+            "executes_now": False,
+        },
+        {
+            "id": "check_app",
+            "status": "ready" if resolved_target else "needs_target_app",
+            "tool": "app.status",
+            "summary": "Check whether the target app is installed/running without opening, focusing, or inspecting it.",
+            "executes_now": False,
+        },
+        {
+            "id": "open_or_focus_app",
+            "status": "available" if resolved_target and availability.get("available") else "needs_app_available",
+            "tool": "app.open",
+            "summary": "Open or focus the app only after Leo has clearly asked for foreground work.",
+            "executes_now": False,
+        },
+        {
+            "id": "read_visible_context",
+            "status": "planned_unavailable",
+            "tool": "screen.ocr",
+            "summary": "Read visible app text through an ephemeral permission-gated screen OCR route.",
+            "executes_now": False,
+        },
+        {
+            "id": "navigate_ui",
+            "status": "planned_unavailable",
+            "tool": "ui.automation",
+            "summary": "Click/type/navigate only with Accessibility readiness, exact target UI, and a safe stopping condition.",
+            "executes_now": False,
+        },
+        {
+            "id": "delegate_creation_or_code",
+            "status": "available_if_needed",
+            "tool": "codex.job",
+            "summary": "Use Codex asynchronously for poster/code/document generation after the rubric or requirements are known.",
+            "executes_now": False,
+        },
+        {
+            "id": "confirm_before_changes",
+            "status": "required",
+            "tool": "policy.confirmation",
+            "summary": "Ask before sending, submitting, deleting, purchasing, changing settings, or altering schoolwork/account data.",
+            "executes_now": False,
+        },
+    ]
+    if schoolwork_cues:
+        phases.insert(
+            3,
+            {
+                "id": "schoolwork_boundary",
+                "status": "required",
+                "tool": "policy.confirmation",
+                "summary": "For schoolwork, Jarvis may help inspect requirements and draft artifacts, but submission or final changes require Leo's explicit approval.",
+                "executes_now": False,
+            },
+        )
+    missing_capabilities = [
+        "Real foreground visual QA is deferred until Leo says it will not interrupt him.",
+        "screen.ocr is planned-unavailable and must not read the screen yet.",
+        "ui.automation is planned-unavailable and must not click or type yet.",
+        "Any submit/send/delete/settings/schoolwork-changing step requires confirmation.",
+    ]
+    if not resolved_target:
+        missing_capabilities.insert(0, "Target app is not identified.")
+    elif not availability.get("available"):
+        missing_capabilities.insert(0, f"{resolved_target} was not found in standard app folders.")
+    reply_goal = clean_goal or "that app task"
+    reply = (
+        f"Workflow plan prepared for {reply_goal}. "
+        "It did not open apps, read the screen, click, type, download, submit, run Codex, or change files."
+    )
+    return {
+        "tool": "workflow.app_task_plan",
+        "executed": True,
+        "status": "planned",
+        "goal": clean_goal,
+        "target_app": resolved_target,
+        "requested_target_app": requested_target,
+        "target_app_available": bool(availability.get("available")),
+        "target_app_matches": list(availability.get("matches") or []),
+        "read_private_content": False,
+        "opened_app": False,
+        "launched_app": False,
+        "focused_app": False,
+        "captured_screen": False,
+        "clicked_ui": False,
+        "typed_text": False,
+        "downloaded_files": False,
+        "submitted_work": False,
+        "called_codex": False,
+        "changed_state": False,
+        "phases": phases,
+        "missing_capabilities": missing_capabilities,
+        "confirmation_gates": [
+            "submit/send/turn in schoolwork",
+            "delete or overwrite files",
+            "download/export private content",
+            "change system/app/account settings",
+            "enter credentials or expose secrets",
+        ],
+        "recommended_next_safe_tool": "diagnostics.permissions",
+        "reply": reply,
+    }
+
+
+def _infer_workflow_target_app(goal: str) -> str:
+    lower = str(goal or "").lower()
+    if "teams" in lower:
+        return "Microsoft Teams"
+    if "outlook" in lower or "email" in lower or "mail" in lower:
+        return "Microsoft Outlook"
+    if "chrome" in lower or "browser" in lower or "website" in lower:
+        return "Google Chrome"
+    if "word" in lower or "document" in lower:
+        return "Microsoft Word"
+    if "powerpoint" in lower or "poster" in lower or "slides" in lower:
+        return "Microsoft PowerPoint"
+    if "excel" in lower or "spreadsheet" in lower:
+        return "Microsoft Excel"
+    if "codex" in lower:
+        return "Codex"
+    return ""
 
 
 def permissions_status(bundle_path: Path | None = None) -> dict[str, Any]:

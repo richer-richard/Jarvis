@@ -115,6 +115,7 @@ def run_self_checks() -> dict[str, Any]:
     add("planner_git_status_routes_shell", planner.handle("git status").tool == "shell.read_only")
     add("planner_grep_routes_shell", planner.handle("grep Jarvis README.md").tool == "shell.read_only")
     add("planner_terminal_read_only_selected_tool_routes", planner.handle_selected_tool("run terminal command: date", "terminal.read_only", {"command": "date"}).tool == "terminal.read_only")
+    add("planner_workflow_app_task_routes", planner.handle("teams assignment plan").tool == "workflow.app_task_plan")
     add("planner_quick_time_routes_without_model", planner.handle("what time is it").tool == "quick.local_control")
     preview_result = planner.preview("shell: pwd").to_dict()
     add(
@@ -150,6 +151,7 @@ def run_self_checks() -> dict[str, Any]:
         "terminal.read_only",
         "terminal.plan",
         "tools.more",
+        "workflow.app_task_plan",
         "files.search",
         "app.availability",
         "app.list",

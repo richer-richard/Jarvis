@@ -59,6 +59,7 @@ from jarvis.tools import (
     app_running,
     app_quit_plan,
     app_status,
+    app_task_workflow_plan,
     browser_open_url_plan,
     codex_chat_status,
     codex_delegate_plan,
@@ -342,6 +343,8 @@ class PlannerTests(unittest.TestCase):
             "score stt transcript: hello Jarvis => hello Jarvis": "voice.stt_score",
             "voice loop: Hey Jarvis status": "voice.loop_simulation",
             "simulate voice loop Hey Jarvis final QA plan": "voice.loop_simulation",
+            "teams assignment plan": "workflow.app_task_plan",
+            "workflow plan for Teams assignment": "workflow.app_task_plan",
             "overnight status": "diagnostics.overnight",
             "morning report draft status": "diagnostics.overnight",
             "final QA plan": "diagnostics.final_qa",
@@ -950,6 +953,42 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(preview["captured_screen"])
         self.assertFalse(preview["changed_state"])
         self.assertIn("confirmation", " ".join(preview["next_steps"]).lower())
+
+    def test_tools_more_workflow_plan_recommendation_previews_without_actions(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "workflow.app_task_plan",
+            "entities": {
+                "goal": "Go to Teams, open Music class, and find the newest assignment.",
+                "target_app": "Microsoft Teams",
+            },
+            "reply": "Yes sir, preparing the app workflow plan now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan):
+            result = Planner().handle_selected_tool("Plan the Teams assignment workflow.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "workflow.app_task_plan")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        preview = result.result["next_tool_preview"]["preview"]
+        self.assertEqual(preview["tool"], "workflow.app_task_plan")
+        self.assertEqual(preview["status"], "planned")
+        self.assertFalse(preview["executed"])
+        self.assertTrue(preview["planned_only"])
+        self.assertEqual(preview["target_app"], "Microsoft Teams")
+        self.assertFalse(preview["opened_app"])
+        self.assertFalse(preview["captured_screen"])
+        self.assertFalse(preview["clicked_ui"])
+        self.assertFalse(preview["called_codex"])
+        self.assertFalse(preview["submitted_work"])
+        phase_tools = {phase["tool"] for phase in preview["phases"]}
+        self.assertIn("app.open", phase_tools)
+        self.assertIn("screen.ocr", phase_tools)
+        self.assertIn("ui.automation", phase_tools)
+        self.assertIn("codex.job", phase_tools)
 
     def test_tools_more_screen_ocr_recommendation_returns_plan_only_status(self):
         fake_plan = {
@@ -1817,6 +1856,28 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("accessibility", next_steps)
         self.assertIn("confirmation", next_steps)
 
+    def test_app_task_workflow_plan_structures_teams_assignment_without_actions(self):
+        result = app_task_workflow_plan("Go to Teams, open Music class, and finish the newest Music assignment.")
+
+        self.assertEqual(result["tool"], "workflow.app_task_plan")
+        self.assertEqual(result["status"], "planned")
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["target_app"], "Microsoft Teams")
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["captured_screen"])
+        self.assertFalse(result["clicked_ui"])
+        self.assertFalse(result["typed_text"])
+        self.assertFalse(result["downloaded_files"])
+        self.assertFalse(result["submitted_work"])
+        self.assertFalse(result["called_codex"])
+        self.assertFalse(result["changed_state"])
+        phase_ids = [phase["id"] for phase in result["phases"]]
+        self.assertIn("schoolwork_boundary", phase_ids)
+        self.assertIn("confirm_before_changes", phase_ids)
+        self.assertIn("screen.ocr", {phase["tool"] for phase in result["phases"]})
+        self.assertIn("ui.automation", {phase["tool"] for phase in result["phases"]})
+
     def test_final_qa_plan_status_reports_deferred_no_foreground_work(self):
         result = final_qa_plan_status()
 
@@ -2052,6 +2113,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("terminal.read_only", tool_ids)
         self.assertIn("terminal.plan", tool_ids)
         self.assertIn("tools.more", tool_ids)
+        self.assertIn("workflow.app_task_plan", tool_ids)
         self.assertIn("app.list", tool_ids)
         self.assertIn("app.open", tool_ids)
         self.assertIn("app.status", tool_ids)
@@ -4967,7 +5029,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("29/29", policy_gate["detail"])
+        self.assertIn("30/30", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
