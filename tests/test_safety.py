@@ -572,6 +572,35 @@ class PlannerTests(unittest.TestCase):
         more_mock.assert_called_once_with("Go to Teams and find my newest Music assignment.", history=history)
         open_mock.assert_called_once_with("Microsoft Teams", execute=False)
 
+    def test_tools_more_low_confidence_asks_clarification_without_preview_or_followup(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.open",
+            "confidence": 0.31,
+            "entities": {"app_name": "Microsoft Teams"},
+            "reply": "Yes sir, checking Teams now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.app_open") as open_mock:
+            result = Planner().handle_selected_tool(
+                "Handle that thing for me.",
+                "tools.more",
+                {"execute_safe_recommendation": True},
+            )
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertTrue(result.result["needs_clarification"])
+        self.assertIn("sir", result.result["clarifying_question"])
+        self.assertEqual(result.result["reply"], result.result["clarifying_question"])
+        self.assertEqual(result.result["confidence_policy"]["status"], "needs_clarification")
+        self.assertEqual(result.result["safe_followup"]["status"], "blocked_low_confidence")
+        self.assertFalse(result.result["safe_followup"]["executed"])
+        self.assertNotIn("next_tool_preview", result.result)
+        open_mock.assert_not_called()
+
     def test_tools_more_terminal_recommendation_previews_without_running(self):
         fake_plan = {
             "tool": "tools.more",

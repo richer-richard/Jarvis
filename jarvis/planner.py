@@ -73,6 +73,8 @@ from .tools import (
     wake_phrase_simulation,
 )
 
+MIDDLE_TOOL_CONFIDENCE_FLOOR = 0.45
+
 
 NATURAL_LANGUAGE_TOOL_SPECS = [
     {
@@ -988,6 +990,14 @@ class Planner:
                     },
                 )
             result = more_tools_plan(text, history=history)
+            allow_followup = _entity_truthy(entities.get("execute_safe_recommendation"))
+            if _middle_plan_needs_clarification(result):
+                result = {
+                    **result,
+                    **_middle_plan_clarification_fields(text, result, allow_followup=allow_followup),
+                }
+                summary = "Asked for clarification on the middle-layer tool plan."
+                return self._result(text, "tools.more", summary, assessment, result, False)
             next_preview = _middle_plan_next_tool_preview(text, result)
             if next_preview is not None:
                 result = {**result, "next_tool_preview": next_preview}
@@ -996,7 +1006,7 @@ class Planner:
                 result,
                 assessment,
                 history=history,
-                allow_followup=_entity_truthy(entities.get("execute_safe_recommendation")),
+                allow_followup=allow_followup,
             )
             if followup is not None:
                 result = {**result, "safe_followup": followup}
@@ -1460,6 +1470,72 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "preview": {**preview, "executed": False, "planned_only": True},
         }
     return None
+
+
+def _middle_plan_confidence(result: dict[str, Any]) -> float | None:
+    if "confidence" not in result:
+        return None
+    try:
+        return max(0.0, min(float(result.get("confidence")), 1.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _middle_plan_needs_clarification(result: dict[str, Any]) -> bool:
+    if result.get("status") != "planned":
+        return False
+    recommended = str(result.get("recommended_tool") or "").strip()
+    if not recommended or recommended == "conversation.fast_local":
+        return False
+    confidence = _middle_plan_confidence(result)
+    return confidence is not None and confidence < MIDDLE_TOOL_CONFIDENCE_FLOOR
+
+
+def _middle_plan_clarification_fields(
+    text: str,
+    result: dict[str, Any],
+    *,
+    allow_followup: bool,
+) -> dict[str, Any]:
+    recommended = str(result.get("recommended_tool") or "").strip()
+    confidence = _middle_plan_confidence(result)
+    question = _middle_plan_clarifying_question(text, recommended)
+    fields: dict[str, Any] = {
+        "needs_clarification": True,
+        "clarifying_question": question,
+        "reply": question,
+        "confidence_policy": {
+            "floor": MIDDLE_TOOL_CONFIDENCE_FLOOR,
+            "confidence": confidence,
+            "status": "needs_clarification",
+            "reason": "The middle planner was not confident enough to preview or execute a next tool.",
+        },
+    }
+    if allow_followup:
+        fields["safe_followup"] = {
+            "selected_tool": recommended,
+            "allowed_by_request": True,
+            "status": "blocked_low_confidence",
+            "executed": False,
+            "result": None,
+            "reason": "The middle planner was not confident enough for automatic follow-through.",
+        }
+    return fields
+
+
+def _middle_plan_clarifying_question(text: str, recommended: str) -> str:
+    lower = text.lower()
+    if recommended.startswith("app."):
+        return "Which app should I use for that, sir?"
+    if recommended.startswith("terminal."):
+        return "Which local check should I run, sir?"
+    if recommended == "outlook.visible_summary":
+        return "Which email should I check, sir?"
+    if recommended.startswith("codex."):
+        return "Which Codex task should I use for that, sir?"
+    if "assignment" in lower or "teams" in lower:
+        return "Which part of the assignment should I handle first, sir?"
+    return "Which part should I handle first, sir?"
 
 
 def _extract_url(text: str) -> str:
