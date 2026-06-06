@@ -175,26 +175,26 @@ final class JarvisShellModel: ObservableObject {
                 "codex_activity": codexActivityText,
                 "verification": verificationText,
                 "permission_summary": permissionText,
-                "fast_model": lastHealthDiagnostics["fast_model"] ?? NSNull(),
-                "worker_runtime": lastHealthDiagnostics["runtime"] ?? NSNull(),
+                "fast_model": Self.redactedJSONValue(lastHealthDiagnostics["fast_model"] ?? NSNull()),
+                "worker_runtime": Self.redactedJSONValue(lastHealthDiagnostics["runtime"] ?? NSNull()),
             ],
             "diagnostics": [
-                "health": lastHealthDiagnostics,
-                "readiness": lastReadinessDiagnostics,
-                "permissions": Self.permissionDiagnostics(permissions),
-                "codex_activity": Self.codexActivityDiagnostics(codexActivity),
-                "last_response": lastCommandDiagnostics,
+                "health": Self.redactedJSONValue(lastHealthDiagnostics),
+                "readiness": Self.redactedJSONValue(lastReadinessDiagnostics),
+                "permissions": Self.redactedJSONValue(Self.permissionDiagnostics(permissions)),
+                "codex_activity": Self.redactedJSONValue(Self.codexActivityDiagnostics(codexActivity)),
+                "last_response": Self.redactedJSONValue(lastCommandDiagnostics),
             ],
-            "current_command": command,
-            "last_result_text": resultText,
+            "current_command": Self.redactChatExportText(command),
+            "last_result_text": Self.redactChatExportText(resultText),
             "messages": messages.map { message in
                 var item: [String: Any] = [
                     "id": message.id.uuidString,
                     "role": message.role.rawValue,
-                    "text": message.text,
+                    "text": Self.redactChatExportText(message.text),
                 ]
                 if let detail = message.detail, !detail.isEmpty {
-                    item["detail"] = detail
+                    item["detail"] = Self.redactChatExportText(detail)
                 }
                 return item
             },
@@ -1529,6 +1529,52 @@ final class JarvisShellModel: ObservableObject {
 
     private static func jsonOrNull<T>(_ value: T?) -> Any {
         value ?? NSNull()
+    }
+
+    private static func redactedJSONValue(_ value: Any) -> Any {
+        if let string = value as? String {
+            return redactChatExportText(string)
+        }
+        if let dictionary = value as? [String: Any] {
+            var redacted: [String: Any] = [:]
+            for (key, item) in dictionary {
+                redacted[key] = redactedJSONValue(item)
+            }
+            return redacted
+        }
+        if let array = value as? [Any] {
+            return array.map(redactedJSONValue)
+        }
+        return value
+    }
+
+    private static func redactChatExportText(_ text: String) -> String {
+        var redacted = regexReplace(
+            text,
+            pattern: #"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"#,
+            replacement: "[SESSION_ID_HIDDEN]"
+        )
+        let trimmed = redacted.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.range(of: #"^\d{4,12}$"#, options: .regularExpression) != nil || textLooksLikeCodeContext(trimmed) {
+            redacted = regexReplace(redacted, pattern: #"\b\d{4,12}\b"#, replacement: "[CODE_HIDDEN]")
+        }
+        return redacted
+    }
+
+    private static func textLooksLikeCodeContext(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let cues = ["secret code", "confirmation code", "authorization code", "approval code", "same codex", "tell codex"]
+        return cues.contains { lower.contains($0) }
+    }
+
+    private static func regexReplace(_ text: String, pattern: String, replacement: String) -> String {
+        do {
+            let regex = try NSRegularExpression(pattern: pattern)
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            return regex.stringByReplacingMatches(in: text, range: range, withTemplate: replacement)
+        } catch {
+            return text
+        }
     }
 
     private static func timingLabel(for tool: String?) -> String {
