@@ -74,6 +74,7 @@ from jarvis.tools import (
     outlook_read_only_check,
     outlook_read_only_plan,
     planned_tool_status,
+    permissions_status,
     quick_local_control,
     remote_worker_status,
     run_codex_chat,
@@ -340,6 +341,8 @@ class PlannerTests(unittest.TestCase):
             "what do you feed the first model for 'hello Jarvis'": "diagnostics.model_context",
             "tool catalog status": "diagnostics.tool_catalog",
             "what tools are fed to the model": "diagnostics.tool_catalog",
+            "permissions status": "diagnostics.permissions",
+            "microphone permission readiness": "diagnostics.permissions",
             "remote worker status": "diagnostics.remote_worker",
             "MacBook Air SSH status": "diagnostics.remote_worker",
             "elevation status": "diagnostics.elevation",
@@ -715,6 +718,39 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
         self.assertFalse(result.result["next_tool_preview"]["preview"]["called_fast_model"])
         catalog_mock.assert_called_once()
+
+    def test_tools_more_permissions_recommendation_previews_without_prompting(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "diagnostics.permissions",
+            "entities": {},
+            "reply": "Yes sir, checking permissions readiness now.",
+        }
+        fake_permissions = {
+            "tool": "diagnostics.permissions",
+            "status": "metadata_ready",
+            "executed": True,
+            "requested_permission": False,
+            "opened_system_settings": False,
+            "recorded_audio": False,
+            "captured_screen": False,
+            "changed_settings": False,
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.permissions_status", return_value=fake_permissions) as permissions_mock:
+            result = Planner().handle_selected_tool("Check permissions readiness.", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "diagnostics.permissions")
+        self.assertFalse(result.result["next_tool_preview"]["executed"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["executed"])
+        self.assertTrue(result.result["next_tool_preview"]["preview"]["planned_only"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["requested_permission"])
+        self.assertFalse(result.result["next_tool_preview"]["preview"]["opened_system_settings"])
+        permissions_mock.assert_called_once_with()
 
     def test_tools_more_planned_future_tool_recommendation_returns_plan_only_status(self):
         fake_plan = {
@@ -1512,6 +1548,36 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result["requires_leo"])
         self.assertIn("confirmation", " ".join(result["next_steps"]).lower())
 
+    def test_permissions_status_reports_metadata_without_prompting(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle = Path(temp_dir) / "Jarvis.app"
+            contents = bundle / "Contents"
+            contents.mkdir(parents=True)
+            with (contents / "Info.plist").open("wb") as handle:
+                plistlib.dump(
+                    {
+                        "NSMicrophoneUsageDescription": "Jarvis microphone test.",
+                        "NSSpeechRecognitionUsageDescription": "Jarvis speech test.",
+                    },
+                    handle,
+                )
+            with patch("jarvis.tools._find_executable", return_value="/usr/bin/tool"):
+                result = permissions_status(bundle_path=bundle)
+
+        surfaces = {surface["id"]: surface for surface in result["surfaces"]}
+        self.assertEqual(result["tool"], "diagnostics.permissions")
+        self.assertEqual(result["status"], "metadata_ready")
+        self.assertFalse(result["requested_permission"])
+        self.assertFalse(result["opened_system_settings"])
+        self.assertFalse(result["recorded_audio"])
+        self.assertFalse(result["captured_screen"])
+        self.assertFalse(result["changed_settings"])
+        self.assertTrue(surfaces["microphone"]["declared_in_bundle"])
+        self.assertTrue(surfaces["speech_recognition"]["declared_in_bundle"])
+        self.assertEqual(surfaces["microphone"]["current_grant"], "unknown_not_prompted")
+        self.assertTrue(surfaces["screen_recording"]["helper_available"])
+        self.assertTrue(surfaces["accessibility"]["helper_available"])
+
     def test_overnight_work_status_reports_paths_without_foreground_activity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1715,6 +1781,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("diagnostics.overnight", tool_ids)
         self.assertIn("diagnostics.model_context", tool_ids)
         self.assertIn("diagnostics.tool_catalog", tool_ids)
+        self.assertIn("diagnostics.permissions", tool_ids)
         self.assertIn("safety.injection_scan", tool_ids)
         self.assertIn("diagnostics.codex_chats", tool_ids)
         self.assertIn("codex.activity", tool_ids)
@@ -4586,7 +4653,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("23/23", policy_gate["detail"])
+        self.assertIn("24/24", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

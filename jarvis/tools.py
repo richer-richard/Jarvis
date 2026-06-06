@@ -528,6 +528,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Compares first-model tool specs, middle-planner tools, and the public registry to catch mismatched model-callable tool IDs.",
             },
             {
+                "id": "diagnostics.permissions",
+                "label": "Permissions Readiness",
+                "mode": "execute",
+                "risk": "read_only_metadata",
+                "available": True,
+                "description": "Reports microphone, speech-recognition, screen, and app-control permission readiness without prompting for permissions or changing settings.",
+            },
+            {
                 "id": "shell.read_only",
                 "label": "Read-only Shell",
                 "mode": "execute",
@@ -1921,6 +1929,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
         {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
         {"id": "diagnostics.tool_catalog", "kind": "read_only", "description": "Compare model-callable tool specs against the public registry."},
+        {"id": "diagnostics.permissions", "kind": "read_only", "description": "Report privacy-permission readiness without prompting or changing settings."},
         {"id": "diagnostics.codex_chats", "kind": "read_only", "description": "Report configured Codex chats, default route, and daily memory without exposing session IDs."},
         {"id": "codex.activity", "kind": "read_only", "description": "Show redacted recent Codex job activity without starting a new Codex request."},
         {"id": "codex.job", "kind": "async_deep_work", "description": "Delegate broad coding/project work to Codex."},
@@ -2880,6 +2889,100 @@ def planned_tool_status(tool_id: str) -> dict[str, Any]:
         "captured_screen": False,
         "changed_state": False,
         "next_steps": list(definition["next_steps"]),
+        "reply": reply,
+    }
+
+
+def permissions_status(bundle_path: Path | None = None) -> dict[str, Any]:
+    """Report permission readiness without requesting permissions."""
+    app_bundle = bundle_path or (PROJECT_ROOT / "output" / "Jarvis.app")
+    info_plist = app_bundle / "Contents" / "Info.plist"
+    plist: dict[str, Any] = {}
+    plist_error: str | None = None
+    try:
+        with info_plist.open("rb") as handle:
+            plist = plistlib.load(handle)
+    except FileNotFoundError:
+        plist_error = "Info.plist not found"
+    except (OSError, plistlib.InvalidFileException) as error:
+        plist_error = str(error)
+    microphone_declared = bool(plist.get("NSMicrophoneUsageDescription"))
+    speech_declared = bool(plist.get("NSSpeechRecognitionUsageDescription"))
+    surfaces = [
+        {
+            "id": "microphone",
+            "purpose": "Future voice command capture and wake flow.",
+            "declared_in_bundle": microphone_declared,
+            "usage_description": str(plist.get("NSMicrophoneUsageDescription") or ""),
+            "current_grant": "unknown_not_prompted",
+            "prompted_now": False,
+        },
+        {
+            "id": "speech_recognition",
+            "purpose": "Future native speech recognition or transcription support.",
+            "declared_in_bundle": speech_declared,
+            "usage_description": str(plist.get("NSSpeechRecognitionUsageDescription") or ""),
+            "current_grant": "unknown_not_prompted",
+            "prompted_now": False,
+        },
+        {
+            "id": "screen_recording",
+            "purpose": "Future screen OCR and visible-app understanding.",
+            "declared_in_bundle": False,
+            "helper_available": bool(_find_executable("screencapture")),
+            "current_grant": "unknown_not_prompted",
+            "prompted_now": False,
+        },
+        {
+            "id": "accessibility",
+            "purpose": "Future app clicking, typing, and UI automation.",
+            "declared_in_bundle": False,
+            "helper_available": bool(_find_executable("osascript")),
+            "current_grant": "unknown_not_prompted",
+            "prompted_now": False,
+        },
+        {
+            "id": "app_launch",
+            "purpose": "Opening or focusing apps through the system open tool.",
+            "declared_in_bundle": False,
+            "helper_available": bool(_find_executable("open")),
+            "current_grant": "system_tool_available" if _find_executable("open") else "open_tool_missing",
+            "prompted_now": False,
+        },
+    ]
+    declared_required = microphone_declared and speech_declared
+    helper_ready = all(
+        bool(surface.get("helper_available", True))
+        for surface in surfaces
+        if surface["id"] in {"screen_recording", "accessibility", "app_launch"}
+    )
+    status = "metadata_ready" if declared_required and helper_ready else "needs_attention"
+    reply = (
+        "Permissions readiness: microphone and speech-recognition usage descriptions are "
+        f"{'present' if declared_required else 'incomplete'}, and local helper tools are "
+        f"{'available' if helper_ready else 'missing in part'}. "
+        "I did not request permissions, open System Settings, capture the screen, or record audio."
+    )
+    return {
+        "tool": "diagnostics.permissions",
+        "executed": True,
+        "status": status,
+        "read_private_content": False,
+        "requested_permission": False,
+        "opened_system_settings": False,
+        "recorded_audio": False,
+        "captured_screen": False,
+        "changed_settings": False,
+        "bundle_path": str(app_bundle),
+        "info_plist": str(info_plist),
+        "info_plist_exists": info_plist.exists(),
+        "info_plist_error": plist_error,
+        "surfaces": surfaces,
+        "next_steps": [
+            "Only after Leo allows foreground QA, launch Jarvis and verify macOS permission prompts behave normally.",
+            "Do not request microphone, speech-recognition, screen-recording, or accessibility permission until the feature that needs it is ready.",
+            "Keep normal Jarvis responses readable even when audio or microphone permissions are unavailable.",
+        ],
         "reply": reply,
     }
 
