@@ -1794,6 +1794,7 @@ def tts_status() -> dict[str, Any]:
         f" Automatic spoken replies are {'on' if TTS_AUTOMATIC_ENABLED else 'off'}."
     )
     reply += f" Spoken progress lines are {'on' if TTS_SPEAK_STATUS else 'off'}."
+    reply += " Speech interruption is available with `stop talking` or the voice.stop_speaking tool."
     if macos_available:
         voice_label = "macOS fallback voice" if provider == "piper" else "Voice"
         reply += f" {voice_label}: {TTS_VOICE} at {TTS_RATE} words per minute."
@@ -1824,6 +1825,8 @@ def tts_status() -> dict[str, Any]:
         "piper_warm_worker": piper_worker,
         "say_path": say_path,
         "explicit_tts_available": available,
+        "stop_speaking_available": True,
+        "stop_speaking_tool": "voice.stop_speaking",
         "automatic_tts_enabled": TTS_AUTOMATIC_ENABLED,
         "spoken_status_enabled": TTS_SPEAK_STATUS,
         "voice": TTS_VOICE,
@@ -4369,6 +4372,7 @@ def capabilities_status() -> dict[str, Any]:
     wake = wake_status()
     stt = stt_audition_status()
     stt_candidates = stt_candidate_status()
+    tts = tts_status()
     email = email_backend_status()
     source_access = source_access_status()
     status = system_status()
@@ -4474,9 +4478,12 @@ def capabilities_status() -> dict[str, Any]:
         {
             "id": "tts",
             "status": "partial",
-            "summary": "Explicit local macOS speech commands exist; automatic spoken replies are not enabled.",
+            "summary": "Explicit local speech commands and voice.stop_speaking interruption exist; automatic spoken replies and progress speech depend on current settings.",
             "test_prompt": "say out loud Jarvis speech test",
             "needs_leo": True,
+            "stop_tool": "voice.stop_speaking",
+            "automatic_enabled": tts.get("automatic_tts_enabled"),
+            "spoken_status_enabled": tts.get("spoken_status_enabled"),
         },
         {
             "id": "computer_control",
@@ -4509,7 +4516,7 @@ def capabilities_status() -> dict[str, Any]:
     reply = (
         f"Capability status: {working} working, {partial} partial, {not_ready} not ready. "
         "Working now includes typed chat, fast casual chat, latency status, Codex async delegation, launch diagnostics, source-access diagnostics, and the overnight workboard route. "
-        "Partial work includes email, quick device controls, guarded middle planning, remote helper diagnostics, Jarvis-Codex daily memory, wake, TTS, and computer control. "
+        "Partial work includes email, quick device controls, guarded middle planning, remote helper diagnostics, Jarvis-Codex daily memory, wake, TTS with stop-speaking interruption, and computer control. "
         "Not active yet: real microphone speech-to-text, full raw chat-history memory, and background wake-word listening. "
         "This diagnostic did not read email, screenshots, microphone audio, or files."
     )

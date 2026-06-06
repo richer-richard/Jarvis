@@ -1803,7 +1803,10 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["read_private_content"])
         self.assertGreaterEqual(result.result["counts"]["working"], 5)
         self.assertIn("typed_chat", [item["id"] for item in result.result["capabilities"]])
+        tts_capability = next(item for item in result.result["capabilities"] if item["id"] == "tts")
+        self.assertEqual(tts_capability["stop_tool"], "voice.stop_speaking")
         self.assertIn("background wake-word listening", result.result["reply"])
+        self.assertIn("stop-speaking interruption", result.result["reply"])
         self.assertIn("did not read email", result.result["reply"])
 
     def test_safety_status_is_no_content_diagnostic(self):
@@ -1936,11 +1939,14 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["played_audio"])
         self.assertEqual(result["provider"], "macos")
         self.assertTrue(result["explicit_tts_available"])
+        self.assertTrue(result["stop_speaking_available"])
+        self.assertEqual(result["stop_speaking_tool"], "voice.stop_speaking")
         self.assertFalse(result["automatic_tts_enabled"])
         self.assertFalse(result["spoken_status_enabled"])
         self.assertEqual(result["voice"], "Samantha")
         self.assertEqual(result["rate"], 152)
         self.assertEqual(result["voice_count"], 2)
+        self.assertIn("stop talking", result["reply"])
         self.assertIn("did not play audio", result["reply"])
 
     def test_app_voice_defaults_enable_piper_status_speech_without_cli_default(self):
