@@ -40,6 +40,7 @@ from .tools import (
     source_access_status,
     start_codex_continue_job,
     start_codex_delegate_job,
+    stt_audition_status,
     system_status,
     terminal_command_plan,
     tts_status,
@@ -291,6 +292,8 @@ class Planner:
             return self._result(text, "diagnostics.launch", "Read local Jarvis launch status.", assessment, launch_status(), True)
         if _looks_like_wake_status(lower):
             return self._result(text, "diagnostics.wake", "Read local Jarvis wake status.", assessment, wake_status(), True)
+        if _looks_like_stt_audition_status(lower):
+            return self._result(text, "voice.stt_audition", "Read local STT audition status.", assessment, stt_audition_status(), True)
         if _is_exact_email_status_command(lower):
             return self._result(text, "diagnostics.email", "Read local email backend status without reading email content.", assessment, email_backend_status(), True)
         if _looks_like_capability_status(lower):
@@ -427,6 +430,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.launch", assessment, True)
         if _looks_like_wake_status(lower):
             return self._preview_result(text, "diagnostics.wake", assessment, True)
+        if _looks_like_stt_audition_status(lower):
+            return self._preview_result(text, "voice.stt_audition", assessment, True)
         if _is_exact_email_status_command(lower):
             return self._preview_result(text, "diagnostics.email", assessment, True)
         if _looks_like_capability_status(lower):
@@ -934,6 +939,24 @@ def _looks_like_tts_status(lower: str) -> bool:
     return (
         any(cue in lower for cue in tts_cues)
         and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_stt_audition_status(lower: str) -> bool:
+    stt_cues = (
+        "stt",
+        "speech to text",
+        "speech-to-text",
+        "speech recognition",
+        "voice recognition",
+        "transcription",
+    )
+    audition_cues = ("audition", "test page", "ranking page", "comparison page", "compare", "status", "ready", "where")
+    mutation_cues = ("start recording", "record now", "listen now", "turn on microphone", "enable microphone")
+    return (
+        any(cue in lower for cue in stt_cues)
+        and any(cue in lower for cue in audition_cues)
         and not any(cue in lower for cue in mutation_cues)
     )
 

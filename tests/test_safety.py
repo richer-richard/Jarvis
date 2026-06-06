@@ -75,6 +75,7 @@ from jarvis.tools import (
     run_read_only_shell,
     screenshot_capability,
     stream_fast_local_chat_events,
+    stt_audition_status,
     tts_status,
     tool_registry,
     wake_status,
@@ -305,6 +306,8 @@ class PlannerTests(unittest.TestCase):
             "how do I open Jarvis": "diagnostics.launch",
             "Jarvis launch status": "diagnostics.launch",
             "wake status": "diagnostics.wake",
+            "stt audition status": "voice.stt_audition",
+            "speech recognition audition page": "voice.stt_audition",
             "email backend status": "diagnostics.email",
             "capabilities status": "diagnostics.capabilities",
             "what can you do right now": "diagnostics.capabilities",
@@ -1068,6 +1071,23 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["background_listener_active"])
         self.assertIn("not active yet", result["reply"])
 
+    def test_stt_audition_status_reports_local_page_without_audio(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            page = root / "runtime" / "stt_audition" / "index.html"
+            page.parent.mkdir(parents=True)
+            page.write_text("<!doctype html><title>Jarvis STT Audition</title>", encoding="utf-8")
+            with patch("jarvis.tools.PROJECT_ROOT", root):
+                result = stt_audition_status()
+
+        self.assertEqual(result["tool"], "voice.stt_audition")
+        self.assertEqual(result["status"], "available")
+        self.assertTrue(result["page_exists"])
+        self.assertFalse(result["recorded_audio"])
+        self.assertFalse(result["requested_microphone_permission"])
+        self.assertFalse(result["opened_browser"])
+        self.assertIn("word_accuracy", result["metrics"])
+
     def test_latest_latency_status_reads_local_smoke_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1235,6 +1255,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("conversation.fast_local", tool_ids)
         self.assertIn("quick.local_control", tool_ids)
         self.assertIn("voice.wake_simulation", tool_ids)
+        self.assertIn("voice.stt_audition", tool_ids)
         self.assertIn("safety.injection_scan", tool_ids)
         self.assertIn("codex.delegate", tool_ids)
         self.assertIn("codex.job", tool_ids)

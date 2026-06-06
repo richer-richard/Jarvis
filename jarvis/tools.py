@@ -305,6 +305,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Reports current keyboard/text wake support and clearly labels real microphone wake as not active yet.",
             },
             {
+                "id": "voice.stt_audition",
+                "label": "STT Audition Status",
+                "mode": "read_only",
+                "risk": "local_metadata",
+                "available": True,
+                "description": "Reports the local speech-recognition audition page and what it can test without recording audio.",
+            },
+            {
                 "id": "diagnostics.email",
                 "label": "Email Backend Status",
                 "mode": "execute",
@@ -1994,11 +2002,52 @@ def wake_status() -> dict[str, Any]:
     }
 
 
+def stt_audition_status() -> dict[str, Any]:
+    """Return local speech-to-text audition readiness without capturing audio."""
+    page_path = PROJECT_ROOT / "runtime" / "stt_audition" / "index.html"
+    exists = page_path.exists()
+    reply = (
+        "STT audition status: the local speech-recognition audition page is "
+        f"{'available' if exists else 'not created yet'}. "
+        "It can compare a reference sentence with a recognized or pasted transcript, score word accuracy, character accuracy, WER, first-result latency, and export JSON. "
+        "This status check did not open a browser, record audio, request microphone permission, or send audio anywhere."
+    )
+    if exists:
+        reply += f" Local path: {page_path}."
+    return {
+        "tool": "voice.stt_audition",
+        "executed": True,
+        "status": "available" if exists else "missing",
+        "read_private_content": False,
+        "recorded_audio": False,
+        "requested_microphone_permission": False,
+        "opened_browser": False,
+        "page_path": str(page_path),
+        "page_exists": exists,
+        "candidate_modes": [
+            "Chrome Web Speech when the browser supports it",
+            "manual transcript paste from macOS Dictation or local engines",
+            "future local candidates such as whisper.cpp, Vosk, Moonshine, and Parakeet",
+        ],
+        "metrics": [
+            "word_accuracy",
+            "character_accuracy",
+            "word_error_rate",
+            "first_result_ms",
+            "final_result_ms",
+            "human_score",
+        ],
+        "requires_foreground_browser_for_live_test": True,
+        "reply": reply,
+    }
+
+
 def capabilities_status() -> dict[str, Any]:
     """Return a compact product-level capability snapshot without private reads."""
     latency = latest_latency_status()
     launch = launch_status()
     wake = wake_status()
+    stt = stt_audition_status()
     email = email_backend_status()
     source_access = source_access_status()
     status = system_status()
@@ -2085,10 +2134,11 @@ def capabilities_status() -> dict[str, Any]:
         },
         {
             "id": "speech_to_text",
-            "status": "not_built",
-            "summary": "Real microphone speech-to-text is not built yet.",
-            "test_prompt": "speech recognition permission status",
+            "status": "prep_ready" if stt.get("page_exists") else "not_built",
+            "summary": "Real microphone speech-to-text is not built yet, but the local STT audition page is ready for comparing recognition candidates.",
+            "test_prompt": "stt audition status",
             "needs_leo": True,
+            "audition_page": stt.get("page_path"),
         },
         {
             "id": "tts",
