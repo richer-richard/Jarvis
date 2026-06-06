@@ -47,6 +47,7 @@ from jarvis.server import (
     STATIC_DIR,
     JarvisServer,
     _bounded_int,
+    _conversation_history_from_payload,
     _host_from_header,
     _verification_detail,
     _verification_is_fresh,
@@ -3438,6 +3439,25 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(events[1]["data"]["text"], "x is 3.")
         self.assertEqual(events[-1]["data"]["result"]["reply"], "Correct, x is 3.")
         self.assertEqual(stream_mock.call_args.kwargs["history"], history)
+
+    def test_conversation_history_payload_accepts_content_alias_and_skips_current(self):
+        payload = {
+            "history": [
+                {"role": "user", "content": "Give me a math problem."},
+                {"role": "jarvis", "content": "Solve x + 2 = 5."},
+                {"role": "user", "content": "x = 3"},
+            ]
+        }
+
+        history = _conversation_history_from_payload(payload, current_command="x = 3")
+
+        self.assertEqual(
+            history,
+            [
+                {"role": "user", "text": "Give me a math problem."},
+                {"role": "assistant", "text": "Solve x + 2 = 5."},
+            ],
+        )
 
     def test_diagnostics_do_not_auto_speak(self):
         with tempfile.TemporaryDirectory() as temp_dir:

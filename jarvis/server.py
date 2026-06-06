@@ -868,7 +868,10 @@ def _conversation_history_from_payload(payload: dict[str, Any], *, current_comma
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or "").strip().lower()
-        text = " ".join(str(item.get("text") or "").split())
+        raw_text = item.get("text")
+        if raw_text is None:
+            raw_text = item.get("content")
+        text = " ".join(str(raw_text or "").split())
         if role == "jarvis":
             role = "assistant"
         if role not in {"user", "assistant", "system"} or not text:

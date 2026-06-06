@@ -894,6 +894,9 @@ final class JarvisShellModel: ObservableObject {
             if message.role == .jarvis, message.detail == "Working" {
                 return nil
             }
+            if message.role == .system {
+                return nil
+            }
             let role: String
             switch message.role {
             case .user:
