@@ -27,7 +27,7 @@ struct JarvisPanelView: View {
             JarvisLogoView(size: 58)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Jarvis")
+                Text(model.appVersionText)
                     .font(.title2.weight(.bold))
                 Text("Local assistant prototype")
                     .font(.subheadline)

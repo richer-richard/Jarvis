@@ -117,6 +117,7 @@ from scripts.morning_status import (
     format_uptime,
     latency_smoke_summary,
     normalize_base_url,
+    print_process_status,
     requirement_audit_summary,
     time_since,
     verification_action,
@@ -610,6 +611,8 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn("skill.", catalog.lower())
         self.assertIn("future capabilities", catalog)
         self.assertNotIn("skill", prompt.lower())
+        self.assertIn("speech dictation", prompt.lower())
+        self.assertIn("missing punctuation", prompt.lower())
 
     def test_tools_more_terminal_recommendation_previews_without_running(self):
         fake_plan = {
@@ -2126,6 +2129,40 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('open "', result["open_command"])
         self.assertIn("version 0.1.test", result["reply"])
 
+    def test_packaged_diagnostics_use_enclosing_app_bundle(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            running_bundle = root / "output" / "Jarvis.app"
+            contents = running_bundle / "Contents"
+            worker_root = contents / "Resources" / "JarvisWorker"
+            worker_root.mkdir(parents=True)
+            with (contents / "Info.plist").open("wb") as handle:
+                plistlib.dump(
+                    {
+                        "CFBundleName": "Jarvis",
+                        "CFBundleIdentifier": "local.leo.jarvis",
+                        "CFBundleShortVersionString": "0.1.packaged",
+                        "CFBundleVersion": "888",
+                        "NSMicrophoneUsageDescription": "Jarvis microphone test.",
+                        "NSSpeechRecognitionUsageDescription": "Jarvis speech test.",
+                    },
+                    handle,
+                )
+
+            with patch("jarvis.tools.PROJECT_ROOT", worker_root), \
+                 patch("jarvis.tools._enclosing_app_bundle", return_value=str(running_bundle)), \
+                 patch("jarvis.tools._live_final_qa_evidence", return_value={"complete": False, "checks": []}) as live_qa:
+                launch = launch_status()
+                qa = final_qa_plan_status()
+                permissions = permissions_status()
+
+        self.assertEqual(launch["bundle_path"], str(running_bundle))
+        self.assertEqual(launch["metadata"]["version"], "0.1.packaged")
+        self.assertEqual(qa["bundle_path"], str(running_bundle))
+        self.assertEqual(live_qa.call_args.kwargs["bundle_path"], running_bundle)
+        self.assertEqual(permissions["bundle_path"], str(running_bundle))
+        self.assertTrue(permissions["surfaces"][0]["declared_in_bundle"])
+
     def test_wake_status_reports_voice_wake_not_active(self):
         result = wake_status()
 
@@ -2250,6 +2287,14 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["word_error_rate"], 0)
         self.assertEqual(result["word_accuracy"], 1)
         self.assertEqual(result["character_accuracy"], 1)
+        self.assertEqual(result["punctuation_accuracy"], 0)
+        self.assertEqual(result["reference_punctuation_count"], 2)
+        self.assertEqual(result["transcript_punctuation_count"], 0)
+        self.assertEqual(result["command_readiness_score"], 1)
+        self.assertLess(result["dictation_quality_score"], 1)
+        self.assertTrue(result["punctuation_restoration_recommended"])
+        self.assertIn("punctuation", result["reply"].lower())
+        self.assertIn("dictated text", result["reply"].lower())
         self.assertEqual(result["candidate_id"], "chrome-web-speech")
         self.assertEqual(result["first_result_ms"], 420)
         self.assertFalse(result["recorded_audio"])
@@ -2296,6 +2341,47 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["requested_microphone_permission"])
         self.assertFalse(result["opened_browser"])
         self.assertFalse(result["called_model"])
+
+    def test_stt_recommendation_surfaces_punctuation_failure(self):
+        reference = "Hey Jarvis, go to Teams, open Music class, and tell me what the newest assignment is."
+        export = {
+            "artifact": "Jarvis STT Audition",
+            "results": [
+                {
+                    "candidate_id": "parakeet-tdt",
+                    "candidate_name": "Parakeet local",
+                    "human_score": 7.911,
+                    "word_accuracy": 1,
+                    "wer": 0,
+                    "first_result_ms": 2558,
+                    "reference": reference,
+                    "transcript": "Hey Jarvis go to Teams open Music class and tell me what the newest assignment is",
+                },
+                {
+                    "candidate_id": "chrome-web-speech",
+                    "candidate_name": "Chrome Web Speech",
+                    "human_score": 7.911,
+                    "word_accuracy": 1,
+                    "wer": 0,
+                    "first_result_ms": 3242,
+                    "reference": reference,
+                    "transcript": "Hey Jarvis go to Teams open Music class and tell me what the newest assignment is",
+                },
+            ],
+        }
+        result = stt_recommendation_from_export(json.dumps(export))
+
+        self.assertEqual(result["status"], "ranked")
+        self.assertEqual(result["recommended_candidate_id"], "parakeet-tdt")
+        winner = result["ranked_candidates"][0]
+        self.assertEqual(winner["average_word_accuracy"], 1)
+        self.assertEqual(winner["average_punctuation_accuracy"], 0)
+        self.assertLess(winner["average_dictation_quality_score"], winner["average_command_readiness_score"])
+        self.assertIn("punctuation", winner["punctuation_note"])
+        self.assertIn("dictated text", winner["punctuation_note"])
+        self.assertIn("punctuation", result["reply"].lower())
+        self.assertIn("dictated text", result["reply"].lower())
+        self.assertNotIn("restoration pass", result["reply"].lower())
 
     def test_stt_recommendation_extracts_json_from_pasted_text(self):
         export = {
@@ -2416,7 +2502,9 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["fast_chat"]["tool_catalog_ids"], ["outlook.visible_summary", "app.open"])
         self.assertEqual(result["fast_chat"]["message_count"], 4)
         self.assertIn("hello Jarvis", result["fast_chat"]["messages"][-1]["preview"])
+        self.assertIn("speech dictation", result["fast_chat"]["messages"][0]["preview"].lower())
         self.assertIn("recommended_tool", result["middle_planner"]["output_contract"]["fields"])
+        self.assertIn("speech dictation", result["middle_planner"]["prompt_preview"].lower())
         self.assertEqual(result["stream_tool_flow"]["hidden_call_syntax"], '\\tool({"tool":"tool.id","entities":{}})')
         self.assertTrue(result["stream_tool_flow"]["hidden_call_can_appear_mid_sentence"])
         self.assertTrue(result["stream_tool_flow"]["history_flow"]["fast_model_receives_history"])
@@ -2643,7 +2731,8 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("debug_trace_drawer", surface_ids)
 
     def test_final_qa_plan_status_reports_deferred_no_foreground_work(self):
-        result = final_qa_plan_status()
+        with patch("jarvis.tools._live_final_qa_evidence", return_value={"complete": False, "checks": []}):
+            result = final_qa_plan_status()
 
         self.assertEqual(result["tool"], "diagnostics.final_qa")
         self.assertEqual(result["status"], "deferred")
@@ -2660,6 +2749,130 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("stronger_layered_tool_loop", audit_ids)
         self.assertIn("safe_terminal_groundwork", audit_ids)
         self.assertIn("morning_report", audit_ids)
+        self.assertIn("morning report", result["checks"][1]["proof_needed"])
+        self.assertNotIn("report draft", result["checks"][1]["proof_needed"].lower())
+
+    def test_final_qa_plan_status_reports_completed_with_live_evidence(self):
+        live_qa = {
+            "complete": True,
+            "checks": [
+                {"id": "workboard_visual_qa", "status": "completed", "evidence": "workboard.png", "completed_at": "2026-06-07T08:03:00"},
+                {"id": "morning_report_visual_qa", "status": "completed", "evidence": "report.png", "completed_at": "2026-06-07T08:03:00"},
+                {"id": "stt_audition_visual_qa", "status": "completed", "evidence": "stt.png", "completed_at": "2026-06-07T08:03:00"},
+                {"id": "jarvis_app_relaunch", "status": "completed", "evidence": "pid=123", "completed_at": "2026-06-07T08:07:00"},
+                {"id": "live_preflight", "status": "completed", "evidence": "required 6/6", "completed_at": "2026-06-07T08:08:00"},
+                {"id": "full_safe_verifier", "status": "completed", "evidence": "89/89", "completed_at": "2026-06-07T08:09:00"},
+            ],
+        }
+        with patch("jarvis.tools._live_final_qa_evidence", return_value=live_qa):
+            result = final_qa_plan_status()
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual({check["status"] for check in result["checks"]}, {"completed"})
+        self.assertIn("Final QA status", result["reply"])
+        audit = {item["id"]: item for item in result["requirement_audit"]}
+        self.assertEqual(audit["morning_report"]["status"], "prepared_live_verified")
+        self.assertEqual(audit["rebuilt_bundle"]["status"], "available_live_verified")
+
+    def test_live_final_qa_uses_tools_endpoint_not_recursive_preflight(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundle = root / "output" / "Jarvis.app"
+            worker_root = bundle / "Contents" / "Resources" / "JarvisWorker"
+            worker_source = worker_root / "jarvis" / "tools.py"
+            worker_source.parent.mkdir(parents=True)
+            worker_source.write_text("# bundled worker marker\n", encoding="utf-8")
+            required_tool_ids = jarvis_tools._live_preflight_required_tool_ids()
+            calls: list[str] = []
+
+            def fake_loopback(path: str, *, timeout_seconds: float) -> dict:
+                calls.append(path)
+                if path == "/api/health":
+                    return {
+                        "ok": True,
+                        "data": {
+                            "status": {
+                                "runtime": {
+                                    "source": str(worker_source.resolve()),
+                                    "pid": 4321,
+                                }
+                            }
+                        },
+                    }
+                if path == "/api/tools":
+                    return {
+                        "ok": True,
+                        "data": {
+                            "tools": [{"id": tool_id} for tool_id in sorted(required_tool_ids)]
+                        },
+                    }
+                return {"ok": False, "error": f"unexpected path {path}"}
+
+            with patch("jarvis.tools.PROJECT_ROOT", root), \
+                 patch("jarvis.tools._loopback_json", side_effect=fake_loopback), \
+                 patch("jarvis.tools._pgrep_exact", return_value={"running": True, "pids": [1234]}), \
+                 patch(
+                     "jarvis.tools._latest_safe_verification_evidence",
+                     return_value={"ok": True, "summary": "89/89 passed", "completed_at": "2026-06-07T08:09:00"},
+                 ), \
+                 patch("jarvis.tools._now_iso", return_value="2026-06-07T08:10:00"):
+                result = jarvis_tools._live_final_qa_evidence(bundle_path=bundle)
+
+        checks = {check["id"]: check for check in result["checks"]}
+        self.assertIn("/api/tools", calls)
+        self.assertNotIn("/api/preflight", calls)
+        self.assertEqual(checks["jarvis_app_relaunch"]["status"], "completed")
+        self.assertEqual(checks["live_preflight"]["status"], "completed")
+        self.assertEqual(checks["live_preflight"]["details"]["endpoint"], "/api/tools")
+
+    def test_live_final_qa_accepts_bundled_worker_when_pgrep_misses_menu_bar_app(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundle = root / "output" / "Jarvis.app"
+            worker_source = bundle / "Contents" / "Resources" / "JarvisWorker" / "jarvis" / "tools.py"
+            worker_source.parent.mkdir(parents=True)
+            worker_source.write_text("# bundled worker marker\n", encoding="utf-8")
+
+            def fake_loopback(path: str, *, timeout_seconds: float) -> dict:
+                if path == "/api/health":
+                    return {
+                        "ok": True,
+                        "data": {
+                            "status": {
+                                "runtime": {
+                                    "source": str(worker_source.resolve()),
+                                    "pid": 4321,
+                                }
+                            }
+                        },
+                    }
+                if path == "/api/tools":
+                    return {
+                        "ok": True,
+                        "data": {
+                            "tools": [
+                                {"id": tool_id}
+                                for tool_id in sorted(jarvis_tools._live_preflight_required_tool_ids())
+                            ]
+                        },
+                    }
+                return {"ok": False}
+
+            with patch("jarvis.tools.PROJECT_ROOT", root), \
+                 patch("jarvis.tools._loopback_json", side_effect=fake_loopback), \
+                 patch("jarvis.tools._pgrep_exact", return_value={"running": False, "pids": [], "status": "checked"}), \
+                 patch(
+                     "jarvis.tools._latest_safe_verification_evidence",
+                     return_value={"ok": True, "summary": "89/89 passed", "completed_at": "2026-06-07T08:09:00"},
+                 ), \
+                 patch("jarvis.tools._now_iso", return_value="2026-06-07T08:10:00"):
+                result = jarvis_tools._live_final_qa_evidence(bundle_path=bundle)
+
+        checks = {check["id"]: check for check in result["checks"]}
+        app_check = checks["jarvis_app_relaunch"]
+        self.assertEqual(app_check["status"], "completed")
+        self.assertTrue(app_check["details"]["bundled_worker"])
+        self.assertTrue(app_check["details"]["source_bundle_matches"])
 
     def test_permissions_status_reports_metadata_without_prompting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2702,7 +2915,8 @@ class PlannerTests(unittest.TestCase):
             workboard.write_text("<!doctype html><title>Jarvis Overnight Status</title>", encoding="utf-8")
             report.write_text("<!doctype html><title>Jarvis Morning Report</title>", encoding="utf-8")
             stt_page.write_text("<!doctype html><title>Jarvis STT Audition</title>", encoding="utf-8")
-            with patch("jarvis.tools.PROJECT_ROOT", root):
+            with patch("jarvis.tools.PROJECT_ROOT", root), \
+                 patch("jarvis.tools._live_final_qa_evidence", return_value={"complete": False, "checks": []}):
                 result = overnight_work_status()
 
         self.assertEqual(result["tool"], "diagnostics.overnight")
@@ -2722,6 +2936,8 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("voice_recognition_audition_prep", audit_ids)
         self.assertIn("morning_report", audit_ids)
         self.assertIn("Workboard:", result["reply"])
+        self.assertIn("morning report", result["reply"])
+        self.assertNotIn("morning report draft", result["reply"].lower())
 
     def test_latest_latency_status_reads_local_smoke_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2885,6 +3101,29 @@ class PlannerTests(unittest.TestCase):
 
 
 class RuntimeSurfaceTests(unittest.TestCase):
+    def test_swift_header_displays_bundle_version(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        view_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Views"
+            / "JarvisPanelView.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("var appVersionText", model_source)
+        self.assertIn("CFBundleShortVersionString", model_source)
+        self.assertIn('return "Jarvis \\(bundleVersion)"', model_source)
+        self.assertIn("Text(model.appVersionText)", view_source)
+
     def test_tool_registry_lists_policy_and_tool_routes(self):
         registry = tool_registry()
         tool_ids = {tool["id"] for tool in registry["tools"]}
@@ -6281,6 +6520,13 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(classify_worker_source(str(source)), "source checkout")
         self.assertEqual(classify_worker_source(external), "external path")
         self.assertEqual(display_path(str(source)), "jarvis/tools.py")
+
+    def test_morning_status_process_check_uses_exact_executable_name(self):
+        completed = subprocess.CompletedProcess(args=["pgrep"], returncode=1, stdout="", stderr="")
+        with patch("scripts.morning_status.subprocess.run", return_value=completed) as run_mock:
+            print_process_status()
+
+        self.assertEqual(run_mock.call_args.args[0], ["pgrep", "-x", "jarvis-menu-bar"])
 
     def test_morning_status_age_formatting(self):
         self.assertEqual(format_uptime(time_since(100.0, now=165.0)), "1m 5s")

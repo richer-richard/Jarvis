@@ -87,6 +87,11 @@ final class JarvisShellModel: ObservableObject {
         client.baseURL
     }
 
+    var appVersionText: String {
+        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        return "Jarvis \(bundleVersion)"
+    }
+
     init(client: JarvisClient? = nil) {
         let resolvedClient = client ?? (try? JarvisClient.fromEnvironment()) ?? JarvisClient(baseURL: URL(string: "http://127.0.0.1:8765")!)
         self.client = resolvedClient

@@ -64,15 +64,21 @@ REQUIREMENT_AUDIT_IDS = {
 }
 REQUIREMENT_STATUS_LABELS = {
     "implemented_terminal_verified": "implemented terminal-verified",
+    "implemented_live_verified": "implemented live-verified",
     "prepared": "prepared",
+    "prepared_live_verified": "prepared live-verified",
     "available": "available",
+    "available_live_verified": "available live-verified",
     "partial": "partial",
     "missing": "missing",
     "artifact_missing": "artifact missing",
 }
 REQUIREMENT_STATUS_ORDER = [
+    "implemented live-verified",
     "implemented terminal-verified",
+    "prepared live-verified",
     "prepared",
+    "available live-verified",
     "available",
     "partial",
     "artifact missing",
@@ -364,7 +370,7 @@ def print_current_bundle() -> None:
 def print_process_status() -> None:
     try:
         completed = subprocess.run(
-            ["pgrep", "-fl", "Jarvis.app/Contents/MacOS/jarvis-menu-bar"],
+            ["pgrep", "-x", "jarvis-menu-bar"],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -374,12 +380,12 @@ def print_process_status() -> None:
     except (OSError, subprocess.TimeoutExpired):
         return
 
-    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    if not lines:
+    pids = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    if not pids:
         print("App processes: none")
         return
-    print(f"App processes: {len(lines)} jarvis-menu-bar running")
-    if len(lines) > 1:
+    print(f"App processes: {len(pids)} jarvis-menu-bar running")
+    if len(pids) > 1:
         print("Action: quit duplicate Jarvis app processes, then reopen once with `scripts/open_jarvis.sh`")
 
 

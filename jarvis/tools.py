@@ -469,7 +469,7 @@ def tool_registry() -> dict[str, Any]:
                 "mode": "read_only",
                 "risk": "local_metadata",
                 "available": True,
-                "description": "Reports the overnight workboard, morning report draft, and deferred foreground QA paths without opening apps or browsers.",
+                "description": "Reports the overnight workboard, morning report, and deferred foreground QA paths without opening apps or browsers.",
             },
             {
                 "id": "diagnostics.final_qa",
@@ -1841,7 +1841,7 @@ def tts_status() -> dict[str, Any]:
 
 def launch_status() -> dict[str, Any]:
     running_bundle = _enclosing_app_bundle(Path(__file__).resolve())
-    bundle_path = Path(running_bundle) if running_bundle else PROJECT_ROOT / "output" / "Jarvis.app"
+    bundle_path = _current_jarvis_bundle_path()
     stable_bundle_path = PROJECT_ROOT / "output" / "Jarvis.app"
     launcher_path = PROJECT_ROOT / "scripts" / "open_jarvis.sh"
     metadata = _bundle_metadata(bundle_path)
@@ -1896,6 +1896,13 @@ def _bundle_metadata(bundle_path: Path) -> dict[str, Any] | None:
         "version": plist.get("CFBundleShortVersionString"),
         "build": plist.get("CFBundleVersion"),
     }
+
+
+def _current_jarvis_bundle_path() -> Path:
+    running_bundle = _enclosing_app_bundle(Path(__file__).resolve())
+    if running_bundle:
+        return Path(running_bundle)
+    return PROJECT_ROOT / "output" / "Jarvis.app"
 
 
 def run_read_only_shell(command: str) -> dict[str, Any]:
@@ -2102,6 +2109,7 @@ def _middle_tools_prompt(prompt: str, *, history: list[dict[str, str]] | None = 
     return (
         "You are Jarvis's middle planning model. You are slower and smarter than the first chat model, "
         "but you still do not execute tools. Choose the best next tool or say that ordinary chat is enough. "
+        "Leo's current request may come from speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended punctuation while preserving his words and meaning. "
         "Visible Jarvis text may be spoken aloud, so keep user-facing wording natural and concise. "
         "Never recommend sending, submitting, deleting, purchasing, changing settings, or exporting private data without explicit confirmation. "
         "Return JSON only.\n\n"
@@ -2918,6 +2926,69 @@ def _stt_words(value: Any) -> list[str]:
     return normalized.split(" ") if normalized else []
 
 
+def _stt_punctuation(value: Any) -> list[str]:
+    text = str(value or "")
+    text = text.translate(
+        str.maketrans(
+            {
+                "\u2018": "'",
+                "\u2019": "'",
+                "\u201c": '"',
+                "\u201d": '"',
+                "\uff0c": ",",
+                "\u3002": ".",
+                "\uff01": "!",
+                "\uff1f": "?",
+                "\uff1a": ":",
+                "\uff1b": ";",
+            }
+        )
+    )
+    return re.findall(r"[,.!?;:]", text)
+
+
+def _stt_score_components(reference: str, transcript: str) -> dict[str, Any]:
+    reference_words = _stt_words(reference)
+    transcript_words = _stt_words(transcript)
+    reference_chars = list(_normalize_stt_text(reference).replace(" ", ""))
+    transcript_chars = list(_normalize_stt_text(transcript).replace(" ", ""))
+    reference_punctuation = _stt_punctuation(reference)
+    transcript_punctuation = _stt_punctuation(transcript)
+
+    word_distance = _stt_levenshtein(reference_words, transcript_words)
+    char_distance = _stt_levenshtein(reference_chars, transcript_chars)
+    punctuation_distance = _stt_levenshtein(reference_punctuation, transcript_punctuation)
+    word_error_rate = (word_distance / len(reference_words)) if reference_words else 0.0
+    word_accuracy = max(0.0, 1.0 - word_error_rate)
+    char_accuracy = max(0.0, 1.0 - (char_distance / len(reference_chars))) if reference_chars else 0.0
+    punctuation_error_rate = (punctuation_distance / len(reference_punctuation)) if reference_punctuation else 0.0
+    punctuation_accuracy = max(0.0, 1.0 - punctuation_error_rate) if reference_punctuation else 1.0
+    command_readiness_score = (word_accuracy * 0.9) + (char_accuracy * 0.1)
+    dictation_quality_score = (word_accuracy * 0.5) + (char_accuracy * 0.1) + (punctuation_accuracy * 0.4)
+    punctuation_restoration_recommended = bool(
+        reference_punctuation
+        and word_accuracy >= 0.9
+        and punctuation_accuracy < 0.75
+    )
+    return {
+        "reference_words": len(reference_words),
+        "transcript_words": len(transcript_words),
+        "reference_punctuation_count": len(reference_punctuation),
+        "transcript_punctuation_count": len(transcript_punctuation),
+        "word_distance": word_distance,
+        "char_distance": char_distance,
+        "punctuation_distance": punctuation_distance,
+        "word_error_rate": word_error_rate,
+        "word_accuracy": word_accuracy,
+        "char_accuracy": char_accuracy,
+        "punctuation_error_rate": punctuation_error_rate,
+        "punctuation_accuracy": punctuation_accuracy,
+        "command_readiness_score": command_readiness_score,
+        "dictation_quality_score": dictation_quality_score,
+        "punctuation_restoration_recommended": punctuation_restoration_recommended,
+    }
+
+
 def _stt_levenshtein(left: list[str], right: list[str]) -> int:
     previous = list(range(len(right) + 1))
     for row_index, left_value in enumerate(left, start=1):
@@ -2974,19 +3045,15 @@ def stt_score_transcript(
             "reply": "STT score needs both a reference sentence and a recognized or pasted transcript.",
         }
 
-    reference_words = _stt_words(clean_reference)
-    transcript_words = _stt_words(clean_transcript)
-    reference_chars = list(_normalize_stt_text(clean_reference).replace(" ", ""))
-    transcript_chars = list(_normalize_stt_text(clean_transcript).replace(" ", ""))
-    word_distance = _stt_levenshtein(reference_words, transcript_words)
-    char_distance = _stt_levenshtein(reference_chars, transcript_chars)
-    word_error_rate = (word_distance / len(reference_words)) if reference_words else 0.0
-    word_accuracy = max(0.0, 1.0 - word_error_rate)
-    char_accuracy = max(0.0, 1.0 - (char_distance / len(reference_chars))) if reference_chars else 0.0
+    score = _stt_score_components(clean_reference, clean_transcript)
     reply = (
-        f"STT score: word accuracy {word_accuracy * 100:.1f}%, "
-        f"character accuracy {char_accuracy * 100:.1f}%, WER {word_error_rate:.3f}."
+        f"STT score: word accuracy {score['word_accuracy'] * 100:.1f}%, "
+        f"punctuation accuracy {score['punctuation_accuracy'] * 100:.1f}%, "
+        f"dictation quality {score['dictation_quality_score'] * 100:.1f}%, "
+        f"WER {score['word_error_rate']:.3f}."
     )
+    if score["punctuation_restoration_recommended"]:
+        reply += " Words are strong; downstream Jarvis models should treat this as dictated text and infer punctuation."
     if first_result_ms is not None:
         reply += f" First result {first_result_ms} ms."
     if final_result_ms is not None:
@@ -2996,13 +3063,21 @@ def stt_score_transcript(
         "status": "scored",
         "reference": clean_reference[:500],
         "transcript": clean_transcript[:500],
-        "reference_words": len(reference_words),
-        "transcript_words": len(transcript_words),
-        "word_distance": word_distance,
-        "char_distance": char_distance,
-        "word_error_rate": round(word_error_rate, 6),
-        "word_accuracy": round(word_accuracy, 6),
-        "character_accuracy": round(char_accuracy, 6),
+        "reference_words": score["reference_words"],
+        "transcript_words": score["transcript_words"],
+        "reference_punctuation_count": score["reference_punctuation_count"],
+        "transcript_punctuation_count": score["transcript_punctuation_count"],
+        "word_distance": score["word_distance"],
+        "char_distance": score["char_distance"],
+        "punctuation_distance": score["punctuation_distance"],
+        "word_error_rate": round(score["word_error_rate"], 6),
+        "word_accuracy": round(score["word_accuracy"], 6),
+        "character_accuracy": round(score["char_accuracy"], 6),
+        "punctuation_error_rate": round(score["punctuation_error_rate"], 6),
+        "punctuation_accuracy": round(score["punctuation_accuracy"], 6),
+        "command_readiness_score": round(score["command_readiness_score"], 6),
+        "dictation_quality_score": round(score["dictation_quality_score"], 6),
+        "punctuation_restoration_recommended": score["punctuation_restoration_recommended"],
         "reply": reply,
     }
 
@@ -3054,6 +3129,9 @@ def stt_recommendation_from_export(export_payload: Any) -> dict[str, Any]:
         definition = definitions.get(candidate_id, {})
         accuracy_values: list[float] = []
         wer_values: list[float] = []
+        punctuation_values: list[float] = []
+        dictation_values: list[float] = []
+        command_values: list[float] = []
         human_values: list[float] = []
         first_values: list[float] = []
         final_values: list[float] = []
@@ -3074,6 +3152,22 @@ def stt_recommendation_from_export(export_payload: Any) -> dict[str, Any]:
                 accuracy_values.append(_clamp_float(word_accuracy, 0.0, 1.0))
             if wer is not None:
                 wer_values.append(max(0.0, wer))
+            row_scores = _stt_scores_from_export_row(row)
+            punctuation_accuracy = _stt_number(row.get("punctuation_accuracy"))
+            if punctuation_accuracy is None:
+                punctuation_accuracy = row_scores.get("punctuation_accuracy")
+            if punctuation_accuracy is not None:
+                punctuation_values.append(_clamp_float(punctuation_accuracy, 0.0, 1.0))
+            dictation_quality = _stt_number(row.get("dictation_quality_score"))
+            if dictation_quality is None:
+                dictation_quality = row_scores.get("dictation_quality_score")
+            if dictation_quality is not None:
+                dictation_values.append(_clamp_float(dictation_quality, 0.0, 1.0))
+            command_score = _stt_number(row.get("command_readiness_score"))
+            if command_score is None:
+                command_score = row_scores.get("command_readiness_score")
+            if command_score is not None:
+                command_values.append(_clamp_float(command_score, 0.0, 1.0))
             human_score = _stt_number(row.get("human_score"))
             if human_score is not None:
                 human_values.append(_clamp_float(human_score, 0.0, 10.0))
@@ -3086,6 +3180,9 @@ def stt_recommendation_from_export(export_payload: Any) -> dict[str, Any]:
 
         avg_accuracy = _avg(accuracy_values)
         avg_wer = _avg(wer_values)
+        avg_punctuation = _avg(punctuation_values)
+        avg_dictation = _avg(dictation_values)
+        avg_command = _avg(command_values)
         avg_human = _avg(human_values)
         avg_first = _avg(first_values)
         avg_final = _avg(final_values)
@@ -3093,14 +3190,20 @@ def stt_recommendation_from_export(export_payload: Any) -> dict[str, Any]:
         latency_score = 0.5 if latency_basis is None else max(0.0, 1.0 - min(latency_basis, 3000.0) / 3000.0)
         privacy_score = _stt_privacy_score(definition)
         accuracy_component = avg_accuracy if avg_accuracy is not None else 0.0
+        command_component = avg_command if avg_command is not None else accuracy_component
+        dictation_component = avg_dictation if avg_dictation is not None else accuracy_component
         human_component = (avg_human / 10.0) if avg_human is not None else 0.5
         weighted_score = round(
-            accuracy_component * 0.55
-            + human_component * 0.25
+            command_component * 0.35
+            + dictation_component * 0.25
+            + human_component * 0.20
             + latency_score * 0.15
             + privacy_score * 0.05,
             6,
         )
+        punctuation_note = None
+        if avg_punctuation is not None and avg_accuracy is not None and avg_accuracy >= 0.95 and avg_punctuation < 0.25:
+            punctuation_note = "Words are strong, but punctuation is poor; tell the receiving model this is dictated text."
         ranked.append(
             {
                 "candidate_id": candidate_id,
@@ -3108,6 +3211,9 @@ def stt_recommendation_from_export(export_payload: Any) -> dict[str, Any]:
                 "row_count": len(candidate_rows),
                 "average_word_accuracy": None if avg_accuracy is None else round(avg_accuracy, 6),
                 "average_wer": None if avg_wer is None else round(avg_wer, 6),
+                "average_punctuation_accuracy": None if avg_punctuation is None else round(avg_punctuation, 6),
+                "average_command_readiness_score": None if avg_command is None else round(avg_command, 6),
+                "average_dictation_quality_score": None if avg_dictation is None else round(avg_dictation, 6),
                 "average_human_score": None if avg_human is None else round(avg_human, 3),
                 "average_first_result_ms": None if avg_first is None else round(avg_first, 1),
                 "average_final_result_ms": None if avg_final is None else round(avg_final, 1),
@@ -3115,7 +3221,8 @@ def stt_recommendation_from_export(export_payload: Any) -> dict[str, Any]:
                 "privacy": definition.get("privacy") or "unknown",
                 "expected_latency": definition.get("expected_latency") or "unknown",
                 "weighted_score": weighted_score,
-                "score_formula": "0.55 accuracy + 0.25 human score + 0.15 first/final latency + 0.05 privacy",
+                "score_formula": "0.35 command readiness + 0.25 dictation quality + 0.20 human score + 0.15 first/final latency + 0.05 privacy",
+                "punctuation_note": punctuation_note,
             }
         )
     ranked.sort(
@@ -3143,6 +3250,10 @@ def stt_recommendation_from_export(export_payload: Any) -> dict[str, Any]:
         reply += f" with average WER {recommended['average_wer']:.3f}"
     if recommended and recommended.get("average_human_score") is not None:
         reply += f" and human score {recommended['average_human_score']:.3f}"
+    if recommended and recommended.get("average_punctuation_accuracy") is not None:
+        reply += f"; punctuation accuracy {recommended['average_punctuation_accuracy']:.3f}"
+    if recommended and recommended.get("punctuation_note"):
+        reply += ". Words are fine, but the receiving model must know this is dictated text"
     if recommended:
         reply += "."
     return {
@@ -3195,6 +3306,14 @@ def _stt_export_rows(parsed: Any) -> list[dict[str, Any]]:
     else:
         rows = []
     return [row for row in rows if isinstance(row, dict)]
+
+
+def _stt_scores_from_export_row(row: dict[str, Any]) -> dict[str, Any]:
+    reference = _clean_local_field(row.get("reference"))
+    transcript = _clean_local_field(row.get("transcript"))
+    if not reference or not transcript:
+        return {}
+    return _stt_score_components(reference, transcript)
 
 
 def _stt_number(value: Any) -> float | None:
@@ -3271,6 +3390,7 @@ def stt_candidate_status() -> dict[str, Any]:
         f"Speech-recognition candidates: {len(candidates)} candidates are cataloged; "
         f"{audition_ready_count} can be auditioned with the current page/manual flow; "
         f"{installed_engine_count} local engine candidate{'s' if installed_engine_count != 1 else ''} appear installed. "
+        "Current auditions should compare word accuracy and punctuation quality separately. "
         "This check did not open a browser, record audio, request microphone permission, install anything, or send audio anywhere."
     )
     return {
@@ -3314,6 +3434,7 @@ def stt_audition_status() -> dict[str, Any]:
         "STT audition status: the local speech-recognition audition page is "
         f"{'available' if exists else 'not created yet'}. "
         "It can compare a reference sentence with a recognized or pasted transcript, score word accuracy, character accuracy, WER, first-result latency, and export JSON. "
+        "It now treats punctuation accuracy and dictation quality as separate metrics so perfect word recognition cannot hide missing commas or periods. "
         "This status check did not open a browser, record audio, request microphone permission, or send audio anywhere."
     )
     if exists:
@@ -3340,11 +3461,15 @@ def stt_audition_status() -> dict[str, Any]:
         "metrics": [
             "word_accuracy",
             "character_accuracy",
+            "punctuation_accuracy",
+            "command_readiness_score",
+            "dictation_quality_score",
             "word_error_rate",
             "first_result_ms",
             "final_result_ms",
             "human_score",
         ],
+        "punctuation_restoration_recommended": True,
         "requires_foreground_browser_for_live_test": True,
         "reply": reply,
     }
@@ -3372,9 +3497,10 @@ def stt_session_plan(candidate_id: str | None = None, reference_sentence: str | 
     steps = [
         "Open the local STT audition page when foreground browser activity is acceptable.",
         f"Select candidate {candidate or 'manual'} and read the reference sentence exactly once.",
-        "Capture first-result latency, final-result latency, recognized transcript, and Leo's 1-10 human score.",
+        "Capture first-result latency, final-result latency, recognized transcript, punctuation accuracy, dictation quality, and Leo's 1-10 human score.",
         "Save the row in the audition table and export JSON after at least three comparable candidates.",
-        "Compare WER first, then natural correction behavior, latency, and whether the engine stays local.",
+        "Compare command readiness for Jarvis commands, but compare dictation quality and punctuation separately before choosing a recognizer for long text.",
+        "If all candidates understand words but drop punctuation, keep the fastest acceptable STT and tell the receiving model that the command is dictated text.",
     ]
     reply = (
         f"STT audition plan prepared for {candidate or 'manual transcript paste'}: read one reference sentence, "
@@ -3411,6 +3537,9 @@ def stt_session_plan(candidate_id: str | None = None, reference_sentence: str | 
                 "word_error_rate",
                 "word_accuracy",
                 "character_accuracy",
+                "punctuation_accuracy",
+                "command_readiness_score",
+                "dictation_quality_score",
                 "first_result_ms",
                 "final_result_ms",
                 "human_score",
@@ -4112,7 +4241,7 @@ def _infer_workflow_target_app(goal: str) -> str:
 
 def permissions_status(bundle_path: Path | None = None) -> dict[str, Any]:
     """Report permission readiness without requesting permissions."""
-    app_bundle = bundle_path or (PROJECT_ROOT / "output" / "Jarvis.app")
+    app_bundle = bundle_path or _current_jarvis_bundle_path()
     info_plist = app_bundle / "Contents" / "Info.plist"
     plist: dict[str, Any] = {}
     plist_error: str | None = None
@@ -4230,7 +4359,7 @@ def overnight_work_status() -> dict[str, Any]:
     workboard_path = PROJECT_ROOT / "runtime" / "overnight_status" / "index.html"
     report_path = PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"
     stt_path = PROJECT_ROOT / "runtime" / "stt_audition" / "index.html"
-    bundle_path = PROJECT_ROOT / "output" / "Jarvis.app"
+    bundle_path = _current_jarvis_bundle_path()
     artifacts = {
         "workboard": _runtime_file_status(workboard_path),
         "morning_report": _runtime_file_status(report_path),
@@ -4245,14 +4374,16 @@ def overnight_work_status() -> dict[str, Any]:
     else:
         status = "missing"
     metadata = _bundle_metadata(bundle_path)
+    live_qa = _live_final_qa_evidence(bundle_path=bundle_path)
     requirement_audit = _overnight_requirement_audit(
         artifacts=artifacts,
         bundle_exists=bundle_path.exists(),
         bundle_metadata=metadata,
+        live_qa=live_qa,
     )
     reply = (
         "Overnight status: the workboard is "
-        f"{'available' if workboard_exists else 'missing'} and the morning report draft is "
+        f"{'available' if workboard_exists else 'missing'} and the morning report is "
         f"{'available' if report_exists else 'missing'}. "
         "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
         f"Workboard: {workboard_path}. Report: {report_path}."
@@ -4274,9 +4405,10 @@ def overnight_work_status() -> dict[str, Any]:
         "bundle_path": str(bundle_path),
         "bundle_exists": bundle_path.exists(),
         "bundle_metadata": metadata,
+        "live_qa": live_qa,
         "requirement_audit": requirement_audit,
-        "full_visual_qa_deferred": True,
-        "deferred_reason": "Leo has not said he is asleep; foreground browser and app checks could interrupt current work.",
+        "full_visual_qa_deferred": not bool(live_qa.get("complete")),
+        "deferred_reason": "" if bool(live_qa.get("complete")) else "Live foreground QA evidence is not complete yet.",
         "next_foreground_checks": [
             "Open the overnight workboard in a browser and visually inspect layout.",
             "Launch the rebuilt Jarvis app and check live startup/status text.",
@@ -4291,17 +4423,19 @@ def final_qa_plan_status() -> dict[str, Any]:
     workboard_path = PROJECT_ROOT / "runtime" / "overnight_status" / "index.html"
     report_path = PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"
     stt_path = PROJECT_ROOT / "runtime" / "stt_audition" / "index.html"
-    bundle_path = PROJECT_ROOT / "output" / "Jarvis.app"
+    bundle_path = _current_jarvis_bundle_path()
     artifacts = {
         "workboard": _runtime_file_status(workboard_path),
         "morning_report": _runtime_file_status(report_path),
         "stt_audition": _runtime_file_status(stt_path),
     }
     metadata = _bundle_metadata(bundle_path)
+    live_qa = _live_final_qa_evidence(bundle_path=bundle_path)
     requirement_audit = _overnight_requirement_audit(
         artifacts=artifacts,
         bundle_exists=bundle_path.exists(),
         bundle_metadata=metadata,
+        live_qa=live_qa,
     )
     checks = [
         {
@@ -4316,7 +4450,7 @@ def final_qa_plan_status() -> dict[str, Any]:
             "status": "deferred",
             "requires_foreground": True,
             "surface": str(report_path),
-            "proof_needed": "Open the report draft and verify the latest commit, bundle, tests, and remaining-risk sections are readable.",
+            "proof_needed": "Open the morning report and verify the latest commit, bundle, tests, and remaining-risk sections are readable.",
         },
         {
             "id": "stt_audition_visual_qa",
@@ -4347,17 +4481,38 @@ def final_qa_plan_status() -> dict[str, Any]:
             "proof_needed": "Run the full safe verifier against the live worker and record the latest report path.",
         },
     ]
+    live_checks = {check.get("id"): check for check in live_qa.get("checks", []) if isinstance(check, dict)}
+    for check in checks:
+        live_check = live_checks.get(check["id"])
+        if live_check and live_check.get("status") == "completed":
+            check.update(
+                {
+                    "status": "completed",
+                    "evidence": live_check.get("evidence"),
+                    "completed_at": live_check.get("completed_at"),
+                }
+            )
     ready_artifacts = sum(1 for artifact in artifacts.values() if artifact.get("exists"))
-    reply = (
-        f"Final QA plan: {ready_artifacts}/{len(artifacts)} local HTML artifacts are present and "
-        f"the bundle is {'available' if bundle_path.exists() else 'missing'}. "
-        "Foreground visual checks and app relaunch remain deferred until Leo says they will not interrupt his work. "
-        "I did not open a browser, launch Jarvis, capture the screen, record audio, or run the verifier."
-    )
+    completed_checks = sum(1 for check in checks if check["status"] == "completed")
+    if completed_checks == len(checks):
+        status = "completed"
+        reply = (
+            f"Final QA status: {completed_checks}/{len(checks)} checks have evidence. "
+            "The local HTML surfaces have visual screenshots, the rebuilt Jarvis app is live from bundled resources, "
+            "live preflight is green, and the latest safe verifier passed."
+        )
+    else:
+        status = "deferred"
+        reply = (
+            f"Final QA plan: {ready_artifacts}/{len(artifacts)} local HTML artifacts are present and "
+            f"the bundle is {'available' if bundle_path.exists() else 'missing'}. "
+            "Some foreground/live evidence remains incomplete. "
+            "This diagnostic did not open a browser, launch Jarvis, capture the screen, record audio, or run the verifier."
+        )
     return {
         "tool": "diagnostics.final_qa",
         "executed": True,
-        "status": "deferred",
+        "status": status,
         "read_private_content": False,
         "opened_browser": False,
         "launched_app": False,
@@ -4370,11 +4525,190 @@ def final_qa_plan_status() -> dict[str, Any]:
         "bundle_exists": bundle_path.exists(),
         "bundle_metadata": metadata,
         "artifacts": artifacts,
+        "live_qa": live_qa,
         "requirement_audit": requirement_audit,
         "checks": checks,
-        "next_safe_terminal_step": "Keep implementing code-only diagnostics or tests until foreground QA is allowed.",
+        "next_safe_terminal_step": "Review any checks that remain incomplete." if status != "completed" else "No terminal-only final QA checks remain.",
         "reply": reply,
     }
+
+
+def _live_final_qa_evidence(*, bundle_path: Path) -> dict[str, Any]:
+    screenshot_paths = {
+        "workboard_visual_qa": PROJECT_ROOT / "output" / "playwright" / "jarvis-overnight-workboard-20260607.png",
+        "morning_report_visual_qa": PROJECT_ROOT / "output" / "playwright" / "jarvis-morning-report-20260607.png",
+        "stt_audition_visual_qa": PROJECT_ROOT / "output" / "playwright" / "jarvis-stt-audition-20260607.png",
+    }
+    checks: list[dict[str, Any]] = []
+    for check_id, path in screenshot_paths.items():
+        status = _runtime_file_status(path)
+        completed = bool(status.get("exists")) and int(status.get("bytes") or 0) > 0
+        checks.append(
+            {
+                "id": check_id,
+                "status": "completed" if completed else "pending",
+                "evidence": str(path),
+                "completed_at": status.get("modified_at") if completed else None,
+                "details": status,
+            }
+        )
+
+    app_process = _pgrep_exact("jarvis-menu-bar", timeout_seconds=1.0)
+    health = _loopback_json("/api/health", timeout_seconds=2.0)
+    source = ""
+    worker_pid = None
+    if isinstance(health.get("data"), dict):
+        runtime = health["data"].get("status", {}).get("runtime", {})
+        if isinstance(runtime, dict):
+            source = str(runtime.get("source") or "")
+            worker_pid = runtime.get("pid")
+    bundled_root = str((bundle_path / "Contents" / "Resources" / "JarvisWorker").resolve())
+    bundled_worker = source.startswith(bundled_root)
+    source_bundle = _enclosing_app_bundle(Path(source)) if source else None
+    source_bundle_matches = source_bundle == str(bundle_path.resolve())
+    app_live = bool(health.get("ok")) and bundled_worker and (
+        bool(app_process.get("running")) or source_bundle_matches
+    )
+    checks.append(
+        {
+            "id": "jarvis_app_relaunch",
+            "status": "completed" if app_live else "pending",
+            "evidence": f"app_process={app_process.get('pids')}, worker_pid={worker_pid}, source={source}",
+            "completed_at": _now_iso() if app_live else None,
+            "details": {
+                "app_process": app_process,
+                "health": health,
+                "bundled_worker": bundled_worker,
+                "source_bundle": source_bundle,
+                "source_bundle_matches": source_bundle_matches,
+            },
+        }
+    )
+
+    tool_surface = _loopback_json("/api/tools", timeout_seconds=5.0)
+    required_tools = _live_preflight_required_tool_ids()
+    tool_rows = tool_surface.get("data", {}).get("tools", []) if isinstance(tool_surface.get("data"), dict) else []
+    tool_ids = {str(tool.get("id") or "") for tool in tool_rows if isinstance(tool, dict)}
+    required_total = len(required_tools)
+    required_passed = len(required_tools.intersection(tool_ids))
+    preflight_ok = bool(tool_surface.get("ok")) and required_total > 0 and required_passed == required_total
+    checks.append(
+        {
+            "id": "live_preflight",
+            "status": "completed" if preflight_ok else "pending",
+            "evidence": f"required {required_passed}/{required_total}",
+            "completed_at": _now_iso() if preflight_ok else None,
+            "details": {
+                "endpoint": "/api/tools",
+                "tool_surface": tool_surface,
+                "required_missing": sorted(required_tools - tool_ids),
+            },
+        }
+    )
+
+    verification = _latest_safe_verification_evidence()
+    checks.append(
+        {
+            "id": "full_safe_verifier",
+            "status": "completed" if verification.get("ok") else "pending",
+            "evidence": verification.get("summary"),
+            "completed_at": verification.get("completed_at"),
+            "details": verification,
+        }
+    )
+    return {
+        "complete": all(check["status"] == "completed" for check in checks),
+        "checks": checks,
+    }
+
+
+def _loopback_json(path: str, *, timeout_seconds: float) -> dict[str, Any]:
+    url = f"http://127.0.0.1:8765{path}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
+        return {"ok": False, "url": url, "error": str(error)}
+    return {"ok": bool(data.get("ok", True)), "url": url, "data": data}
+
+
+def _live_preflight_required_tool_ids() -> set[str]:
+    return {
+        "planner.preview",
+        "system.status",
+        "shell.read_only",
+        "terminal.read_only",
+        "workflow.app_task_plan",
+        "files.search",
+        "app.availability",
+        "app.list",
+        "app.status",
+        "app.running",
+        "app.quit",
+        "screen.ocr",
+        "ui.automation",
+        "diagnostics.overnight",
+        "diagnostics.final_qa",
+        "diagnostics.model_context",
+        "voice.stop_speaking",
+        "diagnostics.tool_catalog",
+        "tools.deep_catalog",
+        "tools.handoff_plan",
+        "diagnostics.permissions",
+        "memory.daily_summary",
+        "voice.stt_candidates",
+        "voice.stt_session_plan",
+        "voice.session_plan",
+        "voice.stt_score",
+        "voice.stt_recommendation",
+        "voice.loop_simulation",
+        "voice.wake_simulation",
+        "safety.injection_scan",
+        "diagnostics.codex_chats",
+        "codex.chat_plan",
+        "codex.activity",
+        "codex.delegate",
+        "codex.job",
+        "policy.pause",
+        "policy.confirmation",
+        "policy.strong_confirmation",
+    }
+
+
+def _latest_safe_verification_evidence() -> dict[str, Any]:
+    reports = sorted((PROJECT_ROOT / "runtime" / "verification").glob("verify-safe-*.json"))
+    if not reports:
+        return {"ok": False, "summary": "No safe verifier report found.", "path": None}
+    latest = reports[-1]
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {"ok": False, "summary": f"{latest}: unreadable ({error})", "path": str(latest)}
+    results = data.get("results", [])
+    passed = sum(1 for result in results if isinstance(result, dict) and result.get("passed"))
+    total = len(results) if isinstance(results, list) else 0
+    ok = bool(data.get("ok")) and total > 0 and passed == total
+    relative = str(latest.relative_to(PROJECT_ROOT)) if latest.is_relative_to(PROJECT_ROOT) else str(latest)
+    completed_at = _timestamp_to_iso(data.get("completed_at") or data.get("generated_at") or latest.stat().st_mtime)
+    return {
+        "ok": ok,
+        "path": relative,
+        "passed": passed,
+        "total": total,
+        "completed_at": completed_at,
+        "summary": f"{relative} passed {passed}/{total}" if ok else f"{relative} failed {passed}/{total}",
+    }
+
+
+def _timestamp_to_iso(value: Any) -> str | None:
+    try:
+        return datetime.fromtimestamp(float(value)).isoformat(timespec="seconds")
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def _overnight_requirement_audit(
@@ -4382,14 +4716,22 @@ def _overnight_requirement_audit(
     artifacts: dict[str, dict[str, Any]],
     bundle_exists: bool,
     bundle_metadata: dict[str, Any] | None,
+    live_qa: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     html_ready = all(bool(artifacts.get(key, {}).get("exists")) for key in ("workboard", "morning_report", "stt_audition"))
     version = str(bundle_metadata.get("version") or "unknown") if bundle_metadata else "unknown"
     build = str(bundle_metadata.get("build") or "unknown") if bundle_metadata else "unknown"
+    live_checks = {check.get("id"): check for check in (live_qa or {}).get("checks", []) if isinstance(check, dict)}
+    html_visual_verified = all(
+        live_checks.get(check_id, {}).get("status") == "completed"
+        for check_id in ("workboard_visual_qa", "morning_report_visual_qa", "stt_audition_visual_qa")
+    )
+    app_live_verified = live_checks.get("jarvis_app_relaunch", {}).get("status") == "completed"
+    verifier_verified = live_checks.get("full_safe_verifier", {}).get("status") == "completed"
     return [
         {
             "id": "stronger_layered_tool_loop",
-            "status": "implemented_terminal_verified",
+            "status": "implemented_live_verified" if verifier_verified else "implemented_terminal_verified",
             "evidence": [
                 "fast first-model tool-call contract",
                 "tools.more middle planner",
@@ -4397,13 +4739,13 @@ def _overnight_requirement_audit(
                 "low-confidence clarification",
                 "diagnostics.model_context trace",
             ],
-            "remaining": "Foreground live-app QA is deferred.",
+            "remaining": "Live verifier evidence is present." if verifier_verified else "Foreground live-app QA is deferred.",
         },
         {
             "id": "app_opening_groundwork",
-            "status": "implemented_terminal_verified",
+            "status": "implemented_live_verified" if app_live_verified else "implemented_terminal_verified",
             "evidence": ["app.open", "app.list", "app.status", "app.running", "app.quit confirmation plan"],
-            "remaining": "Live app launch/focus QA is deferred.",
+            "remaining": "Live app launch/focus QA is complete." if app_live_verified else "Live app launch/focus QA is deferred.",
         },
         {
             "id": "safe_terminal_groundwork",
@@ -4419,15 +4761,15 @@ def _overnight_requirement_audit(
         },
         {
             "id": "morning_report",
-            "status": "prepared" if html_ready else "partial",
+            "status": "prepared_live_verified" if html_visual_verified else ("prepared" if html_ready else "partial"),
             "evidence": ["runtime/overnight_status/index.html", "runtime/overnight_status/report.html", "loopback HTML checks"],
-            "remaining": "Foreground visual QA is deferred.",
+            "remaining": "Visual HTML QA is complete." if html_visual_verified else "Foreground visual QA is deferred.",
         },
         {
             "id": "rebuilt_bundle",
-            "status": "available" if bundle_exists else "missing",
+            "status": "available_live_verified" if app_live_verified else ("available" if bundle_exists else "missing"),
             "evidence": [f"version {version}", f"build {build}"],
-            "remaining": "Live app relaunch is deferred.",
+            "remaining": "Live app relaunch is complete." if app_live_verified else "Live app relaunch is deferred.",
         },
     ]
 
@@ -4538,7 +4880,7 @@ def capabilities_status() -> dict[str, Any]:
         {
             "id": "overnight_workboard",
             "status": "working" if (PROJECT_ROOT / "runtime" / "overnight_status" / "index.html").exists() else "not_built",
-            "summary": "The overnight progress workboard and report draft have a read-only status route so Jarvis can show their paths without opening anything.",
+            "summary": "The overnight progress workboard and morning report have a read-only status route so Jarvis can show their paths without opening anything.",
             "test_prompt": "overnight status",
             "needs_leo": False,
         },
@@ -7306,6 +7648,7 @@ def _fast_chat_system_prompt(tool_specs: list[dict[str, Any]] | None = None) -> 
         "Follow Leo's requested output format, including exact text or bullet counts. "
         "Your visible words may be displayed in the Jarvis chat and spoken aloud, so keep them natural, voice-friendly, and concise. "
         "Avoid raw URLs, opaque IDs, markdown-heavy formatting, and internal routing words unless Leo explicitly asks for technical detail. "
+        "Leo's latest message may be raw speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended punctuation and wording from context without adding new meaning. "
         "Be useful and natural. Do not claim you performed computer actions unless a tool result is given to you. "
         "Do not invent schedule, email, weather, app, file, or system facts. "
         "Use the conversation history to resolve follow-ups, pronouns, and answers to earlier questions. "

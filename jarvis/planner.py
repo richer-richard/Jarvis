@@ -101,7 +101,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "diagnostics.overnight",
-        "description": "Report the overnight workboard, morning report draft, and deferred QA paths without opening apps or browsers.",
+        "description": "Report the overnight workboard, morning report, and deferred QA paths without opening apps or browsers.",
         "entities": [],
     },
     {
