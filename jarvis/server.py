@@ -660,6 +660,8 @@ def _should_auto_speak(data: dict[str, Any]) -> bool:
         "conversation.fast_local",
         "outlook.visible_summary",
         "quick.local_control",
+        "system.status",
+        "diagnostics.device",
     }
 
 

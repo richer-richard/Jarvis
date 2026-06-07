@@ -6252,7 +6252,53 @@ class RuntimeSurfaceTests(unittest.TestCase):
             ],
         )
 
-    def test_diagnostics_do_not_auto_speak(self):
+    def test_status_auto_speaks_visible_final_reply(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final"}) as speak_mock:
+                result = server.command("status")
+
+        self.assertEqual(result["tool"], "system.status")
+        self.assertEqual(result["speech"]["reason"], "final")
+        self.assertIn("Jarvis", speak_mock.call_args.args[0])
+        self.assertIn("build", speak_mock.call_args.args[0])
+
+    def test_streamed_status_speaks_status_then_final_reply(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async", side_effect=lambda text, *, reason: {"spoken": True, "status": "queued", "reason": reason, "text": text}) as speak_mock:
+                events = list(server.stream_command("status"))
+
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["speech"]["reason"], "status")
+        self.assertEqual(events[-1]["data"]["speech"]["reason"], "final")
+        self.assertEqual(speak_mock.call_args_list[0].kwargs["reason"], "status")
+        self.assertEqual(speak_mock.call_args_list[1].kwargs["reason"], "final")
+        self.assertIn("Jarvis", speak_mock.call_args_list[1].args[0])
+
+    def test_device_status_auto_speaks_final_reply(self):
+        fake_status = {
+            "tool": "diagnostics.device",
+            "status": "checked",
+            "executed": True,
+            "read_private_content": False,
+            "changed_system_state": False,
+            "reply": "Device status: test Mac profile.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.planner.device_status", return_value=fake_status), \
+                 patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final"}) as speak_mock:
+                result = server.command("what Mac is this?")
+
+        self.assertEqual(result["tool"], "diagnostics.device")
+        self.assertEqual(result["speech"]["reason"], "final")
+        speak_mock.assert_called_once_with("Device status: test Mac profile.", reason="final")
+
+    def test_other_diagnostics_do_not_auto_speak(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             server = JarvisServer()
             server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
