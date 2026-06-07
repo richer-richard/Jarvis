@@ -5429,6 +5429,10 @@ def git_remote_status() -> dict[str, Any]:
         reply += " I do not see a remote tracking ref for this branch."
     if desktop_blocker:
         reply += " GitHub Desktop's Fetch button cannot reconcile this because the local branch is unpublished locally but a same-named remote branch exists with unrelated older history."
+        reply += (
+            f" Safe plan: publish this full-root local history to a new remote branch named {safe_branch_name}. "
+            "Replacing the same-named remote branch would require explicit approval and --force-with-lease."
+        )
     reply += " This diagnostic did not fetch, push, merge, rebase, or change Git settings."
     return {
         **base,

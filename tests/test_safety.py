@@ -6239,6 +6239,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(result["publish_plan"]["replace_option"]["requires_explicit_approval"])
         self.assertIn("--force-with-lease", result["publish_plan"]["replace_option"]["command"])
         self.assertIn("GitHub Desktop", result["reply"])
+        self.assertIn("new remote branch named codex/jarvis-reliability-hardening-full-root", result["reply"])
+        self.assertIn("explicit approval and --force-with-lease", result["reply"])
 
     def test_codex_continue_job_does_not_persist_sensitive_followup(self):
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
