@@ -342,6 +342,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Reports the configured fast chat model, fallback route, timeout, and latest first-visible latency evidence without calling a model.",
             },
             {
+                "id": "diagnostics.device",
+                "label": "Device Status",
+                "mode": "read_only",
+                "risk": "local_system_metadata",
+                "available": True,
+                "description": "Reports local Mac model, chip, memory, storage, battery, and Jarvis bundle/source identity without reading private content or changing settings.",
+            },
+            {
                 "id": "diagnostics.model_context",
                 "label": "Model Context Preview",
                 "mode": "read_only",
@@ -10333,6 +10341,82 @@ def _command_output(args: list[str]) -> str:
     except (OSError, subprocess.TimeoutExpired) as exc:
         return str(exc)
     return (completed.stdout or completed.stderr).strip()
+
+
+def _sysctl_value(name: str) -> str | None:
+    sysctl = _find_executable("sysctl") or "/usr/sbin/sysctl"
+    if not Path(sysctl).exists():
+        return None
+    value = _command_output([sysctl, "-n", name]).strip()
+    if not value or "no such file" in value.lower():
+        return None
+    return value
+
+
+def _cpu_description() -> str:
+    brand = _sysctl_value("machdep.cpu.brand_string")
+    if brand and brand not in {"0", "1"}:
+        return brand
+    arm64 = _sysctl_value("hw.optional.arm64")
+    if arm64 == "1" or platform.machine() == "arm64":
+        return "Apple Silicon"
+    return platform.processor() or platform.machine() or "unknown"
+
+
+def device_status() -> dict[str, Any]:
+    memory_bytes = _safe_int(_sysctl_value("hw.memsize"))
+    model_identifier = _sysctl_value("hw.model") or "unknown"
+    cpu = _cpu_description()
+    macos_version = platform.mac_ver()[0] or platform.platform()
+    storage = _storage_status()
+    battery = _battery_status()
+    bundle_path = _current_jarvis_bundle_path()
+    bundle_metadata = _bundle_metadata(bundle_path)
+    worker = _worker_process_context()
+    memory_text = _human_bytes(memory_bytes) if memory_bytes is not None else "unknown memory"
+    storage_text = "storage unavailable"
+    if storage.get("status") == "completed":
+        free_bytes = _safe_int(storage.get("free_bytes"))
+        total_bytes = _safe_int(storage.get("total_bytes"))
+        if free_bytes is not None and total_bytes is not None:
+            storage_text = f"{_human_bytes(free_bytes)} free of {_human_bytes(total_bytes)}"
+        else:
+            storage_text = str(storage.get("reply") or "storage checked")
+    battery_text = "battery unavailable"
+    if battery.get("status") == "completed":
+        battery_text = f"{battery.get('battery_percent')}% {battery.get('power_state')}"
+        if battery.get("time_remaining"):
+            battery_text = f"{battery_text}, {battery['time_remaining']} remaining"
+    source_kind = "bundled app resources" if "/Contents/Resources/JarvisWorker/" in worker["source"] else "project source"
+    reply = (
+        f"Device status: macOS {macos_version} on {model_identifier}; {cpu}; "
+        f"{memory_text} memory; {storage_text}; {battery_text}. "
+        f"Jarvis worker source is {source_kind}."
+    )
+    return {
+        "tool": "diagnostics.device",
+        "status": "checked",
+        "executed": True,
+        "read_private_content": False,
+        "changed_system_state": False,
+        "platform": platform.platform(),
+        "macos_version": macos_version,
+        "machine": platform.machine(),
+        "model_identifier": model_identifier,
+        "cpu": cpu,
+        "memory_bytes": memory_bytes,
+        "memory_human": memory_text,
+        "storage": storage,
+        "battery": battery,
+        "jarvis": {
+            "bundle_path": str(bundle_path),
+            "bundle_metadata": bundle_metadata,
+            "worker_source": worker["source"],
+            "worker_source_kind": source_kind,
+            "pid": worker["pid"],
+        },
+        "reply": reply,
+    }
 
 
 def _git_read_only_command(args: list[str]) -> dict[str, Any]:

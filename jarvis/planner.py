@@ -30,6 +30,7 @@ from .tools import (
     codex_delegate_plan,
     daily_memory_summary,
     deep_tool_catalog_status,
+    device_status,
     email_backend_status,
     elevation_status,
     fast_model_status,
@@ -102,6 +103,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "diagnostics.email",
         "description": "Report email backend or route readiness without reading email content.",
         "entities": [],
+    },
+    {
+        "tool": "diagnostics.device",
+        "description": "Report the local Mac and Jarvis runtime profile: Mac model, chip, memory, storage, battery, bundle, and worker source. Use when the user asks what computer Jarvis is running on or asks for device/computer/Mac hardware status.",
+        "entities": [],
+        "examples": [
+            'Yes sir, checking this Mac now. \\tool({"tool":"diagnostics.device","entities":{}})',
+        ],
     },
     {
         "tool": "diagnostics.overnight",
@@ -548,6 +557,8 @@ class Planner:
             return self._result(text, "diagnostics.latency", "Read local fast-latency status.", assessment, latest_latency_status(), True)
         if _looks_like_fast_model_status(lower):
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
+        if _looks_like_device_status(lower):
+            return self._result(text, "diagnostics.device", "Read local device status.", assessment, device_status(), True)
         if _looks_like_deep_tool_catalog_status(lower):
             return self._result(text, "tools.deep_catalog", "Read layered deep tool catalog.", assessment, deep_tool_catalog_status(NATURAL_LANGUAGE_TOOL_SPECS), True)
         if _looks_like_tool_handoff_plan(lower):
@@ -768,6 +779,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.latency", assessment, True)
         if _looks_like_fast_model_status(lower):
             return self._preview_result(text, "diagnostics.fast_model", assessment, True)
+        if _looks_like_device_status(lower):
+            return self._preview_result(text, "diagnostics.device", assessment, True)
         if _looks_like_deep_tool_catalog_status(lower):
             return self._preview_result(text, "tools.deep_catalog", assessment, True)
         if _looks_like_tool_catalog_status(lower):
@@ -880,6 +893,10 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "diagnostics.email", assessment, True, plan={"intent": intent})
             return self._result(text, "diagnostics.email", "Read local email backend status without reading email content.", assessment, email_backend_status(), True)
+        if selected_tool == "diagnostics.device":
+            if not execute:
+                return self._preview_result(text, "diagnostics.device", assessment, True, plan={"intent": intent})
+            return self._result(text, "diagnostics.device", "Read local device status.", assessment, device_status(), True)
         if selected_tool == "diagnostics.overnight":
             if not execute:
                 return self._preview_result(text, "diagnostics.overnight", assessment, True, plan={"intent": intent})
@@ -2128,6 +2145,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
     labels = {
         "outlook.visible_summary": "Yes sir, checking your email now.",
         "diagnostics.email": "Yes sir, checking the email setup now.",
+        "diagnostics.device": "Yes sir, checking this Mac now.",
         "diagnostics.overnight": "Yes sir, checking the overnight workboard now.",
         "diagnostics.final_qa": "Yes sir, checking the final QA plan now.",
         "diagnostics.model_context": "Yes sir, checking the model context now.",
@@ -2208,6 +2226,34 @@ def _looks_like_fast_model_status(lower: str) -> bool:
         any(cue in lower for cue in model_cues)
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_device_status(lower: str) -> bool:
+    text = re.sub(r"\s+", " ", lower).strip()
+    exact = {
+        "device status",
+        "computer status",
+        "mac status",
+        "hardware status",
+        "machine status",
+        "device profile",
+        "computer profile",
+        "mac profile",
+        "hardware profile",
+        "machine profile",
+    }
+    if text in exact:
+        return True
+    if re.search(r"\b(what|which)\s+(mac|computer|machine|device)\b", text):
+        return True
+    if re.search(r"\b(this|my)\s+(mac|computer|machine|device)\b", text) and re.search(
+        r"\b(model|chip|cpu|memory|ram|storage|battery|profile|status|specs|specifications)\b",
+        text,
+    ):
+        return True
+    return bool(
+        re.search(r"\b(mac|computer|machine|device|hardware)\s+(profile|specs|specifications|status)\b", text)
     )
 
 

@@ -70,6 +70,7 @@ from jarvis.tools import (
     codex_delegate_plan,
     daily_memory_summary,
     deep_tool_catalog_status,
+    device_status,
     email_backend_status,
     elevation_status,
     fast_model_status,
@@ -383,6 +384,8 @@ class PlannerTests(unittest.TestCase):
             "what requires confirmation": "diagnostics.safety",
             "what model are you using": "diagnostics.fast_model",
             "model status": "diagnostics.fast_model",
+            "what Mac is this": "diagnostics.device",
+            "device profile": "diagnostics.device",
             "model inputs for hello Jarvis": "diagnostics.model_context",
             "what do you feed the first model for 'hello Jarvis'": "diagnostics.model_context",
             "stop talking": "voice.stop_speaking",
@@ -2008,6 +2011,89 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result["groq_key_configured"])
         self.assertIn("max first visible 0.700s", result["reply"])
         self.assertIn("Normal conversation uses this route, not Codex", result["reply"])
+
+    def test_device_status_routes_before_generic_status(self):
+        fake_status = {
+            "tool": "diagnostics.device",
+            "status": "checked",
+            "executed": True,
+            "read_private_content": False,
+            "changed_system_state": False,
+            "reply": "Device status: test Mac.",
+        }
+        with patch("jarvis.planner.device_status", return_value=fake_status) as status_mock:
+            result = Planner().handle("what Mac is this?")
+
+        self.assertEqual(result.tool, "diagnostics.device")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["reply"], "Device status: test Mac.")
+        status_mock.assert_called_once_with()
+        self.assertEqual(Planner().handle("Jarvis status").tool, "system.status")
+
+    def test_model_selected_device_status_executes(self):
+        fake_status = {
+            "tool": "diagnostics.device",
+            "status": "checked",
+            "executed": True,
+            "read_private_content": False,
+            "changed_system_state": False,
+            "reply": "Device status: selected by model.",
+        }
+        with patch("jarvis.planner.device_status", return_value=fake_status) as status_mock:
+            result = Planner().handle_selected_tool("Tell me about this computer.", "diagnostics.device", {})
+
+        self.assertEqual(result.tool, "diagnostics.device")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["reply"], "Device status: selected by model.")
+        status_mock.assert_called_once_with()
+
+    def test_device_status_reads_local_metadata_without_private_content(self):
+        storage = {
+            "status": "completed",
+            "total_bytes": 512 * 1024 * 1024 * 1024,
+            "free_bytes": 250 * 1024 * 1024 * 1024,
+        }
+        battery = {
+            "status": "completed",
+            "battery_percent": 87,
+            "power_state": "charging",
+            "time_remaining": None,
+        }
+        worker = {
+            "source": "/Applications/Jarvis.app/Contents/Resources/JarvisWorker/jarvis/tools.py",
+            "pid": 1234,
+        }
+
+        def fake_sysctl(name: str) -> str | None:
+            return {
+                "hw.memsize": str(16 * 1024 * 1024 * 1024),
+                "hw.model": "Mac16,1",
+                "machdep.cpu.brand_string": "",
+                "hw.optional.arm64": "1",
+            }.get(name)
+
+        with patch("jarvis.tools._sysctl_value", side_effect=fake_sysctl), \
+             patch("jarvis.tools.platform.mac_ver", return_value=("15.5", ("", "", ""), "arm64")), \
+             patch("jarvis.tools.platform.machine", return_value="arm64"), \
+             patch("jarvis.tools.platform.platform", return_value="macOS-15.5-arm64"), \
+             patch("jarvis.tools._storage_status", return_value=storage), \
+             patch("jarvis.tools._battery_status", return_value=battery), \
+             patch("jarvis.tools._worker_process_context", return_value=worker), \
+             patch("jarvis.tools._current_jarvis_bundle_path", return_value=Path("/Applications/Jarvis.app")), \
+             patch("jarvis.tools._bundle_metadata", return_value={"version": "0.1.211", "build": "211"}):
+            result = device_status()
+
+        self.assertEqual(result["tool"], "diagnostics.device")
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["changed_system_state"])
+        self.assertEqual(result["model_identifier"], "Mac16,1")
+        self.assertEqual(result["cpu"], "Apple Silicon")
+        self.assertEqual(result["memory_human"], "16.0 GB")
+        self.assertEqual(result["storage"], storage)
+        self.assertEqual(result["battery"], battery)
+        self.assertEqual(result["jarvis"]["worker_source_kind"], "bundled app resources")
+        self.assertIn("macOS 15.5", result["reply"])
+        self.assertIn("16.0 GB memory", result["reply"])
 
     def test_remote_worker_status_uses_bounded_ssh_probe(self):
         completed = subprocess.CompletedProcess(

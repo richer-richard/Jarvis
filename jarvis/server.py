@@ -598,6 +598,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "diagnostics.git": "Yes sir, checking the GitHub branch state now.",
         "diagnostics.app_identity": "Yes sir, checking app identity now.",
         "diagnostics.fast_model": "Yes sir, checking the model setup now.",
+        "diagnostics.device": "Yes sir, checking this Mac now.",
         "diagnostics.memory": "Yes sir, checking Jarvis memory now.",
         "memory.daily_summary": "Yes sir, checking today's memory summary now.",
         "diagnostics.model_context": "Yes sir, checking the model context now.",
