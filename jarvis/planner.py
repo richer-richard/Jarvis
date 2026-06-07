@@ -10,6 +10,7 @@ from .safety import DANGEROUS_SHELL_TOKENS, READ_ONLY_SHELL_COMMANDS, VERSION_ON
 from .wake import detect_wake_command
 from .tools import (
     app_availability,
+    app_focus,
     app_frontmost,
     app_identity_status,
     app_list,
@@ -210,7 +211,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "app.open",
-        "description": "Open or focus a local macOS app when the user asks to launch, open, or bring up an app.",
+        "description": "Open a local macOS app when the user asks to launch, open, or bring up an app.",
         "entities": ["app_name"],
         "entity_details": {
             "app_name": "The user-facing app name, such as Microsoft Outlook, Google Chrome, Microsoft Teams, Word, PowerPoint, Excel, Safari, Mail, Finder, or Codex.",
@@ -218,6 +219,18 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "examples": [
             'Yes sir, opening Outlook now. \\tool({"tool":"app.open","entities":{"app_name":"Microsoft Outlook"}})',
             'Yes sir, opening Teams now. \\tool({"tool":"app.open","entities":{"app_name":"Microsoft Teams"}})',
+        ],
+    },
+    {
+        "tool": "app.focus",
+        "description": "Focus or switch to an already-running local macOS app without launching it or reading app content.",
+        "entities": ["app_name"],
+        "entity_details": {
+            "app_name": "The user-facing app name, such as Microsoft Outlook, Google Chrome, Microsoft Teams, Word, PowerPoint, Excel, Safari, Mail, Finder, or Codex.",
+        },
+        "examples": [
+            'Yes sir, switching to Outlook now. \\tool({"tool":"app.focus","entities":{"app_name":"Microsoft Outlook"}})',
+            'Yes sir, focusing Teams now. \\tool({"tool":"app.focus","entities":{"app_name":"Microsoft Teams"}})',
         ],
     },
     {
@@ -282,7 +295,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "description": "Ask Jarvis's smarter middle model for a broader plan when the first tool list is insufficient, especially for multi-app workflows, UI automation, future capabilities, or complex tasks that need more context before execution. Set execute_safe_recommendation true only when the user asked Jarvis to take action and it is okay for Jarvis to immediately run a small safe follow-up such as opening an app or running an allowlisted read-only terminal command.",
         "entities": ["execute_safe_recommendation"],
         "entity_details": {
-            "execute_safe_recommendation": "Boolean. True only for action requests where Jarvis may immediately follow through on app.open or terminal.read_only after the middle planner chooses one; protected, private, Codex, browser, future, or confirmation-required routes remain preview-only.",
+            "execute_safe_recommendation": "Boolean. True only for action requests where Jarvis may immediately follow through on app.open, app.focus, or terminal.read_only after the middle planner chooses one; protected, private, Codex, browser, future, or confirmation-required routes remain preview-only.",
         },
     },
     {
@@ -612,6 +625,11 @@ class Planner:
         app_status_name = _extract_app_status_name(text)
         if app_status_name is not None:
             return self._result(text, "app.status", "Checked local app status.", assessment, app_status(app_status_name), True)
+        app_focus_name = _extract_app_focus_name(text)
+        if app_focus_name is not None:
+            result = app_focus(app_focus_name)
+            summary = "Focused local app." if result.get("status") == "focused" else "Tried to focus local app."
+            return self._result(text, "app.focus", summary, assessment, result, bool(result.get("executed")))
         app_open_name = _extract_app_open_name(text)
         if app_open_name is not None:
             result = app_open(app_open_name)
@@ -821,6 +839,9 @@ class Planner:
                 True,
                 plan={"app_name": app_status_name, "would_check_running_processes": True, "planned_only": True},
             )
+        app_focus_name = _extract_app_focus_name(text)
+        if app_focus_name is not None:
+            return self._preview_result(text, "app.focus", assessment, True, plan=app_focus(app_focus_name, execute=False))
         app_open_name = _extract_app_open_name(text)
         if app_open_name is not None:
             return self._preview_result(text, "app.open", assessment, True, plan=app_open(app_open_name, execute=False))
@@ -989,6 +1010,13 @@ class Planner:
             result = app_open(app_name)
             summary = "Opened local app." if result.get("status") == "opened" else "Tried to open local app."
             return self._result(text, "app.open", summary, assessment, result, bool(result.get("executed")))
+        if selected_tool == "app.focus":
+            app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_focus_name(text) or _extract_app_name(text) or ""
+            if not execute:
+                return self._preview_result(text, "app.focus", assessment, True, plan={"intent": intent, **app_focus(app_name, execute=False)})
+            result = app_focus(app_name)
+            summary = "Focused local app." if result.get("status") == "focused" else "Tried to focus local app."
+            return self._result(text, "app.focus", summary, assessment, result, bool(result.get("executed")))
         if selected_tool == "app.quit":
             app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_quit_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
             return self._app_quit_confirmation_result(text, assessment, app_name)
@@ -1176,11 +1204,11 @@ class Planner:
                 "status": "preview_only",
                 "reason": "The first model did not explicitly request safe follow-through.",
             }
-        if recommended not in {"app.open", "terminal.read_only"}:
+        if recommended not in {"app.open", "app.focus", "terminal.read_only"}:
             return {
                 **followup,
                 "status": "preview_only",
-                "reason": "Only app.open and terminal.read_only are currently allowed for middle-layer safe follow-through.",
+                "reason": "Only app.open, app.focus, and terminal.read_only are currently allowed for middle-layer safe follow-through.",
             }
         if handoff.get("handoff") != "safe_execute_after_policy":
             return {
@@ -1286,6 +1314,13 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "recommended_tool": recommended,
             "executed": False,
             "preview": app_open(app_name, execute=False),
+        }
+    if recommended == "app.focus":
+        app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_focus_name(text) or _extract_app_name(text) or ""
+        return {
+            "recommended_tool": recommended,
+            "executed": False,
+            "preview": app_focus(app_name, execute=False),
         }
     if recommended == "app.quit":
         app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_quit_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
@@ -1643,7 +1678,7 @@ def _extract_app_open_name(text: str) -> str | None:
     if _extract_url(cleaned):
         return None
     match = re.match(
-        r"(?i)^(?:open|launch|start|bring up|show|focus|switch to)\s+(?:my\s+|the\s+)?(.+?)(?:\s+(?:app|application))?(?:\s+(?:on my screen|on screen|for me|now|please))?[.!?]?$",
+        r"(?i)^(?:open|launch|start|bring up|show)\s+(?:my\s+|the\s+)?(.+?)(?:\s+(?:app|application))?(?:\s+(?:on my screen|on screen|for me|now|please))?[.!?]?$",
         cleaned,
     )
     if not match:
@@ -1662,6 +1697,25 @@ def _extract_app_open_name(text: str) -> str | None:
         "link",
     }
     if app_name.lower() in blocked:
+        return None
+    return app_name[:120]
+
+
+def _extract_app_focus_name(text: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", text.strip())
+    if _extract_url(cleaned):
+        return None
+    match = re.match(
+        r"(?i)^(?:focus|switch to|activate|bring forward)\s+(?:my\s+|the\s+)?(.+?)(?:\s+(?:app|application))?(?:\s+(?:on my screen|on screen|for me|now|please))?[.!?]?$",
+        cleaned,
+    )
+    if not match:
+        return None
+    app_name = re.sub(r"(?i)\s+(?:app|application)$", "", match.group(1)).strip(" .")
+    app_name = re.sub(r"(?i)^(?:app|application)\s+", "", app_name).strip(" .")
+    if not app_name:
+        return None
+    if app_name.lower() in {"browser", "email", "mailbox", "inbox", "website", "url", "link"}:
         return None
     return app_name[:120]
 
@@ -2092,6 +2146,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
         "app.status": "Yes sir, checking that app now.",
         "app.running": "Yes sir, checking which apps are running now.",
         "app.open": "Yes sir, preparing the app open preview now.",
+        "app.focus": "Yes sir, focusing that app now.",
         "app.quit": "Yes sir, preparing the quit confirmation now.",
         "browser.open_url": "Yes sir, preparing that browser action now.",
         "terminal.read_only": "Yes sir, checking that locally now.",

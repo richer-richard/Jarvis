@@ -742,7 +742,15 @@ def tool_registry() -> dict[str, Any]:
                 "mode": "execute",
                 "risk": "local_app_launch",
                 "available": bool(_find_executable("open")),
-                "description": "Opens or focuses a named macOS app using the system open tool and a resolved app bundle name.",
+                "description": "Opens or launches a named macOS app using the system open tool and a resolved app bundle name.",
+            },
+            {
+                "id": "app.focus",
+                "label": "Focus App",
+                "mode": "execute",
+                "risk": "local_app_focus",
+                "available": bool(_find_executable("osascript")),
+                "description": "Focuses a named app only when it is already running, without launching or inspecting app content.",
             },
             {
                 "id": "app.quit",
@@ -2081,7 +2089,8 @@ def _middle_tool_catalog_ids() -> list[str]:
 
 def _middle_tool_catalog() -> list[dict[str, str]]:
     return [
-        {"id": "app.open", "kind": "safe_execute", "description": "Open or focus a local macOS app."},
+        {"id": "app.open", "kind": "safe_execute", "description": "Open or launch a local macOS app."},
+        {"id": "app.focus", "kind": "safe_execute", "description": "Focus an already-running local macOS app without launching it."},
         {"id": "app.quit", "kind": "confirmation_required", "description": "Prepare quitting a local app; never execute without user confirmation."},
         {"id": "app.list", "kind": "read_only", "description": "List known/discovered local apps before choosing what to open."},
         {"id": "app.status", "kind": "read_only", "description": "Check whether a named local app is available and appears to be running."},
@@ -2661,7 +2670,7 @@ def app_open(app_name: str, *, execute: bool = True) -> dict[str, Any]:
         "matches": availability.get("matches", []),
         "open_path": open_path,
         "risk": "local_app_launch",
-        "safety_note": "Opening or focusing a local app is reversible and does not read app content by itself.",
+        "safety_note": "Opening a local app is reversible and does not read app content by itself.",
     }
     if not availability.get("available") and name.lower() != "finder":
         return {
@@ -2715,6 +2724,93 @@ def app_open(app_name: str, *, execute: bool = True) -> dict[str, Any]:
         "stderr": _text_tail(completed.stderr, 500),
         **_duration_fields(started_at),
         "reply": f"Opened {name}." if completed.returncode == 0 else f"I tried to open {name}, but macOS returned an error.",
+    }
+
+
+def app_focus(app_name: str, search_dirs: list[Path] | None = None, *, execute: bool = True) -> dict[str, Any]:
+    name = _resolve_app_name(app_name)
+    status = app_status(name, search_dirs=search_dirs)
+    executable_names = list(status.get("executable_names") or [])
+    process_name = executable_names[0] if executable_names else name
+    script = (
+        'tell application "System Events"\n'
+        f"  if exists application process {_applescript_string(process_name)} then\n"
+        f"    set frontmost of application process {_applescript_string(process_name)} to true\n"
+        '    return "focused"\n'
+        "  else\n"
+        '    return "not_running"\n'
+        "  end if\n"
+        "end tell"
+    )
+    base = {
+        "tool": "app.focus",
+        "app": name,
+        "requested_app": re.sub(r"\s+", " ", str(app_name or "")).strip(),
+        "available": bool(status.get("available")),
+        "running": bool(status.get("running")),
+        "matches": list(status.get("matches") or []),
+        "executable_names": executable_names,
+        "process_checks": list(status.get("process_checks") or []),
+        "process_name": process_name,
+        "read_private_content": False,
+        "opened_app": False,
+        "launched_app": False,
+        "captured_screen": False,
+        "read_window_title": False,
+        "read_ui_text": False,
+        "risk": "local_app_focus",
+        "safety_note": "Focusing an already-running local app changes the foreground app only and does not read app content.",
+    }
+    if not status.get("available"):
+        return {
+            **base,
+            "status": "app_not_found",
+            "executed": False,
+            "focused_app": False,
+            "reply": f"I could not find {name} in the standard Applications folders.",
+        }
+    if not status.get("running"):
+        return {
+            **base,
+            "status": "not_running",
+            "executed": False,
+            "focused_app": False,
+            "planned_script_preview": script,
+            "reply": f"{name} does not appear to be running, so I did not launch or focus it.",
+        }
+    if not execute:
+        return {
+            **base,
+            "status": "planned",
+            "executed": False,
+            "focused_app": False,
+            "planned_script_preview": script,
+            "reply": f"Would focus {name} if it is still running.",
+        }
+    started_at = time.monotonic()
+    result = _run_osascript(script, timeout=3.0)
+    focused = bool(result.get("ok")) and "focused" in str(result.get("stdout") or "")
+    if focused:
+        status_name = "focused"
+        reply = f"Focused {name}."
+    elif bool(result.get("ok")) and "not_running" in str(result.get("stdout") or ""):
+        status_name = "not_running"
+        reply = f"{name} stopped running before I could focus it."
+    else:
+        status_name = "focus_failed"
+        reply = f"I tried to focus {name}, but macOS returned an error."
+    return {
+        **base,
+        "status": status_name,
+        "executed": focused,
+        "focused_app": focused,
+        "osascript": {
+            "ok": bool(result.get("ok")),
+            "returncode": result.get("returncode"),
+            "stderr": _text_tail(str(result.get("stderr") or ""), 300),
+        },
+        **_duration_fields(started_at),
+        "reply": reply,
     }
 
 
@@ -2950,7 +3046,7 @@ def voice_session_plan(command: str | None = None) -> dict[str, Any]:
             "example_command": example_command,
             "fast_layer": "Use the first model for natural response and first-level tools.",
             "middle_layer": "Use tools.more for broader planning only when the first layer needs more tools.",
-            "safe_follow_through": "tools.more may follow through only for app.open or allowlisted terminal.read_only when execute_safe_recommendation is explicit.",
+            "safe_follow_through": "tools.more may follow through only for app.open, app.focus, or allowlisted terminal.read_only when execute_safe_recommendation is explicit.",
         },
         {
             "id": "working_status",
@@ -2962,7 +3058,7 @@ def voice_session_plan(command: str | None = None) -> dict[str, Any]:
         {
             "id": "execute_or_preview",
             "status": "policy_gated",
-            "safe_immediate_tools": ["app.open", "terminal.read_only"],
+            "safe_immediate_tools": ["app.open", "app.focus", "terminal.read_only"],
             "preview_only_tools": ["browser.open_url", "tools.handoff_plan", "workflow.app_task_plan"],
             "confirmation_required_tools": ["app.quit", "policy.confirmation", "policy.strong_confirmation"],
             "blocked_without_approval": ["send", "submit", "delete", "overwrite", "credentials", "settings changes"],
@@ -3823,7 +3919,7 @@ def model_context_status(
             "preview_history_items": len(history_items),
         },
         "execution_gate": "Every selected tool is routed through Planner.handle_selected_tool and the safety policy before execution.",
-        "safe_followthrough_limit": "The middle planner can only follow through automatically for explicitly requested safe app.open or allowlisted terminal.read_only routes.",
+        "safe_followthrough_limit": "The middle planner can only follow through automatically for explicitly requested safe app.open, app.focus, or allowlisted terminal.read_only routes.",
         "user_visible_status_example": "Yes sir, checking your email now.",
         "machine_call_example": "\\tool({\"tool\":\"outlook.visible_summary\",\"entities\":{\"selection\":\"unread_first\"}})",
     }
@@ -4962,7 +5058,7 @@ def _overnight_requirement_audit(
         {
             "id": "app_opening_groundwork",
             "status": "implemented_live_verified" if app_live_verified else "implemented_terminal_verified",
-            "evidence": ["app.open", "app.list", "app.status", "app.running", "app.quit confirmation plan"],
+            "evidence": ["app.open", "app.focus", "app.list", "app.status", "app.running", "app.quit confirmation plan"],
             "remaining": "Live app launch/focus QA is complete." if app_live_verified else "Live app launch/focus QA is deferred.",
         },
         {

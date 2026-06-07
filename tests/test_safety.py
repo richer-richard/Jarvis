@@ -55,6 +55,7 @@ from jarvis.server import (
 )
 from jarvis.tools import (
     app_availability,
+    app_focus,
     app_frontmost,
     app_identity_status,
     app_list,
@@ -347,6 +348,8 @@ class PlannerTests(unittest.TestCase):
             "show running apps": "app.running",
             "what app am I using": "app.frontmost",
             "which app is focused": "app.frontmost",
+            "focus Safari": "app.focus",
+            "switch to Outlook": "app.focus",
             "quit app Safari": "app.quit",
             "close Safari": "app.quit",
             "screenshot capability": "screenshot.capability",
@@ -478,6 +481,69 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.executed)
         self.assertEqual(result.result["plan"]["app"], "Microsoft Outlook")
         open_mock.assert_called_once_with("Outlook", execute=False)
+
+    def test_app_focus_only_focuses_already_running_app(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_contents = root / "Safari.app" / "Contents"
+            app_contents.mkdir(parents=True)
+            with (app_contents / "Info.plist").open("wb") as handle:
+                plistlib.dump({"CFBundleExecutable": "Safari"}, handle)
+            pgrep = subprocess.CompletedProcess(args=["pgrep"], returncode=0, stdout="123\n", stderr="")
+            with patch("jarvis.tools._find_executable", return_value="/usr/bin/pgrep"), \
+                 patch("jarvis.tools.subprocess.run", return_value=pgrep), \
+                 patch("jarvis.tools._run_osascript", return_value={"ok": True, "executed": True, "stdout": "focused", "stderr": "", "returncode": 0}) as script_mock:
+                result = app_focus("Safari", search_dirs=[root])
+
+        self.assertEqual(result["tool"], "app.focus")
+        self.assertEqual(result["status"], "focused")
+        self.assertTrue(result["executed"])
+        self.assertTrue(result["focused_app"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["launched_app"])
+        self.assertFalse(result["captured_screen"])
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["read_window_title"])
+        self.assertFalse(result["read_ui_text"])
+        script_mock.assert_called_once()
+
+    def test_app_focus_does_not_launch_when_app_is_not_running(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_contents = root / "Safari.app" / "Contents"
+            app_contents.mkdir(parents=True)
+            with (app_contents / "Info.plist").open("wb") as handle:
+                plistlib.dump({"CFBundleExecutable": "Safari"}, handle)
+            pgrep = subprocess.CompletedProcess(args=["pgrep"], returncode=1, stdout="", stderr="")
+            with patch("jarvis.tools._find_executable", return_value="/usr/bin/pgrep"), \
+                 patch("jarvis.tools.subprocess.run", return_value=pgrep), \
+                 patch("jarvis.tools._run_osascript") as script_mock:
+                result = app_focus("Safari", search_dirs=[root])
+
+        self.assertEqual(result["tool"], "app.focus")
+        self.assertEqual(result["status"], "not_running")
+        self.assertFalse(result["executed"])
+        self.assertFalse(result["focused_app"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["launched_app"])
+        self.assertIn("did not launch", result["reply"])
+        script_mock.assert_not_called()
+
+    def test_app_focus_preview_does_not_focus(self):
+        fake_plan = {
+            "tool": "app.focus",
+            "status": "planned",
+            "executed": False,
+            "app": "Safari",
+            "focused_app": False,
+        }
+        with patch("jarvis.planner.app_focus", return_value=fake_plan) as focus_mock:
+            result = Planner().preview("focus Safari")
+
+        self.assertEqual(result.tool, "app.focus")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["plan"]["app"], "Safari")
+        focus_mock.assert_called_once_with("Safari", execute=False)
 
     def test_app_quit_command_requires_confirmation_without_quitting(self):
         fake_plan = {
@@ -686,6 +752,50 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(open_mock.call_count, 2)
         open_mock.assert_any_call("Microsoft Teams", execute=False)
         open_mock.assert_any_call("Microsoft Teams")
+
+    def test_tools_more_explicit_safe_followup_executes_app_focus_through_policy(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "app.focus",
+            "entities": {"app_name": "Microsoft Teams"},
+            "reply": "Yes sir, focusing Teams now.",
+        }
+        fake_preview = {
+            "tool": "app.focus",
+            "status": "planned",
+            "executed": False,
+            "app": "Microsoft Teams",
+            "focused_app": False,
+        }
+        fake_focused = {
+            "tool": "app.focus",
+            "status": "focused",
+            "executed": True,
+            "app": "Microsoft Teams",
+            "focused_app": True,
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan), \
+             patch("jarvis.planner.app_focus", side_effect=[fake_preview, fake_focused]) as focus_mock:
+            result = Planner().handle_selected_tool(
+                "Switch to Teams.",
+                "tools.more",
+                {"execute_safe_recommendation": True},
+            )
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        followup = result.result["safe_followup"]
+        self.assertEqual(followup["status"], "followed_through")
+        self.assertEqual(followup["selected_tool"], "app.focus")
+        self.assertTrue(followup["executed"])
+        self.assertEqual(followup["handoff"]["handoff"], "safe_execute_after_policy")
+        self.assertEqual(followup["result"]["tool"], "app.focus")
+        self.assertTrue(followup["result"]["executed"])
+        self.assertEqual(focus_mock.call_count, 2)
+        focus_mock.assert_any_call("Microsoft Teams", execute=False)
+        focus_mock.assert_any_call("Microsoft Teams")
 
     def test_tools_more_explicit_safe_followup_runs_allowlisted_terminal_command(self):
         fake_plan = {
@@ -2581,6 +2691,18 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["changed_state"])
         self.assertEqual(result["entities"]["app_name"], "Safari")
 
+    def test_tool_handoff_plan_classifies_app_focus_safe_execute_without_executing(self):
+        result = tool_handoff_plan("app.focus", {"app_name": "Safari"}, "Switch to Safari")
+
+        self.assertEqual(result["tool"], "tools.handoff_plan")
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(result["recommended_tool"], "app.focus")
+        self.assertEqual(result["handoff"], "safe_execute_after_policy")
+        self.assertFalse(result["would_execute_now"])
+        self.assertFalse(result["requires_confirmation"])
+        self.assertFalse(result["opened_app"])
+        self.assertFalse(result["changed_state"])
+
     def test_tool_handoff_plan_classifies_confirmation_tool_without_executing(self):
         result = tool_handoff_plan("app.quit", {"app_name": "Safari"}, "Quit Safari")
 
@@ -3149,6 +3271,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("teams.assignment", tool_ids)
         self.assertIn("app.list", tool_ids)
         self.assertIn("app.open", tool_ids)
+        self.assertIn("app.focus", tool_ids)
         self.assertIn("app.status", tool_ids)
         self.assertIn("app.running", tool_ids)
         self.assertIn("app.frontmost", tool_ids)
@@ -6629,7 +6752,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("39/39", policy_gate["detail"])
+        self.assertIn("40/40", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
