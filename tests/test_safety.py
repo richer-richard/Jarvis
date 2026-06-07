@@ -3266,10 +3266,13 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("safe_terminal_groundwork", audit_ids)
         self.assertIn("voice_recognition_audition_prep", audit_ids)
         self.assertIn("master_report", audit_ids)
-        self.assertIn("Workboard:", result["reply"])
         self.assertIn("master report", result["reply"])
         self.assertIn("2 shipped changes", result["reply"])
         self.assertIn("Verification: 89/89 passed", result["reply"])
+        self.assertIn("workboard paths are included", result["reply"])
+        self.assertNotIn(str(root), result["reply"])
+        self.assertEqual(result["workboard_path"], str(workboard))
+        self.assertEqual(result["report_path"], str(report))
         self.assertNotIn("morning report draft", result["reply"].lower())
 
     def test_latest_latency_status_reads_local_smoke_report(self):

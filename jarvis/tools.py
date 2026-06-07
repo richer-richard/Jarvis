@@ -5067,6 +5067,14 @@ def _master_report_snapshot(path: Path) -> dict[str, Any]:
     }
 
 
+def _launch_pill_value(pills: list[str], label: str) -> str:
+    prefix = f"{label}:"
+    for pill in pills:
+        if pill.lower().startswith(prefix.lower()):
+            return _compact_report_text(pill.split(":", 1)[1])
+    return ""
+
+
 def overnight_work_status() -> dict[str, Any]:
     """Report overnight work surfaces without opening foreground UI."""
     workboard_path = PROJECT_ROOT / "runtime" / "overnight_status" / "index.html"
@@ -5097,12 +5105,29 @@ def overnight_work_status() -> dict[str, Any]:
         live_qa=live_qa,
     )
     if report_snapshot.get("ok"):
-        launch_evidence = ", ".join(report_snapshot.get("launch_pills") or [])
+        launch_pills = [str(pill) for pill in (report_snapshot.get("launch_pills") or [])]
+        live_bundle = _launch_pill_value(launch_pills, "Live bundle")
+        source_commit = _launch_pill_value(launch_pills, "Source commit")
+        verification = _launch_pill_value(launch_pills, "Verification")
+        evidence_bits = [
+            bit
+            for bit in (
+                live_bundle,
+                f"commit {source_commit}" if source_commit else "",
+                f"Verification: {verification}" if verification else "",
+            )
+            if bit
+        ]
+        evidence = "; ".join(evidence_bits) if evidence_bits else "current launch evidence is available in the diagnostic details"
         reply = (
-            f"Overnight status: the master report snapshot says {report_snapshot['summary']} "
-            f"Launch evidence: {launch_evidence}. "
+            f"Overnight report is ready: {evidence}. "
+            f"It lists {report_snapshot['shipped_count']} shipped changes, "
+            f"{report_snapshot['proof_count']} proof checks, "
+            f"{report_snapshot['tomorrow_count']} things you should be able to try, "
+            f"{report_snapshot['risk_count']} risk notes, and "
+            f"{report_snapshot['supporting_file_count']} supporting links. "
             "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
-            f"Workboard: {workboard_path}. Report: {report_path}."
+            "The master report and workboard paths are included in the diagnostic details."
         )
     else:
         reply = (
