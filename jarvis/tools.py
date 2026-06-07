@@ -5704,11 +5704,18 @@ def capabilities_status() -> dict[str, Any]:
     ]
     working = sum(1 for item in capabilities if item["status"] == "working")
     partial = sum(1 for item in capabilities if item["status"] == "partial")
-    not_ready = sum(1 for item in capabilities if item["status"] in {"not_built", "unavailable", "missing", "needs_attention"})
+    prepared = sum(1 for item in capabilities if item["status"] == "prep_ready")
+    needs_attention = sum(1 for item in capabilities if item["status"] in {"not_built", "unavailable", "missing", "needs_attention"})
+    not_live_features = [
+        "real microphone speech-to-text",
+        "full raw chat-history memory",
+        "background wake-word listening",
+    ]
     reply = (
-        f"Capability status: {working} working, {partial} partial, {not_ready} not ready. "
+        f"Capability status: {working} working, {partial} partial, {prepared} prepared, {needs_attention} needing attention. "
         "Working now includes typed chat, fast casual chat, latency status, Codex async delegation, launch diagnostics, source-access diagnostics, and the overnight workboard route. "
         "Partial work includes email, quick device controls, guarded middle planning, remote helper diagnostics, Jarvis-Codex daily memory, wake, TTS with stop-speaking interruption, and computer control. "
+        "Prepared but not live yet includes the STT audition page. "
         "Not active yet: real microphone speech-to-text, full raw chat-history memory, and background wake-word listening. "
         "This diagnostic did not read email, screenshots, microphone audio, or files."
     )
@@ -5720,8 +5727,12 @@ def capabilities_status() -> dict[str, Any]:
         "counts": {
             "working": working,
             "partial": partial,
-            "not_ready": not_ready,
+            "prepared": prepared,
+            "needs_attention": needs_attention,
+            "not_live": len(not_live_features),
+            "not_ready": needs_attention,
         },
+        "not_live_features": not_live_features,
         "capabilities": capabilities,
         "timers": timers,
         "codex_jobs": codex_jobs,

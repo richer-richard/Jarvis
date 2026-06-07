@@ -481,6 +481,18 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(memory["needs_leo"])
         self.assertIn("Jarvis-to-Codex daily memory", memory["summary"])
 
+    def test_capability_status_separates_prepared_from_live_features(self):
+        result = capabilities_status()
+        stt = next(item for item in result["capabilities"] if item["id"] == "speech_to_text")
+
+        if stt["status"] == "prep_ready":
+            self.assertGreaterEqual(result["counts"]["prepared"], 1)
+            self.assertIn("Prepared but not live yet", result["reply"])
+        self.assertGreaterEqual(result["counts"]["not_live"], 1)
+        self.assertIn("real microphone speech-to-text", result["not_live_features"])
+        self.assertIn("background wake-word listening", result["not_live_features"])
+        self.assertNotIn("0 not ready", result["reply"])
+
     def test_codex_route_starts_async_job_for_broad_requests(self):
         fake_result = {
             "tool": "codex.job",
