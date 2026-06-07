@@ -2277,6 +2277,7 @@ class PlannerTests(unittest.TestCase):
                         "CFBundleIdentifier": "local.leo.jarvis",
                         "CFBundleShortVersionString": "0.1.test",
                         "CFBundleVersion": "999",
+                        "LSUIElement": True,
                     },
                     handle,
                 )
@@ -2287,8 +2288,12 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["metadata"]["version"], "0.1.test")
         self.assertEqual(result["metadata"]["build"], "999")
+        self.assertTrue(result["metadata"]["lsui_element"])
+        self.assertEqual(result["metadata"]["launch_mode"], "menu-bar accessory app")
+        self.assertFalse(result["metadata"]["dock_icon_visible_by_default"])
         self.assertIn('open "', result["open_command"])
         self.assertIn("version 0.1.test", result["reply"])
+        self.assertIn("Dock icon: hidden by default", result["reply"])
 
     def test_packaged_diagnostics_use_enclosing_app_bundle(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -6953,17 +6958,29 @@ class RuntimeSurfaceTests(unittest.TestCase):
   <string>0.1.51</string>
   <key>CFBundleVersion</key>
   <string>51</string>
-  <key>CFBundleIdentifier</key>
-  <string>local.leo.jarvis</string>
-</dict>
-</plist>
-""",
+	  <key>CFBundleIdentifier</key>
+	  <string>local.leo.jarvis</string>
+	  <key>LSUIElement</key>
+	  <true/>
+	</dict>
+	</plist>
+	""",
                 encoding="utf-8",
             )
 
             metadata = current_bundle_metadata(app)
 
-        self.assertEqual(metadata, {"version": "0.1.51", "build": "51", "bundle_id": "local.leo.jarvis"})
+        self.assertEqual(
+            metadata,
+            {
+                "version": "0.1.51",
+                "build": "51",
+                "bundle_id": "local.leo.jarvis",
+                "lsui_element": "true",
+                "launch_mode": "menu-bar accessory app",
+                "dock_icon": "Dock hidden by default",
+            },
+        )
 
     def test_morning_status_worker_source_labeling(self):
         bundled = "/Applications/Jarvis.app/Contents/Resources/JarvisWorker/jarvis/tools.py"

@@ -360,7 +360,9 @@ def print_current_bundle() -> None:
         version = metadata.get("version") or "unknown"
         build = metadata.get("build") or "unknown"
         bundle_id = metadata.get("bundle_id") or "unknown"
-        print(f"Current bundle: {latest.relative_to(PROJECT_ROOT)} (version {version}, build {build}, id {bundle_id})")
+        mode = metadata.get("launch_mode") or "unknown launch mode"
+        dock = metadata.get("dock_icon") or "unknown Dock visibility"
+        print(f"Current bundle: {latest.relative_to(PROJECT_ROOT)} (version {version}, build {build}, id {bundle_id}, {mode}, {dock})")
     else:
         print(f"Current bundle: {latest.relative_to(PROJECT_ROOT)}")
     print(f"Open command: open {shlex.quote(str(latest))}")
@@ -426,6 +428,9 @@ def current_bundle_metadata(path: Path) -> dict[str, str] | None:
         "version": str(data.get("CFBundleShortVersionString") or ""),
         "build": str(data.get("CFBundleVersion") or ""),
         "bundle_id": str(data.get("CFBundleIdentifier") or ""),
+        "lsui_element": "true" if data.get("LSUIElement") is True else "false",
+        "launch_mode": "menu-bar accessory app" if data.get("LSUIElement") is True else "regular Dock app",
+        "dock_icon": "Dock hidden by default" if data.get("LSUIElement") is True else "Dock visible by default",
     }
 
 

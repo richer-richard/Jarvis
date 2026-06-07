@@ -408,7 +408,7 @@ def tool_registry() -> dict[str, Any]:
                 "mode": "execute",
                 "risk": "read_only",
                 "available": True,
-                "description": "Reports the stable app path, open command, launcher script, bundle id, and app version.",
+                "description": "Reports the stable app path, launch mode, Dock visibility, launcher script, bundle id, and app version.",
             },
             {
                 "id": "diagnostics.wake",
@@ -1909,6 +1909,12 @@ def launch_status() -> dict[str, Any]:
         build = metadata.get("build") or "unknown"
         bundle_id = metadata.get("bundle_id") or "unknown"
         reply_lines.append(f"Current bundle: version {version}, build {build}, bundle id {bundle_id}.")
+        if metadata.get("launch_mode"):
+            reply_lines.append(f"Launch mode: {metadata['launch_mode']}.")
+        if metadata.get("dock_icon_visible_by_default") is False:
+            reply_lines.append("Dock icon: hidden by default; use JARVIS_SHOW_DOCK_ICON=yes only for debugging.")
+        elif metadata.get("dock_icon_visible_by_default") is True:
+            reply_lines.append("Dock icon: visible by default.")
     elif not exists:
         reply_lines.append("I do not see the stable Jarvis app bundle at the expected path.")
     return {
@@ -1938,12 +1944,17 @@ def _bundle_metadata(bundle_path: Path) -> dict[str, Any] | None:
             plist = plistlib.load(handle)
     except (OSError, plistlib.InvalidFileException):
         return None
+    lsui_element = plist.get("LSUIElement") is True
+    launch_mode = "menu-bar accessory app" if lsui_element else "regular Dock app"
     return {
         "name": plist.get("CFBundleName"),
         "display_name": plist.get("CFBundleDisplayName"),
         "bundle_id": plist.get("CFBundleIdentifier"),
         "version": plist.get("CFBundleShortVersionString"),
         "build": plist.get("CFBundleVersion"),
+        "lsui_element": lsui_element,
+        "launch_mode": launch_mode,
+        "dock_icon_visible_by_default": not lsui_element,
     }
 
 
