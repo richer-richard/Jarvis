@@ -94,7 +94,10 @@ ACTIVE_TIMERS: dict[str, threading.Timer] = {}
 ACTIVE_TIMER_DETAILS: dict[str, dict[str, Any]] = {}
 ACTIVE_TIMERS_LOCK = threading.Lock()
 SPEECH_PROCESS: Any | None = None
+SPEECH_PROCESS_REASON: str | None = None
+SPEECH_GENERATION = 0
 SPEECH_LOCK = threading.Lock()
+STATUS_TO_FINAL_QUEUE_TIMEOUT_SECONDS = 4.0
 PIPER_WORKER_PROCESS: subprocess.Popen[str] | None = None
 PIPER_WORKER_LOCK = threading.RLock()
 PIPER_WORKER_READY = False
@@ -1474,12 +1477,14 @@ def _send_process_signal(process: subprocess.Popen[str], sig: signal.Signals) ->
 
 
 def _stop_active_speech_locked(timeout_seconds: float = 0.45) -> dict[str, Any]:
-    global SPEECH_PROCESS
+    global SPEECH_PROCESS, SPEECH_PROCESS_REASON, SPEECH_GENERATION
     process = SPEECH_PROCESS
     if process is None:
+        SPEECH_PROCESS_REASON = None
         return {"interrupted_previous": False}
     if process.poll() is not None:
         SPEECH_PROCESS = None
+        SPEECH_PROCESS_REASON = None
         return {"interrupted_previous": False}
     status: dict[str, Any] = {"interrupted_previous": True}
     try:
@@ -1500,6 +1505,8 @@ def _stop_active_speech_locked(timeout_seconds: float = 0.45) -> dict[str, Any]:
     finally:
         if SPEECH_PROCESS is process:
             SPEECH_PROCESS = None
+            SPEECH_PROCESS_REASON = None
+            SPEECH_GENERATION += 1
     return status
 
 
@@ -1509,10 +1516,76 @@ def _reap_speech_process(process: subprocess.Popen[str]) -> None:
     except OSError:
         pass
     finally:
-        global SPEECH_PROCESS
+        global SPEECH_PROCESS, SPEECH_PROCESS_REASON
         with SPEECH_LOCK:
             if SPEECH_PROCESS is process:
                 SPEECH_PROCESS = None
+                SPEECH_PROCESS_REASON = None
+
+
+def _set_active_speech_locked(process: Any, reason: str) -> None:
+    global SPEECH_PROCESS, SPEECH_PROCESS_REASON, SPEECH_GENERATION
+    SPEECH_PROCESS = process
+    SPEECH_PROCESS_REASON = reason
+    SPEECH_GENERATION += 1
+
+
+def _queue_final_after_status_locked(
+    spoken: str,
+    *,
+    reason: str,
+    force: bool,
+    started_at: float,
+) -> dict[str, Any] | None:
+    process = SPEECH_PROCESS
+    if reason != "final" or SPEECH_PROCESS_REASON != "status" or process is None:
+        return None
+    if process.poll() is not None:
+        return None
+    target_generation = SPEECH_GENERATION
+    thread = threading.Thread(
+        target=_deferred_status_followup_worker,
+        args=(spoken, reason, force, process, target_generation, STATUS_TO_FINAL_QUEUE_TIMEOUT_SECONDS),
+        daemon=True,
+    )
+    thread.start()
+    return {
+        "spoken": True,
+        "status": "queued_after_status",
+        "reason": reason,
+        "interrupted_previous": False,
+        "deferred_after": "status",
+        "text_length": len(spoken),
+        **_duration_fields(started_at),
+    }
+
+
+def _deferred_status_followup_worker(
+    spoken: str,
+    reason: str,
+    force: bool,
+    target_process: Any,
+    target_generation: int,
+    timeout_seconds: float,
+) -> None:
+    global SPEECH_PROCESS, SPEECH_PROCESS_REASON
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        with SPEECH_LOCK:
+            if SPEECH_GENERATION != target_generation:
+                return
+            current = SPEECH_PROCESS
+            if current is not target_process:
+                break
+            if current.poll() is not None:
+                if SPEECH_PROCESS is current:
+                    SPEECH_PROCESS = None
+                    SPEECH_PROCESS_REASON = None
+                break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.03)
+    speak_text_async(spoken, reason=reason, force=force)
 
 
 def _start_macos_speech_async(
@@ -1526,7 +1599,6 @@ def _start_macos_speech_async(
 ) -> dict[str, Any]:
     say_path = _find_executable("say") or "/usr/bin/say"
     command = [say_path, "-v", TTS_VOICE, "-r", str(TTS_RATE), spoken]
-    global SPEECH_PROCESS
     try:
         process = subprocess.Popen(
             command,
@@ -1538,7 +1610,7 @@ def _start_macos_speech_async(
             text=True,
             start_new_session=True,
         )
-        SPEECH_PROCESS = process
+        _set_active_speech_locked(process, reason)
         threading.Thread(target=_reap_speech_process, args=(process,), daemon=True).start()
     except OSError as error:
         return {
@@ -1618,9 +1690,9 @@ def _start_piper_warm_speech_async(
                 **stop_status,
                 **_duration_fields(started_at),
             }
-        global SPEECH_PROCESS, PIPER_WORKER_ACTIVE_ID
+        global PIPER_WORKER_ACTIVE_ID
         PIPER_WORKER_ACTIVE_ID = speech_id
-        SPEECH_PROCESS = _PiperWorkerSpeechHandle(speech_id)
+        _set_active_speech_locked(_PiperWorkerSpeechHandle(speech_id), reason)
     return {
         "spoken": True,
         "status": "queued",
@@ -1710,7 +1782,7 @@ def _start_piper_speech_async(
             **stop_status,
             **_duration_fields(started_at),
         }
-    SPEECH_PROCESS = process
+    _set_active_speech_locked(process, reason)
     threading.Thread(target=_reap_speech_process, args=(process,), daemon=True).start()
     return {
         "spoken": True,
@@ -1735,6 +1807,14 @@ def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -
         return {"spoken": False, "status": "empty", "reason": reason}
     started_at = time.monotonic()
     with SPEECH_LOCK:
+        queued_after_status = _queue_final_after_status_locked(
+            spoken,
+            reason=reason,
+            force=force,
+            started_at=started_at,
+        )
+        if queued_after_status is not None:
+            return queued_after_status
         stop_status = _stop_active_speech_locked()
         provider = _normalize_tts_provider(TTS_PROVIDER)
         if provider == "piper":

@@ -4062,12 +4062,92 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 second = jarvis_tools.speak_text_async("second reply")
         finally:
             jarvis_tools.SPEECH_PROCESS = None
+            jarvis_tools.SPEECH_PROCESS_REASON = None
 
         self.assertTrue(first["spoken"])
         self.assertTrue(second["spoken"])
         self.assertTrue(first_process.terminated)
         self.assertTrue(second["interrupted_previous"])
         self.assertEqual(second["previous_stop_method"], "terminate")
+
+    def test_final_speech_queues_behind_active_status(self):
+        class FakeStatusProcess:
+            def __init__(self):
+                self.terminated = False
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                self.terminated = True
+
+            def wait(self, timeout=None):
+                return 0
+
+        class FakeThread:
+            created = []
+
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+                self.started = False
+                FakeThread.created.append(self)
+
+            def start(self):
+                self.started = True
+
+        status_process = FakeStatusProcess()
+        with jarvis_tools.SPEECH_LOCK:
+            jarvis_tools.SPEECH_PROCESS = status_process
+            jarvis_tools.SPEECH_PROCESS_REASON = "status"
+            jarvis_tools.SPEECH_GENERATION = 100
+        try:
+            with patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+                 patch("jarvis.tools.threading.Thread", FakeThread):
+                result = jarvis_tools.speak_text_async("Final email summary.", reason="final")
+        finally:
+            with jarvis_tools.SPEECH_LOCK:
+                jarvis_tools.SPEECH_PROCESS = None
+                jarvis_tools.SPEECH_PROCESS_REASON = None
+
+        self.assertTrue(result["spoken"])
+        self.assertEqual(result["status"], "queued_after_status")
+        self.assertEqual(result["deferred_after"], "status")
+        self.assertFalse(result["interrupted_previous"])
+        self.assertFalse(status_process.terminated)
+        self.assertEqual(len(FakeThread.created), 1)
+        self.assertTrue(FakeThread.created[0].started)
+
+    def test_deferred_final_speaks_after_status_finishes(self):
+        class FinishedStatusProcess:
+            def poll(self):
+                return 0
+
+        status_process = FinishedStatusProcess()
+        calls = []
+        with jarvis_tools.SPEECH_LOCK:
+            jarvis_tools.SPEECH_PROCESS = status_process
+            jarvis_tools.SPEECH_PROCESS_REASON = "status"
+            jarvis_tools.SPEECH_GENERATION = 200
+        try:
+            with patch(
+                "jarvis.tools.speak_text_async",
+                side_effect=lambda text, *, reason, force=False: calls.append((text, reason, force)),
+            ):
+                jarvis_tools._deferred_status_followup_worker(
+                    "Final email summary.",
+                    "final",
+                    False,
+                    status_process,
+                    200,
+                    0,
+                )
+        finally:
+            with jarvis_tools.SPEECH_LOCK:
+                jarvis_tools.SPEECH_PROCESS = None
+                jarvis_tools.SPEECH_PROCESS_REASON = None
+
+        self.assertEqual(calls, [("Final email summary.", "final", False)])
 
     def test_stop_speaking_interrupts_active_process_without_starting_audio(self):
         class FakeProcess:
@@ -4095,6 +4175,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
             result = stop_speaking()
         finally:
             jarvis_tools.SPEECH_PROCESS = None
+            jarvis_tools.SPEECH_PROCESS_REASON = None
 
         self.assertEqual(result["tool"], "voice.stop_speaking")
         self.assertEqual(result["status"], "stopped")
@@ -4244,6 +4325,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 second = jarvis_tools.speak_text_async("second warm reply")
         finally:
             jarvis_tools.SPEECH_PROCESS = None
+            jarvis_tools.SPEECH_PROCESS_REASON = None
             jarvis_tools.PIPER_WORKER_PROCESS = None
             jarvis_tools.PIPER_WORKER_READY = False
             jarvis_tools.PIPER_WORKER_ACTIVE_ID = None
