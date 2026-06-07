@@ -10100,10 +10100,16 @@ def _codex_activity_compact_cli_noise(value: str) -> str:
     }
     for line in lines:
         compact = line.strip()
-        if re.search(r"\bWARN\b.*codex_core_skills::loader: ignoring interface\.icon_(?:small|large)", compact):
+        if re.search(
+            r"(?:\bWARN\b.*codex_core_skills::loader: ignoring interface\.icon_(?:small|large)|icon path with '\.\.' must resolve under plugin assets)",
+            compact,
+        ):
             counts["Codex plugin icon warning lines"] += 1
             continue
-        if re.search(r"\bWARN\b.*codex_core_plugins::manifest: ignoring interface\.defaultPrompt", compact):
+        if re.search(
+            r"(?:\bWARN\b.*codex_core_plugins::manifest: ignoring interface\.defaultPrompt|prompt must be at most 128 characters)",
+            compact,
+        ):
             counts["Codex plugin default-prompt warning lines"] += 1
             continue
         kept.append(line)
