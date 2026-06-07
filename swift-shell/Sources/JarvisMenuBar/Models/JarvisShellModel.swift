@@ -159,8 +159,8 @@ final class JarvisShellModel: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-        command = trimmed
         messages.append(ChatMessage(role: .user, text: trimmed))
+        command = ""
 
         Task {
             await runCommand(trimmed)
