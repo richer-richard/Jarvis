@@ -10003,10 +10003,11 @@ def _codex_activity_job(job: dict[str, Any]) -> dict[str, Any]:
     conversation_tail = _codex_activity_tail(job.get("conversation_tail") or reply_tail, 1600)
     stdout_tail = _codex_activity_tail(job.get("stdout_tail"), 1800)
     stderr_tail = _codex_activity_tail(job.get("stderr_tail"), 1200)
-    cli_tail = _codex_activity_tail(
+    raw_cli_tail = _codex_activity_tail(
         job.get("cli_tail") or _codex_combined_cli_tail(stdout_tail, stderr_tail),
         CODEX_ACTIVITY_TAIL_CHARS,
     )
+    cli_tail = _codex_activity_tail(_codex_activity_compact_cli_noise(raw_cli_tail), CODEX_ACTIVITY_TAIL_CHARS)
     return {
         "job_id": str(job.get("job_id") or ""),
         "status": str(job.get("status") or "unknown"),
@@ -10087,6 +10088,31 @@ def _codex_activity_tail(value: Any, max_chars: int = CODEX_ACTIVITY_TAIL_CHARS)
     text = _redact_codex_sensitive_text(str(value or ""))
     text = CODEX_SESSION_ID_RE.sub("[SESSION_ID_HIDDEN]", text)
     return _text_tail(redact_sensitive_text(text), max_chars).strip()
+
+
+def _codex_activity_compact_cli_noise(value: str) -> str:
+    """Collapse repeated plugin-loader warnings that swamp the visible activity panel."""
+    lines = str(value or "").splitlines()
+    kept: list[str] = []
+    counts = {
+        "Codex plugin icon warning lines": 0,
+        "Codex plugin default-prompt warning lines": 0,
+    }
+    for line in lines:
+        compact = line.strip()
+        if re.search(r"\bWARN\b.*codex_core_skills::loader: ignoring interface\.icon_(?:small|large)", compact):
+            counts["Codex plugin icon warning lines"] += 1
+            continue
+        if re.search(r"\bWARN\b.*codex_core_plugins::manifest: ignoring interface\.defaultPrompt", compact):
+            counts["Codex plugin default-prompt warning lines"] += 1
+            continue
+        kept.append(line)
+    summaries = [
+        f"[{count} repeated {label} hidden]"
+        for label, count in counts.items()
+        if count > 0
+    ]
+    return "\n".join([*kept, *summaries]).strip()
 
 
 def _codex_lines_tail(lines: list[str], max_chars: int = CODEX_ACTIVITY_TAIL_CHARS) -> str:

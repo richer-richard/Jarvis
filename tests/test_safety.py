@@ -4017,7 +4017,17 @@ class RuntimeSurfaceTests(unittest.TestCase):
                             "last_activity_at": 21.0,
                             "stdout_tail": "reading files",
                             "stderr_tail": "token=abc123 working",
-                            "cli_tail": "stdout:\nreading files\nstderr:\ntoken=abc123 working",
+                            "cli_tail": "\n".join(
+                                [
+                                    "stdout:",
+                                    "reading files",
+                                    "2026-06-06T06:35:09.458072Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/",
+                                    "2026-06-06T06:35:09.458083Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/",
+                                    "2026-06-06T06:35:09.459709Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt[0]: prompt must be at most 128 characters path=/tmp/plugin.json",
+                                    "stderr:",
+                                    "token=abc123 working",
+                                ]
+                            ),
                             "conversation_tail": "Thinking through the code.",
                         }
                     snapshot = jarvis_tools.codex_activity_snapshot()
@@ -4031,7 +4041,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(snapshot["running_count"], 1)
         self.assertEqual(snapshot["latest_job"]["job_id"], "codex-running")
         self.assertEqual(snapshot["latest_job"]["phase"], "running")
-        self.assertIn("reading files", snapshot["latest_job"]["cli_tail"])
+        cli_tail = snapshot["latest_job"]["cli_tail"]
+        self.assertIn("reading files", cli_tail)
+        self.assertIn("repeated Codex plugin icon warning lines hidden", cli_tail)
+        self.assertIn("repeated Codex plugin default-prompt warning lines hidden", cli_tail)
+        self.assertNotIn("interface.icon_small", cli_tail)
+        self.assertNotIn("interface.defaultPrompt", cli_tail)
         self.assertIn("Thinking through the code.", snapshot["latest_job"]["conversation_tail"])
         self.assertNotIn("abc123", serialized)
         self.assertIn("[REDACTED]", serialized)
