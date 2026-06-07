@@ -103,7 +103,7 @@ class JarvisServer:
             yield {"event": "final", "data": self.command(command)}
             return
 
-        preview = self.planner.preview(command, use_model_router=False).to_dict()
+        preview = self.planner.preview(command, use_model_router=False, history=history).to_dict()
         if preview.get("tool") != "conversation.fast_local":
             status_text = _stream_status_text(preview)
             if status_text:
@@ -319,8 +319,8 @@ class JarvisServer:
             "speech": speech,
         }
 
-    def plan(self, command: str) -> dict[str, Any]:
-        return self.planner.preview(command).to_dict()
+    def plan(self, command: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+        return self.planner.preview(command, history=history).to_dict()
 
     def mode(self) -> dict[str, Any]:
         with self._mode_lock:
@@ -748,7 +748,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             except (TypeError, ValueError, UnicodeDecodeError) as exc:
                 self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            self._send_json(STATE.plan(command))
+            self._send_json(STATE.plan(command, history=history))
             return
         if route.path == "/api/outlook/visible-text":
             try:

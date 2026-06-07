@@ -636,7 +636,13 @@ class Planner:
             summary = f"{summary} Fast model time: {result['duration_human']}."
         return self._result(text, tool, summary, assessment, result, bool(result.get("executed", True)))
 
-    def preview(self, command: str, *, use_model_router: bool = True) -> PlannedResult:
+    def preview(
+        self,
+        command: str,
+        *,
+        use_model_router: bool = True,
+        history: list[dict[str, str]] | None = None,
+    ) -> PlannedResult:
         text = command.strip()
         assessment = classify_command(text)
         lower = text.lower()
@@ -800,12 +806,12 @@ class Planner:
         if exact_reply is not None and not _explicitly_asks_codex(lower):
             return self._preview_result(text, "conversation.local_exact", assessment, True)
         if _explicitly_asks_codex(lower):
-            routed = self._handle_model_intent(text, assessment, _explicit_codex_intent(), execute=False)
+            routed = self._handle_model_intent(text, assessment, _explicit_codex_intent(), execute=False, history=history)
             if routed is not None:
                 return routed
         if use_model_router:
             intent = select_tool_intent(text, NATURAL_LANGUAGE_TOOL_SPECS)
-            routed = self._handle_model_intent(text, assessment, intent, execute=False)
+            routed = self._handle_model_intent(text, assessment, intent, execute=False, history=history)
             if routed is not None:
                 return routed
         return self._preview_result(text, "conversation.fast_local", assessment, True)

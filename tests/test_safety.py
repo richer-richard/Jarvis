@@ -6583,6 +6583,20 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(plan["result"]["planned_only"])
         self.assertEqual(command["tool"], "policy.pause")
 
+    def test_plan_passes_history_to_planner_preview(self):
+        server = JarvisServer()
+        history = [
+            {"role": "user", "text": "Give me a math problem."},
+            {"role": "assistant", "text": "Solve x + 2 = 5."},
+        ]
+        fake_preview = Planner().preview("status", use_model_router=False)
+
+        with patch.object(server.planner, "preview", return_value=fake_preview) as preview_mock:
+            plan = server.plan("x = 3", history=history)
+
+        self.assertEqual(plan["tool"], "system.status")
+        preview_mock.assert_called_once_with("x = 3", history=history)
+
     def test_server_can_start_paused(self):
         server = JarvisServer(paused=True, pause_reason="test start paused")
         mode = server.mode()
