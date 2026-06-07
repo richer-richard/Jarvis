@@ -26,6 +26,7 @@ import uuid
 from datetime import datetime
 from email import policy
 from email.parser import BytesParser
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -4937,6 +4938,135 @@ def _runtime_file_status(path: Path) -> dict[str, Any]:
     }
 
 
+class _ReportHTMLSummaryParser(HTMLParser):
+    """Collect compact, safe text structure from Jarvis's generated report HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.h1 = ""
+        self.pills: list[str] = []
+        self.product_promises: list[str] = []
+        self.sections: dict[str, list[str]] = {}
+        self._current_section = ""
+        self._captures: list[dict[str, Any]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        class_names = set()
+        for name, value in attrs:
+            if name == "class" and value:
+                class_names.update(part for part in value.split() if part)
+        if tag in {"title", "h1", "h2", "li"}:
+            self._captures.append({"kind": tag, "parts": []})
+        if tag == "strong" and self._current_section == "Tonight's Product Promise":
+            self._captures.append({"kind": "product_promise", "parts": []})
+        if "pill" in class_names:
+            self._captures.append({"kind": "pill", "parts": []})
+
+    def handle_data(self, data: str) -> None:
+        if not data.strip():
+            return
+        for capture in self._captures:
+            capture["parts"].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"title", "h1", "h2", "li"}:
+            self._finish_capture(tag)
+        if tag == "strong":
+            self._finish_capture("product_promise")
+        if tag == "span":
+            self._finish_capture("pill")
+
+    def _finish_capture(self, kind: str) -> None:
+        for index in range(len(self._captures) - 1, -1, -1):
+            capture = self._captures[index]
+            if capture["kind"] != kind:
+                continue
+            self._captures.pop(index)
+            text = _compact_report_text(" ".join(capture["parts"]))
+            if not text:
+                return
+            if kind == "title":
+                self.title = text
+            elif kind == "h1":
+                self.h1 = text
+            elif kind == "h2":
+                self._current_section = text
+                self.sections.setdefault(text, [])
+            elif kind == "li":
+                self.sections.setdefault(self._current_section or "Unsectioned", []).append(text)
+            elif kind == "pill":
+                self.pills.append(text)
+            elif kind == "product_promise":
+                self.product_promises.append(text)
+            return
+
+
+def _compact_report_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _master_report_snapshot(path: Path) -> dict[str, Any]:
+    """Return product-launch report metadata without opening a browser."""
+    if not path.exists() or path.is_dir():
+        return {
+            "ok": False,
+            "status": "missing",
+            "path": str(path),
+            "summary": "Master report is missing.",
+        }
+    try:
+        source = path.read_text(encoding="utf-8")[:500_000]
+    except OSError as error:
+        return {
+            "ok": False,
+            "status": "unreadable",
+            "path": str(path),
+            "error": str(error),
+            "summary": "Master report could not be read.",
+        }
+    parser = _ReportHTMLSummaryParser()
+    try:
+        parser.feed(source)
+        parser.close()
+    except Exception as error:  # HTMLParser is tolerant, but keep diagnostics explicit.
+        return {
+            "ok": False,
+            "status": "parse_error",
+            "path": str(path),
+            "error": str(error),
+            "summary": "Master report HTML could not be parsed.",
+        }
+    section_counts = {heading: len(items) for heading, items in parser.sections.items()}
+    launch_pills = [pill for pill in parser.pills if ":" in pill][:12]
+    shipped_count = section_counts.get("Shipped Since The Last Proven Build", 0)
+    proof_count = section_counts.get("Proof So Far", 0)
+    tomorrow_count = section_counts.get("What You Should Be Able To Do Tomorrow", 0)
+    risk_count = section_counts.get("Still Risky Or Unfinished", 0)
+    support_count = section_counts.get("Supporting Files", 0)
+    headline = parser.h1 or parser.title or "Jarvis Master Report"
+    summary = (
+        f"{headline}: {shipped_count} shipped changes, {proof_count} proof checks, "
+        f"{tomorrow_count} usable actions, {risk_count} risk notes, and {support_count} supporting file links."
+    )
+    return {
+        "ok": True,
+        "status": "parsed",
+        "path": str(path),
+        "title": parser.title,
+        "headline": headline,
+        "launch_pills": launch_pills,
+        "product_promises": parser.product_promises[:6],
+        "section_counts": section_counts,
+        "shipped_count": shipped_count,
+        "proof_count": proof_count,
+        "tomorrow_count": tomorrow_count,
+        "risk_count": risk_count,
+        "supporting_file_count": support_count,
+        "summary": summary,
+    }
+
+
 def overnight_work_status() -> dict[str, Any]:
     """Report overnight work surfaces without opening foreground UI."""
     workboard_path = PROJECT_ROOT / "runtime" / "overnight_status" / "index.html"
@@ -4959,19 +5089,29 @@ def overnight_work_status() -> dict[str, Any]:
         status = "missing"
     metadata = _bundle_metadata(bundle_path)
     live_qa = _live_final_qa_evidence(bundle_path=bundle_path)
+    report_snapshot = _master_report_snapshot(report_path)
     requirement_audit = _overnight_requirement_audit(
         artifacts=artifacts,
         bundle_exists=bundle_path.exists(),
         bundle_metadata=metadata,
         live_qa=live_qa,
     )
-    reply = (
-        "Overnight status: the workboard is "
-        f"{'available' if workboard_exists else 'missing'} and the master report is "
-        f"{'available' if report_exists else 'missing'}. "
-        "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
-        f"Workboard: {workboard_path}. Report: {report_path}."
-    )
+    if report_snapshot.get("ok"):
+        launch_evidence = ", ".join(report_snapshot.get("launch_pills") or [])
+        reply = (
+            f"Overnight status: the master report snapshot says {report_snapshot['summary']} "
+            f"Launch evidence: {launch_evidence}. "
+            "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
+            f"Workboard: {workboard_path}. Report: {report_path}."
+        )
+    else:
+        reply = (
+            "Overnight status: the workboard is "
+            f"{'available' if workboard_exists else 'missing'} and the master report is "
+            f"{'available' if report_exists else 'missing'}. "
+            "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
+            f"Workboard: {workboard_path}. Report: {report_path}."
+        )
     return {
         "tool": "diagnostics.overnight",
         "executed": True,
@@ -4986,6 +5126,7 @@ def overnight_work_status() -> dict[str, Any]:
         "report_path": str(report_path),
         "stt_audition_path": str(stt_path),
         "artifacts": artifacts,
+        "master_report_snapshot": report_snapshot,
         "bundle_path": str(bundle_path),
         "bundle_exists": bundle_path.exists(),
         "bundle_metadata": metadata,

@@ -3200,7 +3200,42 @@ class PlannerTests(unittest.TestCase):
             workboard.parent.mkdir(parents=True)
             stt_page.parent.mkdir(parents=True)
             workboard.write_text("<!doctype html><title>Jarvis Overnight Status</title>", encoding="utf-8")
-            report.write_text("<!doctype html><title>Jarvis Morning Report</title>", encoding="utf-8")
+            report.write_text(
+                """
+                <!doctype html>
+                <title>Jarvis Master Report</title>
+                <h1>Jarvis Overnight Launch Report</h1>
+                <span class="pill">Live bundle: Jarvis 0.1.214 build 214</span>
+                <span class="pill">Source commit: ddc2009</span>
+                <span class="pill">Verification: 89/89 passed</span>
+                <section>
+                  <h2>Tonight's Product Promise</h2>
+                  <strong>Jarvis should sound alive.</strong>
+                  <strong>Jarvis should stay honest.</strong>
+                </section>
+                <section>
+                  <h2>Shipped Since The Last Proven Build</h2>
+                  <ul><li>Fixed final speech.</li><li>Added device status.</li></ul>
+                </section>
+                <section>
+                  <h2>Proof So Far</h2>
+                  <ul><li>350/350 Python tests passed.</li></ul>
+                </section>
+                <section>
+                  <h2>What You Should Be Able To Do Tomorrow</h2>
+                  <ul><li>Ask status.</li></ul>
+                </section>
+                <section>
+                  <h2>Still Risky Or Unfinished</h2>
+                  <ul><li>Wake word remains future work.</li></ul>
+                </section>
+                <section>
+                  <h2>Supporting Files</h2>
+                  <ul><li>runtime/overnight_status/report.html</li></ul>
+                </section>
+                """,
+                encoding="utf-8",
+            )
             stt_page.write_text("<!doctype html><title>Jarvis STT Audition</title>", encoding="utf-8")
             with patch("jarvis.tools.PROJECT_ROOT", root), \
                  patch("jarvis.tools._live_final_qa_evidence", return_value={"complete": False, "checks": []}):
@@ -3217,6 +3252,14 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["foreground_activity"])
         self.assertFalse(result["recorded_audio"])
         self.assertFalse(result["sent_network_request"])
+        snapshot = result["master_report_snapshot"]
+        self.assertEqual(snapshot["headline"], "Jarvis Overnight Launch Report")
+        self.assertEqual(snapshot["shipped_count"], 2)
+        self.assertEqual(snapshot["proof_count"], 1)
+        self.assertEqual(snapshot["tomorrow_count"], 1)
+        self.assertEqual(snapshot["risk_count"], 1)
+        self.assertIn("Live bundle: Jarvis 0.1.214 build 214", snapshot["launch_pills"])
+        self.assertIn("Jarvis should sound alive.", snapshot["product_promises"])
         audit_ids = {item["id"] for item in result["requirement_audit"]}
         self.assertIn("stronger_layered_tool_loop", audit_ids)
         self.assertIn("app_opening_groundwork", audit_ids)
@@ -3225,6 +3268,8 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("master_report", audit_ids)
         self.assertIn("Workboard:", result["reply"])
         self.assertIn("master report", result["reply"])
+        self.assertIn("2 shipped changes", result["reply"])
+        self.assertIn("Verification: 89/89 passed", result["reply"])
         self.assertNotIn("morning report draft", result["reply"].lower())
 
     def test_latest_latency_status_reads_local_smoke_report(self):
