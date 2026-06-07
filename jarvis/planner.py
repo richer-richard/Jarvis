@@ -482,7 +482,7 @@ class Planner:
         if _looks_like_daily_memory_summary(lower):
             return self._result(text, "memory.daily_summary", "Read local daily memory summary.", assessment, daily_memory_summary(), True)
         if _looks_like_overnight_work_status(lower):
-            return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
+            return self._result(text, "diagnostics.overnight", "Read overnight report status.", assessment, overnight_work_status(), True)
         if _looks_like_final_qa_status(lower):
             return self._result(text, "diagnostics.final_qa", "Read deferred final QA plan.", assessment, final_qa_plan_status(), True)
         if _looks_like_workflow_plan_request(lower):
@@ -614,7 +614,7 @@ class Planner:
         if _looks_like_stt_candidate_status(lower):
             return self._result(text, "voice.stt_candidates", "Read speech-recognition candidate status.", assessment, stt_candidate_status(), True)
         if _looks_like_overnight_work_status(lower):
-            return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
+            return self._result(text, "diagnostics.overnight", "Read overnight report status.", assessment, overnight_work_status(), True)
         if _is_exact_email_status_command(lower):
             return self._result(text, "diagnostics.email", "Read local email backend status without reading email content.", assessment, email_backend_status(), True)
         if _looks_like_capability_status(lower):
@@ -900,7 +900,7 @@ class Planner:
         if selected_tool == "diagnostics.overnight":
             if not execute:
                 return self._preview_result(text, "diagnostics.overnight", assessment, True, plan={"intent": intent})
-            return self._result(text, "diagnostics.overnight", "Read overnight workboard status.", assessment, overnight_work_status(), True)
+            return self._result(text, "diagnostics.overnight", "Read overnight report status.", assessment, overnight_work_status(), True)
         if selected_tool == "diagnostics.final_qa":
             if not execute:
                 return self._preview_result(text, "diagnostics.final_qa", assessment, True, plan={"intent": intent})
@@ -2146,7 +2146,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
         "outlook.visible_summary": "Yes sir, checking your email now.",
         "diagnostics.email": "Yes sir, checking the email setup now.",
         "diagnostics.device": "Yes sir, checking this Mac now.",
-        "diagnostics.overnight": "Yes sir, checking the overnight workboard now.",
+        "diagnostics.overnight": "Yes sir, checking the overnight report now.",
         "diagnostics.final_qa": "Yes sir, checking the final QA plan now.",
         "diagnostics.model_context": "Yes sir, checking the model context now.",
         "voice.stop_speaking": "Stopping my voice now.",

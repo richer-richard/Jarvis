@@ -6326,6 +6326,19 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(speak_mock.call_args_list[1].kwargs["reason"], "final")
         self.assertIn("Jarvis", speak_mock.call_args_list[1].args[0])
 
+    def test_streamed_overnight_status_uses_report_wording(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async", side_effect=lambda text, *, reason: {"spoken": True, "status": "queued", "reason": reason, "text": text}) as speak_mock:
+                events = list(server.stream_command("overnight status"))
+
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["text"], "Yes sir, checking the overnight report now.")
+        self.assertIn("Overnight report is ready", events[-1]["data"]["result"]["reply"])
+        self.assertEqual(speak_mock.call_args_list[0].kwargs["reason"], "status")
+        self.assertNotIn("workboard", speak_mock.call_args_list[0].args[0].lower())
+
     def test_device_status_auto_speaks_final_reply(self):
         fake_status = {
             "tool": "diagnostics.device",

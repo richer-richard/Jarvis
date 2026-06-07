@@ -607,7 +607,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "tools.deep_catalog": "Yes sir, checking the deeper tool catalog now.",
         "tools.handoff_plan": "Yes sir, checking how to handle that now.",
         "diagnostics.permissions": "Yes sir, checking permissions readiness now.",
-        "diagnostics.overnight": "Yes sir, checking the overnight workboard now.",
+        "diagnostics.overnight": "Yes sir, checking the overnight report now.",
         "diagnostics.final_qa": "Yes sir, checking the final QA plan now.",
         "diagnostics.tts": "Yes sir, checking the voice setup now.",
         "voice.stt_candidates": "Yes sir, checking speech recognition options now.",
