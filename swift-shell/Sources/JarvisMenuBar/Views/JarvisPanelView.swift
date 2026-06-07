@@ -97,6 +97,7 @@ struct JarvisPanelView: View {
         HStack(spacing: 8) {
             QuickActionButton("Email", command: "check my email", model: model)
             QuickActionButton("Status", command: "status", model: model)
+            QuickActionButton("Report", command: "overnight status", model: model)
             QuickActionButton("Wake Test", command: "wake: Hey Jarvis status", model: model)
             QuickActionButton("Screen", command: "screenshot capability", model: model)
             QuickActionButton("Codex", command: "ask Codex to review this project", model: model)
