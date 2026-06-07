@@ -142,14 +142,20 @@ enum JarvisMenuBarSelfTest {
         guard !JarvisShellModel.shouldUseNativeScreenStatus("read the visible Outlook screen with OCR") else {
             throw SelfTestError.failed("Visible OCR requests must not be treated as read-only screen status.")
         }
+        var conversationMessages = [
+            ChatMessage(role: .user, text: "Give me a math problem."),
+            ChatMessage(role: .jarvis, text: "Solve x + 2 = 5."),
+        ]
+        conversationMessages.append(
+            contentsOf: (0..<14).map { index in
+                ChatMessage(role: .jarvis, text: "Still working \(index).", detail: "Working")
+            }
+        )
+        conversationMessages.append(ChatMessage(role: .system, text: "Copied chat JSON."))
+        conversationMessages.append(ChatMessage(role: .user, text: "x = 3"))
+
         let history = JarvisShellModel.conversationHistoryPayload(
-            from: [
-                ChatMessage(role: .user, text: "Give me a math problem."),
-                ChatMessage(role: .jarvis, text: "Solve x + 2 = 5."),
-                ChatMessage(role: .jarvis, text: "Yes sir, checking that now.", detail: "Working"),
-                ChatMessage(role: .system, text: "Copied chat JSON."),
-                ChatMessage(role: .user, text: "x = 3"),
-            ],
+            from: conversationMessages,
             currentCommand: "x = 3"
         )
         guard history == [

@@ -911,7 +911,7 @@ final class JarvisShellModel: ObservableObject {
 
     static func conversationHistoryPayload(from messages: [ChatMessage], currentCommand: String) -> [[String: String]] {
         let current = currentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        return messages.suffix(12).compactMap { message in
+        let eligible: [[String: String]] = messages.compactMap { message in
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
                 return nil
@@ -936,6 +936,7 @@ final class JarvisShellModel: ObservableObject {
             }
             return ["role": role, "text": String(text.prefix(900))]
         }
+        return Array(eligible.suffix(12))
     }
 
     private func startProgressNudges(for commandText: String) -> Task<Void, Never> {
