@@ -3878,6 +3878,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(status["codex_jobs"]["running_count"], 1)
         self.assertEqual(status["codex_jobs"]["latest_job_id"], "codex-done")
         self.assertEqual(status["codex_jobs"]["latest_status"], "completed")
+        self.assertIn("1 running of 2 tracked", status["reply"])
 
     def test_system_status_reports_app_identity_without_private_content(self):
         metadata = {
@@ -3905,6 +3906,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertFalse(app["read_private_content"])
         self.assertFalse(app["changed_system_state"])
         self.assertIn(app["worker_source_kind"], {"project source", "bundled app resources"})
+        self.assertIn("Jarvis 0.1.212 build 212 is online", status["reply"])
+        self.assertIn("Launch mode: menu-bar accessory app", status["reply"])
 
     def test_codex_job_summaries_persist_across_worker_restart(self):
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

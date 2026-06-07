@@ -906,6 +906,21 @@ def system_status() -> dict[str, Any]:
     fallback_fast_model_available = FAST_MODEL_FALLBACK_ENABLED and FAST_MODEL_FALLBACK_BACKEND == "ollama" and ollama_available
     cwd, cwd_error = _safe_getcwd()
     project_root_status = _path_access_status(PROJECT_ROOT)
+    app_identity = _jarvis_app_identity()
+    active_timer_count = _active_timer_count()
+    codex_jobs = _codex_job_counts()
+    fast_model_name = GROQ_FAST_MODEL if FAST_MODEL_BACKEND == "groq" else FAST_MODEL_NAME
+    app_version = app_identity.get("version") or "unknown version"
+    app_build = app_identity.get("build") or "unknown build"
+    worker_kind = app_identity.get("worker_source_kind") or "unknown worker source"
+    launch_mode = app_identity.get("launch_mode") or "unknown launch mode"
+    reply = (
+        f"Jarvis {app_version} build {app_build} is online from {worker_kind}. "
+        f"Launch mode: {launch_mode}. "
+        f"Fast model: {FAST_MODEL_BACKEND} {fast_model_name}. "
+        f"Timers active: {active_timer_count}. "
+        f"Codex jobs: {codex_jobs['running_count']} running of {codex_jobs['tracked_count']} tracked."
+    )
     return {
         "project_root": str(PROJECT_ROOT),
         "python": sys.version.split()[0],
@@ -921,18 +936,18 @@ def system_status() -> dict[str, Any]:
             "source": str(Path(__file__).resolve()),
             "project_root_access": project_root_status,
         },
-        "app": _jarvis_app_identity(),
+        "app": app_identity,
         "timers": {
-            "active_count": _active_timer_count(),
+            "active_count": active_timer_count,
         },
-        "codex_jobs": _codex_job_counts(),
+        "codex_jobs": codex_jobs,
         "codex": {
             "path": codex_path,
             "version": _command_output([codex_path, "--version"]) if codex_path else None,
         },
         "fast_model": {
             "backend": FAST_MODEL_BACKEND,
-            "model": GROQ_FAST_MODEL if FAST_MODEL_BACKEND == "groq" else FAST_MODEL_NAME,
+            "model": fast_model_name,
             "fallback_enabled": FAST_MODEL_FALLBACK_ENABLED,
             "fallback_backend": FAST_MODEL_FALLBACK_BACKEND,
             "fallback_model": FAST_MODEL_NAME if FAST_MODEL_FALLBACK_BACKEND == "ollama" else None,
@@ -954,6 +969,7 @@ def system_status() -> dict[str, Any]:
             "swift": _find_executable("swift"),
             "xcrun": _find_executable("xcrun"),
         },
+        "reply": reply,
     }
 
 
