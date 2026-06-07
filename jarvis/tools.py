@@ -921,6 +921,7 @@ def system_status() -> dict[str, Any]:
             "source": str(Path(__file__).resolve()),
             "project_root_access": project_root_status,
         },
+        "app": _jarvis_app_identity(),
         "timers": {
             "active_count": _active_timer_count(),
         },
@@ -2051,6 +2052,30 @@ def _current_jarvis_bundle_path() -> Path:
     if running_bundle:
         return Path(running_bundle)
     return PROJECT_ROOT / "output" / "Jarvis.app"
+
+
+def _worker_source_kind(source: str) -> str:
+    if "/Contents/Resources/JarvisWorker/" in source:
+        return "bundled app resources"
+    return "project source"
+
+
+def _jarvis_app_identity() -> dict[str, Any]:
+    bundle_path = _current_jarvis_bundle_path()
+    metadata = _bundle_metadata(bundle_path)
+    worker_source = str(Path(__file__).resolve())
+    return {
+        "bundle_path": str(bundle_path),
+        "bundle_metadata": metadata,
+        "version": metadata.get("version") if metadata else None,
+        "build": metadata.get("build") if metadata else None,
+        "launch_mode": metadata.get("launch_mode") if metadata else None,
+        "dock_icon_visible_by_default": metadata.get("dock_icon_visible_by_default") if metadata else None,
+        "worker_source": worker_source,
+        "worker_source_kind": _worker_source_kind(worker_source),
+        "read_private_content": False,
+        "changed_system_state": False,
+    }
 
 
 def run_read_only_shell(command: str) -> dict[str, Any]:
@@ -10387,7 +10412,7 @@ def device_status() -> dict[str, Any]:
         battery_text = f"{battery.get('battery_percent')}% {battery.get('power_state')}"
         if battery.get("time_remaining"):
             battery_text = f"{battery_text}, {battery['time_remaining']} remaining"
-    source_kind = "bundled app resources" if "/Contents/Resources/JarvisWorker/" in worker["source"] else "project source"
+    source_kind = _worker_source_kind(worker["source"])
     reply = (
         f"Device status: macOS {macos_version} on {model_identifier}; {cpu}; "
         f"{memory_text} memory; {storage_text}; {battery_text}. "

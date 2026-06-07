@@ -3879,6 +3879,33 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(status["codex_jobs"]["latest_job_id"], "codex-done")
         self.assertEqual(status["codex_jobs"]["latest_status"], "completed")
 
+    def test_system_status_reports_app_identity_without_private_content(self):
+        metadata = {
+            "name": "Jarvis",
+            "display_name": "Jarvis",
+            "bundle_id": "local.leo.jarvis",
+            "version": "0.1.212",
+            "build": "212",
+            "lsui_element": True,
+            "launch_mode": "menu-bar accessory app",
+            "dock_icon_visible_by_default": False,
+        }
+
+        with patch("jarvis.tools._current_jarvis_bundle_path", return_value=Path("/Applications/Jarvis.app")), \
+             patch("jarvis.tools._bundle_metadata", return_value=metadata):
+            status = jarvis_tools.system_status()
+
+        app = status["app"]
+        self.assertEqual(app["bundle_path"], "/Applications/Jarvis.app")
+        self.assertEqual(app["bundle_metadata"], metadata)
+        self.assertEqual(app["version"], "0.1.212")
+        self.assertEqual(app["build"], "212")
+        self.assertEqual(app["launch_mode"], "menu-bar accessory app")
+        self.assertFalse(app["dock_icon_visible_by_default"])
+        self.assertFalse(app["read_private_content"])
+        self.assertFalse(app["changed_system_state"])
+        self.assertIn(app["worker_source_kind"], {"project source", "bundled app resources"})
+
     def test_codex_job_summaries_persist_across_worker_restart(self):
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
         with tempfile.TemporaryDirectory() as temp_dir:
