@@ -5104,6 +5104,12 @@ def overnight_work_status() -> dict[str, Any]:
         bundle_metadata=metadata,
         live_qa=live_qa,
     )
+    live_qa_complete = bool(live_qa.get("complete"))
+    next_foreground_checks = [] if live_qa_complete else [
+        "Open the overnight workboard in a browser and visually inspect layout.",
+        "Launch the rebuilt Jarvis app and check live startup/status text.",
+        "Run the full safe verifier once foreground app/browser checks are allowed.",
+    ]
     if report_snapshot.get("ok"):
         launch_pills = [str(pill) for pill in (report_snapshot.get("launch_pills") or [])]
         live_bundle = _launch_pill_value(launch_pills, "Live bundle")
@@ -5157,13 +5163,9 @@ def overnight_work_status() -> dict[str, Any]:
         "bundle_metadata": metadata,
         "live_qa": live_qa,
         "requirement_audit": requirement_audit,
-        "full_visual_qa_deferred": not bool(live_qa.get("complete")),
-        "deferred_reason": "" if bool(live_qa.get("complete")) else "Live foreground QA evidence is not complete yet.",
-        "next_foreground_checks": [
-            "Open the overnight workboard in a browser and visually inspect layout.",
-            "Launch the rebuilt Jarvis app and check live startup/status text.",
-            "Run the full safe verifier once foreground app/browser checks are allowed.",
-        ],
+        "full_visual_qa_deferred": not live_qa_complete,
+        "deferred_reason": "" if live_qa_complete else "Live foreground QA evidence is not complete yet.",
+        "next_foreground_checks": next_foreground_checks,
         "reply": reply,
     }
 

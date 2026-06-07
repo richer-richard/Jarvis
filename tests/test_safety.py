@@ -3373,6 +3373,8 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["foreground_activity"])
         self.assertFalse(result["recorded_audio"])
         self.assertFalse(result["sent_network_request"])
+        self.assertTrue(result["full_visual_qa_deferred"])
+        self.assertGreater(len(result["next_foreground_checks"]), 0)
         snapshot = result["master_report_snapshot"]
         self.assertEqual(snapshot["headline"], "Jarvis Overnight Launch Report")
         self.assertEqual(snapshot["shipped_count"], 2)
@@ -3395,6 +3397,40 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["workboard_path"], str(workboard))
         self.assertEqual(result["report_path"], str(report))
         self.assertNotIn("morning report draft", result["reply"].lower())
+
+    def test_overnight_work_status_clears_next_checks_when_live_qa_complete(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workboard = root / "runtime" / "overnight_status" / "index.html"
+            report = root / "runtime" / "overnight_status" / "report.html"
+            stt_page = root / "runtime" / "stt_audition" / "index.html"
+            workboard.parent.mkdir(parents=True)
+            stt_page.parent.mkdir(parents=True)
+            workboard.write_text("<!doctype html><title>Jarvis Overnight Status</title>", encoding="utf-8")
+            report.write_text(
+                """
+                <!doctype html>
+                <title>Jarvis Master Report</title>
+                <h1>Jarvis Overnight Launch Report</h1>
+                <span class="pill">Live bundle: Jarvis 0.1.225 build 225</span>
+                <span class="pill">Source commit: e895d44</span>
+                <span class="pill">Verification: 89/89 passed</span>
+                <section><h2>Shipped Since The Last Proven Build</h2><ul><li>Fixed launch diagnostics.</li></ul></section>
+                <section><h2>Proof So Far</h2><ul><li>Verified.</li></ul></section>
+                <section><h2>What You Should Be Able To Do Tomorrow</h2><ul><li>Read the report.</li></ul></section>
+                <section><h2>Still Risky Or Unfinished</h2><ul><li>Wake word remains future work.</li></ul></section>
+                <section><h2>Supporting Files</h2><ul><li>runtime/overnight_status/report.html</li></ul></section>
+                """,
+                encoding="utf-8",
+            )
+            stt_page.write_text("<!doctype html><title>Jarvis STT Audition</title>", encoding="utf-8")
+            with patch("jarvis.tools.PROJECT_ROOT", root), \
+                 patch("jarvis.tools._live_final_qa_evidence", return_value={"complete": True, "checks": []}):
+                result = overnight_work_status()
+
+        self.assertFalse(result["full_visual_qa_deferred"])
+        self.assertEqual(result["deferred_reason"], "")
+        self.assertEqual(result["next_foreground_checks"], [])
 
     def test_latest_latency_status_reads_local_smoke_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
