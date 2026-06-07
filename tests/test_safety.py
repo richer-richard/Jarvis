@@ -422,6 +422,8 @@ class PlannerTests(unittest.TestCase):
             "workflow plan for Teams assignment": "teams.assignment",
             "overnight status": "diagnostics.overnight",
             "morning report draft status": "diagnostics.overnight",
+            "show me the master report": "diagnostics.overnight",
+            "show the Jarvis report": "diagnostics.overnight",
             "final QA plan": "diagnostics.final_qa",
             "what is left to check": "diagnostics.final_qa",
             "email backend status": "diagnostics.email",
