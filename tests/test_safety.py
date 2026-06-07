@@ -5393,6 +5393,50 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertFalse(result["messages"])
         self.assertIn("did not find readable inbox lines", result["reply"])
 
+    def test_outlook_visible_text_summary_selects_second_visible_line_from_command(self):
+        result = outlook_visible_text_summary(
+            "\n".join([
+                "Inbox",
+                "First sender newest assignment link",
+                "Second sender charity sale form",
+                "Third sender lunch notice",
+            ]),
+            command="check my second email",
+            diagnostics={
+                "source": "native_vision_ocr",
+                "ocr_engine": "apple_vision",
+                "line_count": 4,
+                "capture_width": 1512,
+                "capture_height": 982,
+            },
+        )
+
+        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["selection_mode"], "index:2")
+        self.assertEqual(result["message_count"], 1)
+        self.assertIn("Second sender charity sale form", result["messages"][0]["snippet"])
+        self.assertIn("Second sender charity sale form", result["email_summary"])
+        self.assertNotIn("First sender", result["email_summary"])
+        self.assertNotIn("Third sender", result["email_summary"])
+
+    def test_outlook_visible_text_summary_selects_latest_visible_line_from_command(self):
+        result = outlook_visible_text_summary(
+            "\n".join([
+                "Inbox",
+                "First sender newest assignment link",
+                "Second sender charity sale form",
+                "Third sender lunch notice",
+            ]),
+            command="check my newest email",
+            diagnostics={"source": "native_vision_ocr", "ocr_engine": "apple_vision", "line_count": 4},
+        )
+
+        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["selection_mode"], "latest")
+        self.assertEqual(result["message_count"], 1)
+        self.assertIn("First sender newest assignment link", result["email_summary"])
+        self.assertNotIn("Second sender", result["email_summary"])
+
     def test_native_outlook_visible_text_endpoint_audits_without_private_text(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             server = JarvisServer()
@@ -5407,10 +5451,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(response["tool"], "outlook.visible_summary")
         self.assertTrue(response["executed"])
         self.assertIn("Alice Secret", json.dumps(response))
+        self.assertIn("email_summary", response["result"])
         serialized_event = json.dumps(event)
         self.assertNotIn("Alice Secret", serialized_event)
         self.assertNotIn("Private subject", serialized_event)
         self.assertTrue(event["details"]["result"]["private_message_details_omitted"])
+        self.assertTrue(event["details"]["result"]["email_summary_omitted"])
 
     def test_native_outlook_visible_text_endpoint_respects_pause(self):
         server = JarvisServer(paused=True)
@@ -5513,7 +5559,31 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(response["tool"], "outlook.visible_summary")
         self.assertEqual(response["speech"]["reason"], "final")
         speak_mock.assert_called_once()
-        self.assertIn("visible Outlook window", speak_mock.call_args.args[0])
+        self.assertIn("Visible body text", speak_mock.call_args.args[0])
+
+    def test_native_outlook_visible_text_endpoint_speaks_second_email_summary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final"}) as speak_mock:
+                response = server.native_outlook_visible_text(
+                    command="check my second email",
+                    text="\n".join([
+                        "Inbox",
+                        "First sender newest assignment link",
+                        "Second sender charity sale form",
+                        "Third sender lunch notice",
+                    ]),
+                    diagnostics={"source": "native_vision_ocr", "ocr_engine": "apple_vision", "line_count": 4},
+                )
+
+        self.assertEqual(response["tool"], "outlook.visible_summary")
+        self.assertEqual(response["result"]["selection_mode"], "index:2")
+        self.assertIn("Second sender charity sale form", response["result"]["email_summary"])
+        self.assertNotIn("First sender", response["result"]["email_summary"])
+        speak_mock.assert_called_once()
+        self.assertIn("Second sender charity sale form", speak_mock.call_args.args[0])
+        self.assertNotIn("First sender", speak_mock.call_args.args[0])
 
     def test_status_speech_endpoint_uses_status_reason(self):
         server = JarvisServer()

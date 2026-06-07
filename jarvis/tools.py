@@ -5744,9 +5744,15 @@ def outlook_visible_text_summary(
     *,
     limit: int = 3,
     diagnostics: dict[str, Any] | None = None,
+    command: str | None = None,
 ) -> dict[str, Any]:
     """Summarize native-app OCR text without receiving or storing a screenshot."""
     safe_limit = max(1, min(int(limit), 10))
+    selection = _email_selection_from_prompt(command)
+    selection_request = _email_selection_request(selection)
+    if selection == "latest":
+        selection_request = {"kind": "index", "start": 1, "end": 1, "selection_mode": "latest"}
+    ocr_limit = _email_fetch_limit_for_selection(safe_limit, selection_request)
     diagnostics = diagnostics or {}
     source = str(diagnostics.get("source") or "native_vision_ocr")
     engine = str(diagnostics.get("ocr_engine") or "apple_vision")
@@ -5796,7 +5802,7 @@ def outlook_visible_text_summary(
             "next_steps": ["Bring the Outlook inbox list to the front and try again."],
         }
 
-    lines = _ocr_email_lines(clean_text, limit=safe_limit)
+    lines = _ocr_email_lines(clean_text, limit=ocr_limit)
     if not lines:
         return {
             **base,
@@ -5805,26 +5811,60 @@ def outlook_visible_text_summary(
             "next_steps": ["Bring the Outlook inbox list to the front and try again."],
         }
 
-    snippet = " | ".join(lines)
-    messages = [
-        {
+    selected_lines = lines
+    if selection_request is not None:
+        start = max(0, int(selection_request["start"]) - 1)
+        end = max(start + 1, int(selection_request["end"]))
+        selected_lines = lines[start:end]
+        if not selected_lines:
+            return {
+                **base,
+                "status": "selection_not_found",
+                "inbox_count": len(lines),
+                "scanned_count": len(lines),
+                "selection_mode": selection_request["selection_mode"],
+                "selection_request": selection_request,
+                "reply": _email_selection_not_found_reply("visible Outlook text", selection_request, len(lines)),
+                "next_steps": ["Bring the Outlook inbox list to the front and try again."],
+            }
+
+    messages = []
+    if selection_request is not None:
+        for offset, line in enumerate(selected_lines):
+            line_number = int(selection_request["start"]) + offset
+            messages.append({
+                "sender": "Visible Outlook window",
+                "subject": f"Visible email line {line_number}",
+                "received": "",
+                "read_state": "visible",
+                "snippet": _email_text_without_raw_links(line, replacement="a link")[:700],
+                "source": source,
+            })
+    else:
+        snippet = " | ".join(lines)
+        messages.append({
             "sender": "Visible Outlook window",
             "subject": "Native Apple Vision OCR",
             "received": "",
             "read_state": "visible",
-            "snippet": snippet[:700],
+            "snippet": _email_text_without_raw_links(snippet, replacement="a link")[:700],
             "source": source,
-        }
-    ]
+        })
+
+    selected_mode = selection_request["selection_mode"] if selection_request is not None else "visible_ocr"
+    email_summary = _visible_ocr_email_summary(selected_lines, selection_mode=selected_mode)
     return {
         **base,
         "status": "checked",
         "inbox_count": len(lines),
         "scanned_count": len(lines),
-        "message_count": 1,
+        "message_count": len(messages),
+        "selection_mode": selected_mode,
+        "selection_request": selection_request,
         "messages": messages,
         "injection_scan": _messages_injection_scan(messages, source),
-        "reply": "I read the visible Outlook window with native Apple Vision OCR inside the Jarvis app. This summarizes visible screen text, not a guaranteed full inbox scan.",
+        "email_summary": email_summary,
+        "reply": email_summary,
     }
 
 
@@ -6637,6 +6677,62 @@ def _email_selection_request(selection: str | None) -> dict[str, Any] | None:
         start, end = sorted((first, second))
         return {"kind": "range", "start": start, "end": end, "selection_mode": f"range:{start}-{end}"}
     return None
+
+
+def _email_selection_from_prompt(text: str | None) -> str | None:
+    lower = str(text or "").lower()
+    ordinal = _email_ordinal_from_prompt(lower)
+    if ordinal is not None:
+        return f"index:{ordinal}"
+    range_match = re.search(
+        r"\b(?:email|mail|message|messages)\s+(\d{1,2})\s*(?:-|to|through)\s*(\d{1,2})\b",
+        lower,
+    )
+    if range_match:
+        first = max(1, int(range_match.group(1)))
+        second = max(1, int(range_match.group(2)))
+        start, end = sorted((first, second))
+        return f"range:{start}-{end}"
+    if re.search(r"\b(?:newest|latest|most recent|first)\b", lower):
+        return "latest"
+    if re.search(r"\bunread\b", lower):
+        return "unread_first"
+    return None
+
+
+def _email_ordinal_from_prompt(lower: str) -> int | None:
+    words = {
+        "second": 2,
+        "third": 3,
+        "fourth": 4,
+        "fifth": 5,
+        "sixth": 6,
+        "seventh": 7,
+        "eighth": 8,
+        "ninth": 9,
+        "tenth": 10,
+    }
+    for word, value in words.items():
+        if re.search(rf"\b{word}\s+(?:email|mail|message)\b", lower) or re.search(rf"\b(?:email|mail|message)\s+{word}\b", lower):
+            return value
+    match = re.search(r"\b(?:email|mail|message)\s*(\d{1,2})(?:st|nd|rd|th)?\b", lower)
+    if match:
+        value = int(match.group(1))
+        return value if value >= 1 else None
+    match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)\s+(?:email|mail|message)\b", lower)
+    if match:
+        value = int(match.group(1))
+        return value if value >= 1 else None
+    return None
+
+
+def _visible_ocr_email_summary(lines: list[str], *, selection_mode: str) -> str:
+    cleaned = [_email_text_without_raw_links(line, replacement="a link").strip() for line in lines if str(line or "").strip()]
+    if not cleaned:
+        return "I could not read a visible email summary from the Outlook window."
+    if selection_mode.startswith("index:") and len(cleaned) == 1:
+        return f"- {cleaned[0]}"
+    return "\n".join(f"- {line}" for line in cleaned[:5])
 
 
 def _email_fetch_limit_for_selection(default_limit: int, selection_request: dict[str, Any] | None) -> int:

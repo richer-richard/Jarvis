@@ -276,7 +276,7 @@ class JarvisServer:
                 "confirmation": None,
             }
         else:
-            result = outlook_visible_text_summary(text, diagnostics=diagnostics)
+            result = outlook_visible_text_summary(text, diagnostics=diagnostics, command=command)
             data = {
                 "command": command,
                 "tool": "outlook.visible_summary",
