@@ -661,7 +661,11 @@ def run_bundle_checks(results: list[CheckResult], base_url: str) -> None:
     build = run_command(
         "temporary_app_bundle_build",
         [str(PROJECT_ROOT / "swift-shell" / "scripts" / "build_app_bundle.sh")],
-        env={"OUTPUT_ROOT": str(bundle_root), "APP_NAME": "Jarvis Verify & Test's <Local>"},
+        env={
+            "OUTPUT_ROOT": str(bundle_root),
+            "APP_NAME": "Jarvis Verify & Test's <Local>",
+            "BUNDLE_ID": "local.leo.jarvis.verify",
+        },
         timeout=180,
     )
     results.append(build)
