@@ -1115,6 +1115,30 @@ def check_endpoint_wake_audition(base_url: str) -> str:
     return f"wake score {score.get('score')}"
 
 
+def check_endpoint_model_context(base_url: str) -> str:
+    original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
+    post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
+    try:
+        data = post_json(
+            "/api/command",
+            {"command": "what do you feed the first model for hello Jarvis"},
+            base_url=base_url,
+        )
+        result = data.get("result") or {}
+        input_policy = result.get("input_source_policy") if isinstance(result.get("input_source_policy"), dict) else {}
+        possible_sources = input_policy.get("current_message_possible_sources") or []
+        require(data.get("tool") == "diagnostics.model_context", f"tool was {data.get('tool')}")
+        require(result.get("called_fast_model") is False, "model context diagnostic should not call fast model")
+        require(result.get("called_middle_model") is False, "model context diagnostic should not call middle model")
+        require(result.get("played_audio") is False, "model context diagnostic should not play audio")
+        require(input_policy.get("fast_model_told_message_may_be_dictation") is True, "fast model dictation policy missing")
+        require(input_policy.get("middle_planner_told_message_may_be_dictation") is True, "middle planner dictation policy missing")
+        require("native speech-recognition transcript" in possible_sources, f"possible sources were {possible_sources}")
+    finally:
+        post_json("/api/speech/mute", {"muted": original_mute}, base_url=base_url)
+    return "model context exposes dictation input policy without calling models"
+
+
 def check_endpoint_voice_loop_echo(base_url: str) -> str:
     original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
     post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
@@ -1480,6 +1504,7 @@ def run_checks() -> dict[str, Any]:
         results.append(endpoint_check("endpoint_plan_preview", lambda: check_endpoint_plan_preview(active_base_url)))
         results.append(endpoint_check("endpoint_wake_simulation", lambda: check_endpoint_wake_simulation(active_base_url)))
         results.append(endpoint_check("endpoint_wake_audition", lambda: check_endpoint_wake_audition(active_base_url)))
+        results.append(endpoint_check("endpoint_model_context", lambda: check_endpoint_model_context(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_echo", lambda: check_endpoint_voice_loop_echo(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_repeated_wake", lambda: check_endpoint_voice_loop_repeated_wake(active_base_url)))
         results.append(endpoint_check("endpoint_wake_debug", lambda: check_endpoint_wake_debug(active_base_url)))

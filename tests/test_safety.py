@@ -354,6 +354,38 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(posts[0], ("/api/speech/mute", {"muted": True}))
         self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
 
+    def test_verify_safe_checks_model_context_dictation_policy(self):
+        posts = []
+
+        def fake_post_json(path, payload, **_kwargs):
+            posts.append((path, payload))
+            if path == "/api/speech/mute":
+                return {"tool": "voice.speech_mute", "muted": bool(payload["muted"])}
+            if path == "/api/command":
+                self.assertIn("what do you feed the first model", payload["command"])
+                return {
+                    "tool": "diagnostics.model_context",
+                    "result": {
+                        "called_fast_model": False,
+                        "called_middle_model": False,
+                        "played_audio": False,
+                        "input_source_policy": {
+                            "current_message_possible_sources": ["native speech-recognition transcript"],
+                            "fast_model_told_message_may_be_dictation": True,
+                            "middle_planner_told_message_may_be_dictation": True,
+                        },
+                    },
+                }
+            raise AssertionError(f"unexpected POST {path}")
+
+        with patch("scripts.verify_safe.post_json", side_effect=fake_post_json), \
+             patch("scripts.verify_safe.get_json", return_value={"muted": False}):
+            detail = verify_safe.check_endpoint_model_context("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "model context exposes dictation input policy without calling models")
+        self.assertEqual(posts[0], ("/api/speech/mute", {"muted": True}))
+        self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
+
     def test_verify_safe_rejects_tiny_final_speech_preview(self):
         self.assertTrue(
             verify_safe.speech_preview_matches_reply(
@@ -3331,6 +3363,18 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(
             result["model_input_trace"][0]["receives"]["current_user_message_preview"],
             "hello Jarvis",
+        )
+        self.assertTrue(result["input_source_policy"]["fast_model_told_message_may_be_dictation"])
+        self.assertTrue(result["input_source_policy"]["middle_planner_told_message_may_be_dictation"])
+        self.assertIn("native speech-recognition transcript", result["input_source_policy"]["current_message_possible_sources"])
+        self.assertIn("infer missing punctuation from context", result["input_source_policy"]["dictation_repairs_allowed"])
+        self.assertIn("add new facts", result["input_source_policy"]["dictation_repairs_not_allowed"])
+        self.assertEqual(
+            result["model_input_trace"][0]["receives"]["input_source_policy"]["current_message_label"],
+            "Leo's latest message",
+        )
+        self.assertTrue(
+            result["model_input_trace"][2]["receives"]["input_source_policy"]["middle_planner_told_message_may_be_dictation"]
         )
         self.assertIn("visible_status_plus_hidden_tool_call", result["model_input_trace"][0]["expected_outputs"])
         self.assertTrue(result["model_input_trace"][1]["user_visible_effect"].startswith("Leo sees"))

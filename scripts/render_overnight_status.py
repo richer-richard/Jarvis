@@ -47,6 +47,7 @@ SHIPPED_ITEMS = [
     "Wake-lab Copy JSON now includes the current transcript, current score, and recommendation even before a run is saved.",
     "Mac/device-status requests now go through the first model's tool call before reading local device facts.",
     "App list/status/running/focus/open requests now give the first model the tool choice before local app parsing runs.",
+    "Model-context diagnostics now expose the exact input-source policy for typed text and speech dictation.",
     "Streaming app working lines now include the app name when Jarvis already knows it, such as Yes sir, checking Safari now.",
     "Final answers with normal reply text now auto-speak by default instead of leaving only the working line audible.",
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
@@ -55,10 +56,10 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 402/402 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
+    "Python safety suite: 403/403 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
-    "Live safe verifier passed 95/95 after the speech-mute, wake-audition, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
+    "Live safe verifier passed 96/96 after the speech-mute, wake-audition, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
     "Live verifier now checks that muted final speech preserves a substantial prefix of the final visible reply.",
     "Live Jarvis health showed the rebuilt app running from bundled app resources.",
     "Live UI inspection showed the Jarvis panel with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
@@ -66,6 +67,8 @@ PROOF_ITEMS = [
     "A muted live hello stream matched visible text, final reply, and TTS text_preview.",
     "A muted live Mac-status probe returned diagnostics.device with routing.source=model_tool_call.",
     "Muted live app-status and app-running probes returned app.status/app.running with routing.source=model_tool_call and did not launch or focus apps.",
+    "Model-context tests now require the diagnostic to show that first and middle models treat Leo's latest message as possibly dictated speech.",
+    "Live verifier now probes diagnostics.model_context and requires the speech-dictation input policy without calling models.",
     "A muted live streaming app-status probe displayed Yes sir, checking Safari now before the final answer.",
     "A muted live wake probe understood Hey Jervis please check status as check status, and wake scoring reported fuzzy_window score 0.916667 instead of a fake exact match.",
     "Python and Swift wake tests now keep hey jervis working while rejecting the short near-miss hey jars.",
@@ -348,6 +351,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Add wake-lab decision summary", "Runs now summarize detected count, best noisy pass, and next step."),
         ("done", "Route Mac status through first model", "Device facts are read only after the first model selects diagnostics.device."),
         ("done", "Route app status through first model", "App list/status/running/focus/open requests now record model_tool_call routing."),
+        ("done", "Expose dictation input policy", "Model-context diagnostics show how typed and speech-recognition text is fed to the models."),
         ("done", "Make app working lines specific", "Streaming app status says the app name when preview already has it."),
         ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
@@ -454,7 +458,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 402/402 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
+            f"{context['verification']['label']} verifier, 403/403 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
         ),
         (
             "Honest Limit",

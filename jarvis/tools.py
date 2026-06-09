@@ -4384,6 +4384,27 @@ def model_context_status(
         "user_visible_status_example": "Yes sir, checking your email now.",
         "machine_call_example": "\\tool({\"tool\":\"outlook.visible_summary\",\"entities\":{\"selection\":\"unread_first\"}})",
     }
+    input_source_policy = {
+        "current_message_possible_sources": [
+            "typed Jarvis panel text",
+            "native speech-recognition transcript",
+            "wake-lab transcript",
+            "quick-action button text",
+        ],
+        "fast_model_told_message_may_be_dictation": True,
+        "middle_planner_told_message_may_be_dictation": True,
+        "dictation_repairs_allowed": [
+            "infer missing punctuation from context",
+            "infer capitalization from context",
+            "tolerate mild homophone errors",
+        ],
+        "dictation_repairs_not_allowed": [
+            "add new facts",
+            "change Leo's intended meaning",
+            "hide uncertainty when the utterance is ambiguous",
+        ],
+        "current_message_label": "Leo's latest message",
+    }
     model_input_trace = [
         {
             "layer": "first_model",
@@ -4391,6 +4412,7 @@ def model_context_status(
             "trigger": "Every ordinary Jarvis chat request starts here.",
             "receives": {
                 "system_prompt": "Jarvis persona, Leo profile context, local date/time, spoken-output rules, dictation tolerance, history-use rule, and tool-call contract.",
+                "input_source_policy": input_source_policy,
                 "conversation_history_items": len(history_items),
                 "current_user_message_preview": redacted_prompt,
                 "tool_catalog_ids": tool_ids,
@@ -4431,6 +4453,7 @@ def model_context_status(
             "trigger": "Only when the first model asks for broader planning through tools.more or a preview path needs the middle layer.",
             "receives": {
                 "planner_prompt_preview": _model_context_preview_text(middle_prompt, max_chars=900),
+                "input_source_policy": input_source_policy,
                 "conversation_history_items": len(history_items),
                 "tool_count": len(_middle_tool_catalog_ids()),
                 "tool_catalog_ids": _middle_tool_catalog_ids(),
@@ -4488,6 +4511,7 @@ def model_context_status(
     reply = (
         f"Model context preview for '{redacted_prompt}': fast chat would receive {len(fast_messages)} messages, "
         f"the middle planner would receive one JSON-planning prompt with {len(_middle_tool_catalog_ids())} tools, "
+        "both first and middle models are told the current message may be speech dictation, "
         "Codex would receive a Jarvis-generated prompt only for deep delegated work, TTS would receive sanitized final visible text, "
         "and the model input trace now shows each layer's inputs, output contract, speech handling, and execution gate. "
         "No model was called and no audio was played."
@@ -4504,6 +4528,7 @@ def model_context_status(
         "played_audio": False,
         "redacted": True,
         "model_input_trace": model_input_trace,
+        "input_source_policy": input_source_policy,
         "redaction_policy": {
             "prompt_previews_are_redacted": True,
             "remote_worker_target_redacted": True,
