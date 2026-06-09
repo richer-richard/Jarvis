@@ -98,6 +98,7 @@ def main() -> int:
     print_latest_verification()
     print_requirement_audit()
     print_latest_latency_smoke()
+    print_latest_context_smoke()
     print_current_bundle()
     print_process_status()
     return 0
@@ -292,6 +293,29 @@ def print_latest_latency_smoke() -> None:
     )
 
 
+def print_latest_context_smoke() -> None:
+    reports = sorted((PROJECT_ROOT / "runtime" / "conversation_context").glob("conversation-context-*.json"))
+    if not reports:
+        print("Latest conversation context: none")
+        return
+
+    latest = reports[-1]
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"Latest conversation context: {latest.relative_to(PROJECT_ROOT)} unreadable ({error})")
+        return
+
+    summary = context_smoke_summary(data)
+    age = format_uptime(time_since(latest.stat().st_mtime))
+    state = "passed" if summary["ok"] else "needs attention"
+    print(
+        f"Latest conversation context: {state} "
+        f"(used history {str(summary['used_history']).lower()}, total {summary['total_seconds']:.3f}s, "
+        f"{latest.relative_to(PROJECT_ROOT)}, age {age})"
+    )
+
+
 def latency_smoke_summary(data: dict[str, Any]) -> dict[str, Any]:
     results = data.get("results", [])
     if not isinstance(results, list):
@@ -338,6 +362,18 @@ def latency_smoke_summary(data: dict[str, Any]) -> dict[str, Any]:
         "max_first_visible_seconds": max(first_values) if first_values else 0.0,
         "max_total_seconds": max(total_values) if total_values else 0.0,
         "min_after_first_chars_per_second": min(after_first_cps_values) if after_first_cps_values else 0.0,
+    }
+
+
+def context_smoke_summary(data: dict[str, Any]) -> dict[str, Any]:
+    result = data.get("result") if isinstance(data.get("result"), dict) else {}
+    status = str(result.get("status") or "")
+    used_history = result.get("used_history") is True
+    return {
+        "ok": status == "passed" and used_history,
+        "status": status,
+        "used_history": used_history,
+        "total_seconds": numeric_value(result.get("total_seconds")) or 0.0,
     }
 
 

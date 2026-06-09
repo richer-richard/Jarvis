@@ -122,6 +122,7 @@ from scripts.morning_status import (
     MAX_VERIFICATION_AGE_SECONDS as MORNING_MAX_VERIFICATION_AGE_SECONDS,
     base_url_from_environment,
     classify_worker_source,
+    context_smoke_summary,
     current_bundle_metadata,
     current_bundle_number,
     display_path,
@@ -8757,6 +8758,24 @@ class RuntimeSurfaceTests(unittest.TestCase):
             }
         )
         self.assertFalse(slow_after_first["ok"])
+
+    def test_morning_status_context_smoke_summary(self):
+        summary = context_smoke_summary(
+            {
+                "result": {
+                    "status": "passed",
+                    "used_history": True,
+                    "total_seconds": 1.283,
+                }
+            }
+        )
+
+        self.assertTrue(summary["ok"])
+        self.assertTrue(summary["used_history"])
+        self.assertEqual(summary["total_seconds"], 1.283)
+
+        failed = context_smoke_summary({"result": {"status": "passed", "used_history": False}})
+        self.assertFalse(failed["ok"])
 
     def test_morning_status_requirement_audit_summary(self):
         summary = requirement_audit_summary(
