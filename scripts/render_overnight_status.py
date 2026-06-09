@@ -25,7 +25,7 @@ SHIPPED_ITEMS = [
     "Wake-audition lab at /wake-audition/ for recording samples, scoring transcripts, running noise trials, and copying JSON.",
     "Wake scoring now accepts close transcripts such as hey jervis while still rejecting unrelated speech.",
     "Typed wake simulation now uses the same fuzzy wake tolerance, so Hey Jervis please check status is understood as check status.",
-    "One-breath commands like Hey Jarvis check my email now trigger the immediate Yes sir wake acknowledgement before capture.",
+    "One-breath commands like Hey Jarvis check my email now go straight to command capture instead of also speaking the wake-only Yes sir? prompt.",
     "Copy Chat JSON now includes recent wake events so Leo can paste back what Jarvis heard and captured.",
     "Normal Dock-app behavior is preserved, with a menu-bar item enabled for quick controls.",
     "Menu-bar Shut Up toggle mutes Jarvis, interrupts current speech, and switches to Keep Blabbering for unmute.",
@@ -59,12 +59,13 @@ PROOF_ITEMS = [
     "Muted live app-status and app-running probes returned app.status/app.running with routing.source=model_tool_call and did not launch or focus apps.",
     "A muted live streaming app-status probe displayed Yes sir, checking Safari now before the final answer.",
     "A muted live wake probe understood Hey Jervis please check status as check status, and wake scoring reported fuzzy_window score 0.916667 instead of a fake exact match.",
+    "Native one-breath wake commands now skip the separate wake-only Yes sir? prompt, reducing overlapping speech between the wake greeting and the working line.",
 ]
 
 TRY_ITEMS = [
     "Open Jarvis from the Dock; it should be a normal app window, not an always-front overlay.",
     "Use the menu-bar item to click Start Hey Jarvis, then say Hey Jarvis followed by a short command.",
-    "Try a one-breath command such as Hey Jarvis wake status; Jarvis should acknowledge immediately and then answer.",
+    "Try a one-breath command such as Hey Jarvis wake status; Jarvis should avoid a separate Yes sir? prompt and go straight into the task response.",
     "Use Shut Up if Jarvis is talking too much; use Keep Blabbering to restore speech.",
     "Ask for wake status or overnight status; Jarvis should speak the final answer, not only the Yes sir working line.",
     "Click Perms if Hey Jarvis does not listen; it should show which macOS permission is blocking the loop.",
@@ -264,7 +265,7 @@ def render_report(context: dict[str, Any]) -> str:
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
         ("done", "Ship Hey Jarvis native listener", "Experimental app toggle and Speech framework pipeline are in place."),
-        ("done", "Acknowledge one-breath wake commands", "Direct Hey Jarvis commands now trigger the wake acknowledgement before capture."),
+        ("done", "Avoid wake-command double speech", "Direct Hey Jarvis commands now skip the wake-only prompt and go straight to capture."),
         ("done", "Add wake debug trace to chat export", "Copy Chat JSON includes the recent wake events and captured command text."),
         ("done", "Ship wake audition lab", "Local page records samples, scores transcripts, and saves samples under runtime."),
         ("done", "Add menu-bar silence control", "Shut Up interrupts and mutes; Keep Blabbering unmutes."),

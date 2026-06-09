@@ -224,7 +224,6 @@ final class JarvisWakeListener {
         }
         if !detection.command.isEmpty {
             status = "Wake detected"
-            onWakeDetected?(transcript)
             captureCommand(detection.command, transcript: transcript)
             return
         }

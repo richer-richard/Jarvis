@@ -4122,6 +4122,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("testDetectWake", listener_source)
         self.assertIn('"hey jervis please check email"', self_test_source)
         self.assertIn(
+            'if !detection.command.isEmpty {\n            status = "Wake detected"\n            captureCommand',
+            listener_source,
+        )
+        self.assertNotIn(
             'if !detection.command.isEmpty {\n            status = "Wake detected"\n            onWakeDetected?(transcript)\n            captureCommand',
             listener_source,
         )
