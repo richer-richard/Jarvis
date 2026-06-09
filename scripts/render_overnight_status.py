@@ -36,6 +36,7 @@ SHIPPED_ITEMS = [
     "Copy Chat JSON now records ignored repeated wake phrases and ignored speaker-echo events from the native listener.",
     "Native Copy Chat JSON wake events now include detector score, threshold, matched phrase, window, mode, and normalized transcript.",
     "Jarvis can now analyze pasted Copy Chat JSON wake logs with voice.wake_debug.",
+    "Copy Chat JSON now includes the filtered history payload preview Jarvis would send with the current command.",
     "Normal Dock-app behavior is preserved, with a menu-bar item enabled for quick controls.",
     "Menu-bar Shut Up toggle mutes Jarvis, interrupts current speech, and switches to Keep Blabbering for unmute.",
     "Menu-bar Start Hey Jarvis / Stop Hey Jarvis controls make the wake listener reachable without opening the panel.",
@@ -56,7 +57,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 403/403 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
+    "Python safety suite: 404/404 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 96/96 after the speech-mute, wake-audition, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -69,6 +70,7 @@ PROOF_ITEMS = [
     "Muted live app-status and app-running probes returned app.status/app.running with routing.source=model_tool_call and did not launch or focus apps.",
     "Model-context tests now require the diagnostic to show that first and middle models treat Leo's latest message as possibly dictated speech.",
     "Live verifier now probes diagnostics.model_context and requires the speech-dictation input policy without calling models.",
+    "Swift source-contract tests now require Copy Chat JSON to expose the filtered conversation-history payload preview.",
     "A muted live streaming app-status probe displayed Yes sir, checking Safari now before the final answer.",
     "A muted live wake probe understood Hey Jervis please check status as check status, and wake scoring reported fuzzy_window score 0.916667 instead of a fake exact match.",
     "Python and Swift wake tests now keep hey jervis working while rejecting the short near-miss hey jars.",
@@ -344,6 +346,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Add wake debug trace to chat export", "Copy Chat JSON includes the recent wake events and captured command text."),
         ("done", "Trace ignored wake events", "Copy Chat JSON records ignored repeated wake phrases and wake-greeting echoes."),
         ("done", "Expose wake detector scores", "Copy Chat JSON now includes score, threshold, phrase, window, and mode for wake events."),
+        ("done", "Expose history payload preview", "Copy Chat JSON shows the filtered history Jarvis would send with the current command."),
         ("done", "Ship wake audition lab", "Local page records samples, scores transcripts, and saves samples under runtime."),
         ("done", "Add menu-bar silence control", "Shut Up interrupts and mutes; Keep Blabbering unmutes."),
         ("done", "Add menu-bar wake controls", "Start/Stop Hey Jarvis and Open Wake Test are reachable without the panel."),
@@ -458,7 +461,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 403/403 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
+            f"{context['verification']['label']} verifier, 404/404 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
         ),
         (
             "Honest Limit",

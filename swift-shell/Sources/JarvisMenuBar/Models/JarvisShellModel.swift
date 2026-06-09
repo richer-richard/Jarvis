@@ -359,6 +359,7 @@ final class JarvisShellModel: ObservableObject {
     func copyChatHistoryJSON() {
         let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let bundleBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let historyPreview = conversationHistoryPayload(currentCommand: command)
         let payload: [String: Any] = [
             "schema": "jarvis.chat.debug.v1",
             "exported_at": ISO8601DateFormatter().string(from: Date()),
@@ -399,6 +400,8 @@ final class JarvisShellModel: ObservableObject {
                 "last_response": Self.redactedJSONValue(lastCommandDiagnostics),
             ],
             "current_command": Self.redactChatExportText(command),
+            "history_payload_preview": historyPreview,
+            "history_payload_preview_note": "This is the filtered history Jarvis would send with the current command; Working rows, system rows, and the current user command are removed.",
             "last_result_text": Self.redactChatExportText(resultText),
             "messages": messages.map { message in
                 var item: [String: Any] = [

@@ -4261,6 +4261,20 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("captureResponseDiagnostics(response)", model_source)
         self.assertIn("recordTurnPhase(\"Answering\"", model_source)
 
+    def test_swift_copy_chat_json_includes_history_payload_preview(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("let historyPreview = conversationHistoryPayload(currentCommand: command)", model_source)
+        self.assertIn('"history_payload_preview": historyPreview', model_source)
+        self.assertIn("Working rows, system rows, and the current user command are removed", model_source)
+
     def test_swift_smoke_tests_cover_current_loop_regressions(self):
         model_source = (
             PROJECT_ROOT
