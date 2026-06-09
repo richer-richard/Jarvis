@@ -1115,6 +1115,22 @@ def check_endpoint_wake_audition(base_url: str) -> str:
     return f"wake score {score.get('score')}"
 
 
+def check_endpoint_wake_audition_corpus(base_url: str) -> str:
+    page_status, page_body, _ = http_response(base_url, "/wake-audition/")
+    script_status, script_body, _ = http_response(base_url, "/static/wake-audition.js")
+    css_status, css_body, _ = http_response(base_url, "/static/wake-audition.css")
+    require(page_status == 200, f"wake page status={page_status}")
+    require(script_status == 200, f"wake script status={script_status}")
+    require(css_status == 200, f"wake css status={css_status}")
+    require('id="corpus-list"' in page_body, "wake page missing corpus list")
+    require('id="corpus-status"' in page_body, "wake page missing corpus status")
+    require("THRESHOLD_CORPUS" in script_body, "wake script missing threshold corpus")
+    require("fillCorpusTranscript" in script_body, "wake script missing corpus click handler")
+    require("hey charvis status" in script_body, "wake script missing below-threshold boundary phrase")
+    require(".corpus-list" in css_body, "wake css missing corpus layout")
+    return "wake audition page exposes clickable threshold corpus"
+
+
 def check_endpoint_model_context(base_url: str) -> str:
     original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
     post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
@@ -1504,6 +1520,7 @@ def run_checks() -> dict[str, Any]:
         results.append(endpoint_check("endpoint_plan_preview", lambda: check_endpoint_plan_preview(active_base_url)))
         results.append(endpoint_check("endpoint_wake_simulation", lambda: check_endpoint_wake_simulation(active_base_url)))
         results.append(endpoint_check("endpoint_wake_audition", lambda: check_endpoint_wake_audition(active_base_url)))
+        results.append(endpoint_check("endpoint_wake_audition_corpus", lambda: check_endpoint_wake_audition_corpus(active_base_url)))
         results.append(endpoint_check("endpoint_model_context", lambda: check_endpoint_model_context(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_echo", lambda: check_endpoint_voice_loop_echo(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_repeated_wake", lambda: check_endpoint_voice_loop_repeated_wake(active_base_url)))

@@ -269,6 +269,21 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(detail, "report and workboard GET/HEAD HTML routes available")
 
+    def test_verify_safe_checks_wake_audition_corpus_route(self):
+        def fake_http_response(_base_url, path, **_kwargs):
+            if path == "/wake-audition/":
+                return 200, '<!doctype html><div id="corpus-list"></div><span id="corpus-status"></span>', {}
+            if path == "/static/wake-audition.js":
+                return 200, "const THRESHOLD_CORPUS = ['hey charvis status']; function fillCorpusTranscript() {}", {}
+            if path == "/static/wake-audition.css":
+                return 200, ".corpus-list { display: grid; }", {}
+            return 404, "", {}
+
+        with patch("scripts.verify_safe.http_response", side_effect=fake_http_response):
+            detail = verify_safe.check_endpoint_wake_audition_corpus("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "wake audition page exposes clickable threshold corpus")
+
     def test_verify_safe_checks_muted_final_speech_alignment(self):
         posts = []
         reply = (
