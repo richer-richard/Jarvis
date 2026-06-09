@@ -446,6 +446,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Serves the local Hey Jarvis audition page and scores wake transcripts/noise trials. Saved audio stays under runtime/.",
             },
             {
+                "id": "voice.wake_debug",
+                "label": "Wake Debug Analyzer",
+                "mode": "read_only_text_only",
+                "risk": "local_text_only",
+                "available": True,
+                "description": "Summarizes pasted Copy Chat JSON wake events, detector scores, ignored wake echoes, and captured commands without recording audio.",
+            },
+            {
                 "id": "voice.stt_audition",
                 "label": "STT Audition Status",
                 "mode": "read_only",
@@ -2370,6 +2378,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "voice.stt_recommendation", "kind": "read_only", "description": "Rank pasted STT audition export rows and recommend the strongest candidate without recording audio."},
         {"id": "voice.loop_simulation", "kind": "read_only_text_only", "description": "Simulate wake, greeting, command capture, and command preview without microphone or audio."},
         {"id": "voice.wake_audition", "kind": "local_test_surface", "description": "Open/report the local Hey Jarvis wake audition page and score provided transcripts without sending audio away."},
+        {"id": "voice.wake_debug", "kind": "read_only_text_only", "description": "Analyze pasted Copy Chat JSON wake events and detector scores without recording audio."},
         {"id": "ui.overlay", "kind": "read_only_plan", "description": "Plan the future visible Jarvis overlay/popup UI without opening windows or changing UI."},
         {"id": "ui.automation", "kind": "planned_private_app_control", "description": "Future app UI clicking/typing/navigation route with permission checks and confirmation gates."},
     ]
@@ -3525,6 +3534,142 @@ def wake_audition_score(transcript: str, *, threshold: float | None = None, nois
             else f"Wake score {score['score']:.3f}; below threshold"
         ),
     }
+
+
+def wake_debug_from_export(export_payload: Any) -> dict[str, Any]:
+    base = {
+        "tool": "voice.wake_debug",
+        "executed": True,
+        "read_pasted_debug_json": True,
+        "recorded_audio": False,
+        "requested_microphone_permission": False,
+        "played_audio": False,
+        "opened_app": False,
+        "captured_screen": False,
+        "called_model": False,
+        "changed_state": False,
+    }
+    parsed, parse_error = _parse_stt_export_payload(export_payload)
+    if parse_error:
+        return {
+            **base,
+            "status": "parse_error",
+            "parse_error": parse_error,
+            "event_count": 0,
+            "reply": "I could not read wake debug JSON. Copy Chat JSON from Jarvis, then paste it here.",
+        }
+    events = _wake_debug_events(parsed)
+    if not events:
+        return {
+            **base,
+            "status": "no_wake_events",
+            "event_count": 0,
+            "reply": "I found JSON, but it does not contain recent wake events from Copy Chat JSON.",
+        }
+
+    captured = [event for event in events if str(event.get("event") or "") == "command_captured"]
+    repeated = [event for event in events if str(event.get("event") or "") == "command_ignored_repeated_wake"]
+    echoes = [event for event in events if str(event.get("event") or "") == "command_ignored_echo"]
+    detected = [event for event in events if _wake_debug_bool(event.get("detector_detected"))]
+    scored = [
+        event
+        for event in events
+        if _wake_debug_is_detector_event(event)
+        and _wake_debug_float(event.get("detector_score")) is not None
+    ]
+    margins = [
+        _wake_debug_float(event.get("detector_score")) - _wake_debug_float(event.get("detector_threshold"))
+        for event in scored
+        if _wake_debug_float(event.get("detector_score")) is not None
+        and _wake_debug_float(event.get("detector_threshold")) is not None
+    ]
+    captured_commands = [str(event.get("command") or event.get("detector_command") or "").strip() for event in captured]
+    captured_commands = [command for command in captured_commands if command]
+    event_summary = [
+        {
+            "event": str(event.get("event") or ""),
+            "transcript": str(event.get("transcript") or "")[:160],
+            "command": str(event.get("command") or event.get("detector_command") or "")[:160],
+            "detector_detected": _wake_debug_bool(event.get("detector_detected")),
+            "detector_score": _wake_debug_float(event.get("detector_score")),
+            "detector_threshold": _wake_debug_float(event.get("detector_threshold")),
+            "detector_phrase": str(event.get("detector_phrase") or ""),
+            "detector_window": str(event.get("detector_window") or ""),
+            "detector_mode": str(event.get("detector_mode") or ""),
+        }
+        for event in events[-8:]
+    ]
+
+    next_step = "Try one normal Hey Jarvis command in the wake lab and paste Copy Chat JSON if it misfires."
+    if echoes:
+        next_step = "The listener heard Jarvis's own greeting; keep speaker volume lower or test with headphones/quiet room."
+    if repeated:
+        next_step = "Repeated wake-only phrases were ignored correctly; say the command after the first acknowledgement."
+    if captured_commands:
+        next_step = f"Last captured command was '{captured_commands[-1]}'; test whether the final answer appears and speaks."
+    if margins and min(margins) < 0:
+        next_step = "At least one wake transcript scored below threshold; record a few wake-lab samples so we can tune the threshold."
+
+    reply = (
+        f"Wake debug found {len(events)} event{'s' if len(events) != 1 else ''}: "
+        f"{len(captured)} captured, {len(repeated)} repeated wake ignored, {len(echoes)} echo ignored."
+    )
+    if captured_commands:
+        reply += f" Last command: {captured_commands[-1]}."
+    if margins:
+        reply += f" Closest detector margin: {min(margins):+.3f}."
+    return {
+        **base,
+        "status": "analyzed",
+        "event_count": len(events),
+        "captured_count": len(captured),
+        "repeated_wake_ignored_count": len(repeated),
+        "wake_greeting_echo_ignored_count": len(echoes),
+        "detected_count": len(detected),
+        "scored_event_count": len(scored),
+        "captured_commands": captured_commands[-5:],
+        "latest_event": event_summary[-1],
+        "recent_events": event_summary,
+        "minimum_detector_margin": round(min(margins), 6) if margins else None,
+        "next_step": next_step,
+        "reply": reply,
+    }
+
+
+def _wake_debug_events(parsed: Any) -> list[dict[str, Any]]:
+    if isinstance(parsed, list):
+        source = parsed
+    elif isinstance(parsed, dict):
+        app = parsed.get("app") if isinstance(parsed.get("app"), dict) else {}
+        wake = app.get("wake") if isinstance(app.get("wake"), dict) else {}
+        source = wake.get("recent_events")
+        if source is None:
+            source = parsed.get("recent_events")
+    else:
+        source = []
+    return [event for event in source if isinstance(event, dict)] if isinstance(source, list) else []
+
+
+def _wake_debug_bool(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _wake_debug_is_detector_event(event: dict[str, Any]) -> bool:
+    event_name = str(event.get("event") or "").strip().lower()
+    return (
+        event_name.startswith("wake")
+        or _wake_debug_bool(event.get("detector_detected"))
+        or bool(str(event.get("detector_phrase") or "").strip())
+        or bool(str(event.get("detector_window") or "").strip())
+        or bool(str(event.get("detector_mode") or "").strip())
+    )
+
+
+def _wake_debug_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _stt_executable_status(names: list[str]) -> list[dict[str, Any]]:
@@ -5672,6 +5817,7 @@ def _live_preflight_required_tool_ids() -> set[str]:
         "voice.loop_simulation",
         "voice.wake_simulation",
         "voice.wake_audition",
+        "voice.wake_debug",
         "safety.injection_scan",
         "diagnostics.codex_chats",
         "codex.chat_plan",

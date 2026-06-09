@@ -1164,6 +1164,41 @@ def check_endpoint_voice_loop_repeated_wake(base_url: str) -> str:
     return "voice loop ignored repeated wake phrase and captured follow-up command"
 
 
+def check_endpoint_wake_debug(base_url: str) -> str:
+    original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
+    post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
+    try:
+        payload = {
+            "app": {
+                "wake": {
+                    "recent_events": [
+                        {
+                            "event": "command_captured",
+                            "transcript": "status",
+                            "command": "status",
+                            "detector_detected": "false",
+                            "detector_score": "0.000000",
+                            "detector_threshold": "0.86",
+                        }
+                    ]
+                }
+            }
+        }
+        data = post_json(
+            "/api/command",
+            {"command": f"analyze wake debug JSON {json.dumps(payload)}"},
+            base_url=base_url,
+        )
+        result = data.get("result") or {}
+        require(data.get("tool") == "voice.wake_debug", f"tool was {data.get('tool')}")
+        require(result.get("status") == "analyzed", f"status was {result.get('status')}")
+        require(result.get("captured_commands") == ["status"], f"captured commands were {result.get('captured_commands')}")
+        require(result.get("recorded_audio") is False, "wake debug should not record audio")
+    finally:
+        post_json("/api/speech/mute", {"muted": original_mute}, base_url=base_url)
+    return "wake debug analyzed pasted Copy Chat JSON without recording audio"
+
+
 def check_endpoint_overnight_report_routes(base_url: str) -> str:
     report_status, report_body, report_headers = http_response(base_url, "/overnight-report/")
     workboard_status, workboard_body, workboard_headers = http_response(base_url, "/overnight-workboard/")
@@ -1447,6 +1482,7 @@ def run_checks() -> dict[str, Any]:
         results.append(endpoint_check("endpoint_wake_audition", lambda: check_endpoint_wake_audition(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_echo", lambda: check_endpoint_voice_loop_echo(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_repeated_wake", lambda: check_endpoint_voice_loop_repeated_wake(active_base_url)))
+        results.append(endpoint_check("endpoint_wake_debug", lambda: check_endpoint_wake_debug(active_base_url)))
         results.append(endpoint_check("endpoint_overnight_report_routes", lambda: check_endpoint_overnight_report_routes(active_base_url)))
         results.append(endpoint_check("endpoint_speech_mute", lambda: check_endpoint_speech_mute(active_base_url)))
         results.append(endpoint_check("endpoint_prompt_injection_scan", lambda: check_endpoint_prompt_injection_scan(active_base_url)))

@@ -74,6 +74,7 @@ from .tools import (
     ui_overlay_plan,
     voice_session_plan,
     voice_loop_simulation,
+    wake_debug_from_export,
     wake_audition_status,
     wake_status,
     wake_phrase_simulation,
@@ -168,6 +169,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "voice.wake_audition",
         "description": "Report the local Hey Jarvis wake audition page for recording wake samples, scoring transcripts, and tuning the wake threshold.",
         "entities": [],
+    },
+    {
+        "tool": "voice.wake_debug",
+        "description": "Analyze pasted Copy Chat JSON wake events, detector scores, ignored wake echoes, and captured commands without recording audio.",
+        "entities": ["export_json"],
+        "examples": [
+            'Yes sir, analyzing the wake debug log now. \\tool({"tool":"voice.wake_debug","entities":{"export_json":"{... pasted Copy Chat JSON ...}"}})',
+        ],
     },
     {
         "tool": "voice.stt_session_plan",
@@ -536,6 +545,8 @@ class Planner:
             return self._result(text, "codex.job", summary, assessment, result, bool(result.get("executed")))
         if _looks_like_wake_audition_status(lower):
             return self._result(text, "voice.wake_audition", "Read Hey Jarvis wake audition status.", assessment, wake_audition_status(), True)
+        if _looks_like_wake_debug_request(lower):
+            return self._result(text, "voice.wake_debug", "Analyzed pasted wake debug JSON.", assessment, wake_debug_from_export(_extract_wake_debug_payload(text)), True)
         wake_transcript = _extract_wake_transcript(text)
         if wake_transcript is not None:
             return self._result(text, "voice.wake_simulation", "Ran text-only wake phrase simulation.", assessment, wake_phrase_simulation(wake_transcript), True)
@@ -617,6 +628,8 @@ class Planner:
             return self._result(text, "diagnostics.wake", "Read local Jarvis wake status.", assessment, wake_status(), True)
         if _looks_like_wake_audition_status(lower):
             return self._result(text, "voice.wake_audition", "Read Hey Jarvis wake audition status.", assessment, wake_audition_status(), True)
+        if _looks_like_wake_debug_request(lower):
+            return self._result(text, "voice.wake_debug", "Analyzed pasted wake debug JSON.", assessment, wake_debug_from_export(_extract_wake_debug_payload(text)), True)
         stt_score_payload = _extract_stt_score_payload(text)
         if stt_score_payload is not None:
             result = stt_score_transcript(**stt_score_payload)
@@ -801,6 +814,8 @@ class Planner:
             return self._preview_result(text, "files.search", assessment, True)
         if _looks_like_wake_audition_status(lower):
             return self._preview_result(text, "voice.wake_audition", assessment, True)
+        if _looks_like_wake_debug_request(lower):
+            return self._preview_result(text, "voice.wake_debug", assessment, True, plan={"payload_present": bool(_extract_wake_debug_payload(text))})
         if _extract_wake_transcript(text) is not None:
             return self._preview_result(text, "voice.wake_simulation", assessment, True)
         if _extract_injection_scan_text(text) is not None:
@@ -841,6 +856,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.wake", assessment, True)
         if _looks_like_wake_audition_status(lower):
             return self._preview_result(text, "voice.wake_audition", assessment, True)
+        if _looks_like_wake_debug_request(lower):
+            return self._preview_result(text, "voice.wake_debug", assessment, True, plan={"payload_present": bool(_extract_wake_debug_payload(text))})
         stt_score_payload = _extract_stt_score_payload(text)
         if stt_score_payload is not None:
             return self._preview_result(text, "voice.stt_score", assessment, True, plan={"planned_only": True, **stt_score_payload})
@@ -993,6 +1010,11 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "voice.wake_audition", assessment, True, plan={"intent": intent})
             return self._result(text, "voice.wake_audition", "Read Hey Jarvis wake audition status.", assessment, wake_audition_status(), True)
+        if selected_tool == "voice.wake_debug":
+            payload = entities.get("export_json") or entities.get("payload") or entities.get("json") or _extract_wake_debug_payload(text)
+            if not execute:
+                return self._preview_result(text, "voice.wake_debug", assessment, True, plan={"intent": intent, "payload_present": bool(payload)})
+            return self._result(text, "voice.wake_debug", "Analyzed pasted wake debug JSON.", assessment, wake_debug_from_export(payload), True)
         if selected_tool == "voice.stt_session_plan":
             candidate_id = _clean_optional_entity(entities.get("candidate_id"))
             reference_sentence = _clean_optional_entity(entities.get("reference_sentence"))
@@ -2609,6 +2631,27 @@ def _looks_like_wake_audition_status(lower: str) -> bool:
         and any(cue in lower for cue in audition_cues)
         and not any(cue in lower for cue in mutation_cues)
     )
+
+
+def _looks_like_wake_debug_request(lower: str) -> bool:
+    debug_cues = (
+        "wake debug",
+        "wake log",
+        "wake events",
+        "copy chat json",
+        "chat debug json",
+        "analyze wake",
+        "why did hey jarvis",
+    )
+    return ("wake" in lower or "hey jarvis" in lower) and any(cue in lower for cue in debug_cues)
+
+
+def _extract_wake_debug_payload(text: str) -> str:
+    stripped = str(text or "").strip()
+    for marker in ("```json", "```"):
+        if marker in stripped:
+            stripped = stripped.replace(marker, " ")
+    return stripped
 
 
 def _looks_like_stt_candidate_status(lower: str) -> bool:

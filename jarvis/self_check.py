@@ -199,6 +199,7 @@ def run_self_checks() -> dict[str, Any]:
         "voice.loop_simulation",
         "voice.wake_simulation",
         "voice.wake_audition",
+        "voice.wake_debug",
         "safety.injection_scan",
         "conversation.fast_local",
         "quick.local_control",

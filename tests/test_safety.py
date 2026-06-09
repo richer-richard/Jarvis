@@ -111,6 +111,7 @@ from jarvis.tools import (
     ui_overlay_plan,
     voice_loop_simulation,
     voice_session_plan,
+    wake_debug_from_export,
     wake_audition_score,
     wake_audition_status,
     wake_status,
@@ -323,6 +324,33 @@ class VerifySafeScriptTests(unittest.TestCase):
             detail = verify_safe.check_endpoint_voice_loop_repeated_wake("http://127.0.0.1:8765")
 
         self.assertEqual(detail, "voice loop ignored repeated wake phrase and captured follow-up command")
+        self.assertEqual(posts[0], ("/api/speech/mute", {"muted": True}))
+        self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
+
+    def test_verify_safe_checks_wake_debug(self):
+        posts = []
+
+        def fake_post_json(path, payload, **_kwargs):
+            posts.append((path, payload))
+            if path == "/api/speech/mute":
+                return {"tool": "voice.speech_mute", "muted": bool(payload["muted"])}
+            if path == "/api/command":
+                self.assertIn("analyze wake debug JSON", payload["command"])
+                return {
+                    "tool": "voice.wake_debug",
+                    "result": {
+                        "status": "analyzed",
+                        "captured_commands": ["status"],
+                        "recorded_audio": False,
+                    },
+                }
+            raise AssertionError(f"unexpected POST {path}")
+
+        with patch("scripts.verify_safe.post_json", side_effect=fake_post_json), \
+             patch("scripts.verify_safe.get_json", return_value={"muted": False}):
+            detail = verify_safe.check_endpoint_wake_debug("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "wake debug analyzed pasted Copy Chat JSON without recording audio")
         self.assertEqual(posts[0], ("/api/speech/mute", {"muted": True}))
         self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
 
@@ -2833,6 +2861,90 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["mode"], "fuzzy_window")
         self.assertFalse(result["recorded_audio"])
 
+    def test_wake_debug_from_chat_export_summarizes_recent_events(self):
+        payload = {
+            "app": {
+                "wake": {
+                    "recent_events": [
+                        {
+                            "event": "wake_detected",
+                            "transcript": "Hey Jarvis",
+                            "detector_detected": "true",
+                            "detector_score": "1.000000",
+                            "detector_threshold": "0.86",
+                            "detector_phrase": "hey jarvis",
+                        },
+                        {
+                            "event": "command_ignored_echo",
+                            "transcript": "Yes sir?",
+                            "detector_detected": "false",
+                            "detector_score": "0.000000",
+                            "detector_threshold": "0.86",
+                        },
+                        {
+                            "event": "command_captured",
+                            "transcript": "status",
+                            "command": "status",
+                            "detector_detected": "false",
+                            "detector_score": "0.000000",
+                            "detector_threshold": "0.86",
+                        },
+                    ]
+                }
+            }
+        }
+
+        result = wake_debug_from_export(json.dumps(payload))
+
+        self.assertEqual(result["tool"], "voice.wake_debug")
+        self.assertEqual(result["status"], "analyzed")
+        self.assertEqual(result["event_count"], 3)
+        self.assertEqual(result["captured_count"], 1)
+        self.assertEqual(result["wake_greeting_echo_ignored_count"], 1)
+        self.assertEqual(result["captured_commands"], ["status"])
+        self.assertAlmostEqual(result["minimum_detector_margin"], 0.14, places=6)
+        self.assertIn("Last command: status", result["reply"])
+        self.assertFalse(result["recorded_audio"])
+
+    def test_wake_debug_reports_missing_events(self):
+        result = wake_debug_from_export("{}")
+
+        self.assertEqual(result["status"], "no_wake_events")
+        self.assertEqual(result["event_count"], 0)
+        self.assertFalse(result["recorded_audio"])
+
+    def test_planner_selected_wake_debug_analyzes_pasted_export(self):
+        payload = {
+            "app": {
+                "wake": {
+                    "recent_events": [
+                        {
+                            "event": "command_captured",
+                            "transcript": "status",
+                            "command": "status",
+                            "detector_detected": "false",
+                            "detector_score": "0.000000",
+                            "detector_threshold": "0.86",
+                        }
+                    ]
+                }
+            }
+        }
+
+        result = Planner().handle_selected_tool(
+            "Analyze this wake debug JSON",
+            "voice.wake_debug",
+            {"export_json": json.dumps(payload)},
+        )
+
+        self.assertEqual(result.tool, "voice.wake_debug")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["status"], "analyzed")
+        self.assertEqual(result.result["captured_commands"], ["status"])
+        self.assertIsNone(result.result["minimum_detector_margin"])
+        self.assertNotIn("Closest detector margin", result.result["reply"])
+        self.assertFalse(result.result["recorded_audio"])
+
     def test_wake_audition_static_page_has_decision_summary(self):
         html = (PROJECT_ROOT / "jarvis" / "static" / "wake-audition.html").read_text(encoding="utf-8")
         script = (PROJECT_ROOT / "jarvis" / "static" / "wake-audition.js").read_text(encoding="utf-8")
@@ -4360,6 +4472,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("voice.stt_recommendation", tool_ids)
         self.assertIn("voice.loop_simulation", tool_ids)
         self.assertIn("voice.wake_audition", tool_ids)
+        self.assertIn("voice.wake_debug", tool_ids)
         self.assertIn("voice.stop_speaking", tool_ids)
         self.assertIn("diagnostics.overnight", tool_ids)
         self.assertIn("diagnostics.final_qa", tool_ids)
@@ -8341,7 +8454,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("41/41", policy_gate["detail"])
+        self.assertIn("42/42", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 

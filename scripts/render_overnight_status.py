@@ -35,6 +35,7 @@ SHIPPED_ITEMS = [
     "Copy Chat JSON now includes recent wake events so Leo can paste back what Jarvis heard and captured.",
     "Copy Chat JSON now records ignored repeated wake phrases and ignored speaker-echo events from the native listener.",
     "Native Copy Chat JSON wake events now include detector score, threshold, matched phrase, window, mode, and normalized transcript.",
+    "Jarvis can now analyze pasted Copy Chat JSON wake logs with voice.wake_debug.",
     "Normal Dock-app behavior is preserved, with a menu-bar item enabled for quick controls.",
     "Menu-bar Shut Up toggle mutes Jarvis, interrupts current speech, and switches to Keep Blabbering for unmute.",
     "Menu-bar Start Hey Jarvis / Stop Hey Jarvis controls make the wake listener reachable without opening the panel.",
@@ -54,10 +55,10 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 398/398 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
+    "Python safety suite: 402/402 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
-    "Live safe verifier passed 94/94 after the speech-mute, wake-audition, repeated-wake, voice-loop echo, and report-route endpoints were added.",
+    "Live safe verifier passed 95/95 after the speech-mute, wake-audition, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
     "Live verifier now checks that muted final speech preserves a substantial prefix of the final visible reply.",
     "Live Jarvis health showed the rebuilt app running from bundled app resources.",
     "Live UI inspection showed the Jarvis panel with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
@@ -77,6 +78,7 @@ PROOF_ITEMS = [
     "Live verifier now probes voice loop: Hey Jarvis | Yes sir? | status and requires status to be captured after the ignored echo.",
     "Swift source contract now requires ignored repeated-wake and wake-greeting-echo events to be present in Copy Chat JSON.",
     "Swift self-tests now require fuzzy matching for okay jervis as well as hey jervis, with detector diagnostics exposed for pasted JSON.",
+    "Live verifier now probes voice.wake_debug with pasted Copy Chat JSON and requires no audio recording.",
 ]
 
 TRY_ITEMS = [
@@ -452,7 +454,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 398/398 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
+            f"{context['verification']['label']} verifier, 402/402 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
         ),
         (
             "Honest Limit",
