@@ -97,6 +97,8 @@ def build_context(base_url: str) -> dict[str, Any]:
     build = str(app.get("build") or "unknown")
     commit = git(["rev-parse", "--short", "HEAD"]) or "unknown"
     branch = git(["branch", "--show-current"]) or "unknown"
+    upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    git_sync = git_sync_label(upstream)
     return {
         "base_url": base_url,
         "now": now,
@@ -106,6 +108,8 @@ def build_context(base_url: str) -> dict[str, Any]:
         "bundle": f"Jarvis {version} build {build}",
         "commit": commit,
         "branch": branch,
+        "upstream": upstream,
+        "git_sync": git_sync,
         "verification": verification,
         "worker_source_kind": app.get("worker_source_kind") or "unknown",
         "launch_mode": app.get("launch_mode") or "unknown",
@@ -182,6 +186,24 @@ def git(args: list[str]) -> str:
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def git_sync_label(upstream: str) -> str:
+    if not upstream:
+        return "not published"
+    counts = git(["rev-list", "--left-right", "--count", f"{upstream}...HEAD"])
+    try:
+        behind, ahead = [int(part) for part in counts.split()]
+    except (ValueError, TypeError):
+        return "published"
+    if ahead == 0 and behind == 0:
+        return "up to date"
+    parts = []
+    if ahead:
+        parts.append(f"{ahead} ahead")
+    if behind:
+        parts.append(f"{behind} behind")
+    return ", ".join(parts)
 
 
 def render_report(context: dict[str, Any]) -> str:
@@ -282,6 +304,7 @@ def pill_row(context: dict[str, Any]) -> str:
         f"Live bundle: {context['bundle']}",
         f"Source commit: {context['commit']}",
         f"Branch: {context['branch']}",
+        f"GitHub: {context['upstream'] or 'not published'} ({context['git_sync']})",
         f"Verification: {context['verification']['label']}",
         f"Launch: {context['launch_mode']}",
     ]

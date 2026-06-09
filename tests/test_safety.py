@@ -143,6 +143,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             "bundle": "Jarvis 0.1.test build 999",
             "commit": "abc1234",
             "branch": "codex/test",
+            "upstream": "origin/codex/test",
+            "git_sync": "up to date",
             "verification": {"label": "91/91 passed", "path": "runtime/verification/example.json", "passed": 91, "total": 91},
             "worker_source_kind": "bundled app resources",
             "launch_mode": "regular Dock app",
@@ -162,6 +164,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Jarvis Overnight Workboard", workboard)
         self.assertIn("Jarvis 0.1.test build 999", report)
         self.assertIn("Source commit: abc1234", report)
+        self.assertIn("GitHub: origin/codex/test (up to date)", report)
         self.assertIn("http://127.0.0.1:8765/wake-audition/", report)
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
