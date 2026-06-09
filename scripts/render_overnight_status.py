@@ -414,7 +414,7 @@ def supporting_section(context: dict[str, Any]) -> str:
             href = path
             display_path = path
         else:
-            href = "../" + path.removeprefix("runtime/")
+            href = "../" + path.removeprefix("runtime/") if path.startswith("runtime/") else "../../" + path
             display_path = str(PROJECT_ROOT / path)
         rows.append(f'<li><a href="{e(href)}">{e(display_path)}</a> - {e(label)}</li>')
     return "<section><h2>Supporting Files</h2><ul>" + "".join(rows) + "</ul></section>"
