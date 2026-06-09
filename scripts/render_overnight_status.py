@@ -39,7 +39,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 379/379 passed after the wake, mute, and final-speech work.",
+    "Python safety suite: 380/380 passed after the wake, mute, final-speech, and speech-alignment work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels and worker checks.",
     "Live safe verifier passed 91/91 after the speech-mute endpoint and wake-audition endpoint were added.",
