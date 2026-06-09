@@ -64,6 +64,7 @@ RISK_ITEMS = [
     "Speech Recognition permission can still block the native listener until macOS grants it to the current Jarvis bundle.",
     "The current wake phrase is experimental; it is not yet personalized to Leo's voice.",
     "Very technical diagnostics are still intentionally speech-silent so Jarvis does not read backend internals aloud.",
+    "GitHub main still preserves the older small-tree history; the full Jarvis folder is published on the overnight branch and should be promoted deliberately.",
 ]
 
 SUPPORTING_FILES = [
