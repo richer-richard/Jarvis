@@ -24,6 +24,7 @@ SHIPPED_ITEMS = [
     "Experimental native Hey Jarvis listener in the macOS app, using Speech and AVAudioEngine.",
     "Wake-audition lab at /wake-audition/ for recording samples, scoring transcripts, running noise trials, and copying JSON.",
     "Wake scoring now accepts close transcripts such as hey jervis while still rejecting unrelated speech.",
+    "Typed wake simulation now uses the same fuzzy wake tolerance, so Hey Jervis please check status is understood as check status.",
     "One-breath commands like Hey Jarvis check my email now trigger the immediate Yes sir wake acknowledgement before capture.",
     "Copy Chat JSON now includes recent wake events so Leo can paste back what Jarvis heard and captured.",
     "Normal Dock-app behavior is preserved, with a menu-bar item enabled for quick controls.",
@@ -45,7 +46,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 388/388 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, and app-specific status-line work.",
+    "Python safety suite: 389/389 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 92/92 after the speech-mute, wake-audition, and report-route endpoints were added.",
@@ -57,6 +58,7 @@ PROOF_ITEMS = [
     "A muted live Mac-status probe returned diagnostics.device with routing.source=model_tool_call.",
     "Muted live app-status and app-running probes returned app.status/app.running with routing.source=model_tool_call and did not launch or focus apps.",
     "A muted live streaming app-status probe displayed Yes sir, checking Safari now before the final answer.",
+    "A muted live wake probe understood Hey Jervis please check status as check status, and wake scoring reported fuzzy_window score 0.916667 instead of a fake exact match.",
 ]
 
 TRY_ITEMS = [

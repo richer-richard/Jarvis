@@ -2736,6 +2736,8 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result["detected"])
         self.assertEqual(result["command"], "check email")
         self.assertGreaterEqual(result["score"], result["threshold"])
+        self.assertLess(result["score"], 1.0)
+        self.assertEqual(result["mode"], "fuzzy_window")
         self.assertFalse(result["recorded_audio"])
 
     def test_wake_audition_static_page_has_decision_summary(self):
@@ -8071,6 +8073,25 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(wake["event"], "wake_detected")
         self.assertEqual(followup["event"], "command_captured")
         self.assertEqual(followup["command"], "check my calendar")
+
+    def test_wake_detection_accepts_close_dictation_without_perfect_score(self):
+        direct = detect_wake_command("hey jervis please check status")
+        self.assertTrue(direct.woke)
+        self.assertEqual(direct.command, "check status")
+        self.assertFalse(direct.needs_followup)
+
+        score = score_wake_transcript("hey jervis please check status")
+        self.assertTrue(score.detected)
+        self.assertEqual(score.command, "check status")
+        self.assertEqual(score.mode, "fuzzy_window")
+        self.assertEqual(score.start_word_index, 0)
+        self.assertGreaterEqual(score.score, score.threshold)
+        self.assertLess(score.score, 1.0)
+
+        session = WakeSession(timeout_seconds=3)
+        captured = session.observe("hey jervis please check status", now=10)
+        self.assertEqual(captured["event"], "command_captured")
+        self.assertEqual(captured["command"], "check status")
 
     def test_wake_session_ignores_late_followup(self):
         session = WakeSession(timeout_seconds=3)

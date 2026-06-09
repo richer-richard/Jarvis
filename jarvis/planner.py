@@ -2176,7 +2176,7 @@ def _extract_wake_transcript(text: str) -> str | None:
     match = re.match(r"(?i)^simulate wake\s+(.+)$", stripped)
     if match:
         return match.group(1).strip()
-    if detect_wake_command(stripped).woke:
+    if re.match(r"(?i)^(hey|ok|okay)\b", stripped) and detect_wake_command(stripped).woke:
         return stripped
     return None
 

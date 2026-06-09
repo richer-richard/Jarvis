@@ -96,14 +96,13 @@ class WakeSession:
 
 def detect_wake_command(transcript: str, wake_phrases: tuple[str, ...] = WAKE_PHRASES) -> WakeDetection:
     normalized = normalize_transcript(transcript)
-    for phrase in wake_phrases:
-        normalized_phrase = normalize_transcript(phrase)
-        if normalized == normalized_phrase:
-            return WakeDetection(True, phrase, "", True, normalized)
-        prefix = f"{normalized_phrase} "
-        if normalized.startswith(prefix):
-            command = normalized.removeprefix(prefix).strip()
-            return WakeDetection(True, phrase, command, not bool(command), normalized)
+    exact = _exact_wake_detection(normalized, wake_phrases)
+    if exact is not None:
+        return exact
+    fuzzy = _best_fuzzy_wake_match(normalized, wake_phrases)
+    if fuzzy is not None and fuzzy["score"] >= DEFAULT_WAKE_THRESHOLD:
+        command = _clean_command(str(fuzzy["command"]))
+        return WakeDetection(True, str(fuzzy["phrase"]), command, not bool(command), normalized)
     return WakeDetection(False, None, "", False, normalized)
 
 
@@ -115,8 +114,8 @@ def score_wake_transcript(
 ) -> WakeScore:
     """Score a transcript for wake-word use without inspecting raw audio."""
     normalized = normalize_transcript(transcript)
-    exact = detect_wake_command(normalized, wake_phrases)
-    if exact.woke:
+    exact = _exact_wake_detection(normalized, wake_phrases)
+    if exact is not None:
         return WakeScore(
             detected=True,
             score=1.0,
@@ -129,31 +128,13 @@ def score_wake_transcript(
             mode="exact_prefix",
         )
 
-    words = normalized.split()
-    best_phrase: str | None = None
-    best_score = 0.0
-    best_window = ""
-    best_start: int | None = None
-    best_phrase_words: list[str] = []
-    for phrase in wake_phrases:
-        phrase_words = normalize_transcript(phrase).split()
-        if not words or not phrase_words or len(words) < len(phrase_words):
-            continue
-        for index in range(0, len(words) - len(phrase_words) + 1):
-            window_words = words[index : index + len(phrase_words)]
-            score = _window_similarity(phrase_words, window_words)
-            if score > best_score:
-                best_score = score
-                best_phrase = phrase
-                best_window = " ".join(window_words)
-                best_start = index
-                best_phrase_words = phrase_words
-
+    fuzzy = _best_fuzzy_wake_match(normalized, wake_phrases)
+    best_phrase = str(fuzzy["phrase"]) if fuzzy is not None else None
+    best_score = float(fuzzy["score"]) if fuzzy is not None else 0.0
+    best_window = str(fuzzy["window"]) if fuzzy is not None else ""
+    best_start = int(fuzzy["start_word_index"]) if fuzzy is not None and fuzzy["start_word_index"] is not None else None
     detected = bool(best_phrase and best_score >= threshold)
-    command = ""
-    if detected and best_start is not None:
-        command_words = words[best_start + len(best_phrase_words) :]
-        command = " ".join(command_words).strip()
+    command = _clean_command(str(fuzzy["command"])) if detected and fuzzy is not None else ""
     return WakeScore(
         detected=detected,
         score=round(best_score, 6),
@@ -171,6 +152,44 @@ def normalize_transcript(transcript: str) -> str:
     lowered = transcript.strip().lower()
     ascii_words = re.sub(r"[^a-z0-9]+", " ", lowered)
     return " ".join(ascii_words.split())
+
+
+def _exact_wake_detection(normalized: str, wake_phrases: tuple[str, ...]) -> WakeDetection | None:
+    for phrase in wake_phrases:
+        normalized_phrase = normalize_transcript(phrase)
+        if normalized == normalized_phrase:
+            return WakeDetection(True, phrase, "", True, normalized)
+        prefix = f"{normalized_phrase} "
+        if normalized.startswith(prefix):
+            command = _clean_command(normalized.removeprefix(prefix))
+            return WakeDetection(True, phrase, command, not bool(command), normalized)
+    return None
+
+
+def _best_fuzzy_wake_match(normalized: str, wake_phrases: tuple[str, ...]) -> dict[str, Any] | None:
+    words = normalized.split()
+    best: dict[str, Any] | None = None
+    for phrase in wake_phrases:
+        phrase_words = normalize_transcript(phrase).split()
+        if not words or not phrase_words or len(words) < len(phrase_words):
+            continue
+        for index in range(0, len(words) - len(phrase_words) + 1):
+            window_words = words[index : index + len(phrase_words)]
+            score = _window_similarity(phrase_words, window_words)
+            if best is None or score > float(best["score"]):
+                command_words = words[index + len(phrase_words) :]
+                best = {
+                    "phrase": phrase,
+                    "score": score,
+                    "window": " ".join(window_words),
+                    "start_word_index": index,
+                    "command": " ".join(command_words).strip(),
+                }
+    return best
+
+
+def _clean_command(value: str) -> str:
+    return re.sub(r"^(please\s+)+", "", normalize_transcript(value)).strip()
 
 
 def _window_similarity(phrase_words: list[str], window_words: list[str]) -> float:
