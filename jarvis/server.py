@@ -46,6 +46,7 @@ from .tools import (
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+OVERNIGHT_STATUS_DIR = PROJECT_ROOT / "runtime" / "overnight_status"
 MAX_VERIFICATION_AGE_SECONDS = 12 * 60 * 60
 MAX_WAKE_SAMPLE_BYTES = 8 * 1024 * 1024
 
@@ -715,6 +716,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         if route.path in {"/wake-audition", "/wake-audition/"}:
             self._send_file(STATIC_DIR / "wake-audition.html")
             return
+        if route.path in {"/overnight-report", "/overnight-report/"}:
+            self._send_runtime_file(OVERNIGHT_STATUS_DIR / "report.html", root=OVERNIGHT_STATUS_DIR)
+            return
+        if route.path in {"/overnight-workboard", "/overnight-workboard/"}:
+            self._send_runtime_file(OVERNIGHT_STATUS_DIR / "index.html", root=OVERNIGHT_STATUS_DIR)
+            return
         if route.path.startswith("/static/"):
             self._send_file(STATIC_DIR / route.path.removeprefix("/static/"))
             return
@@ -925,6 +932,21 @@ class RequestHandler(BaseHTTPRequestHandler):
         resolved = path.resolve()
         static_root = STATIC_DIR.resolve()
         if not resolved.is_relative_to(static_root) or not resolved.exists() or not resolved.is_file():
+            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        content = resolved.read_bytes()
+        content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(content)))
+        self._send_common_headers()
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _send_runtime_file(self, path: Path, *, root: Path) -> None:
+        resolved = path.resolve()
+        runtime_root = root.resolve()
+        if not resolved.is_relative_to(runtime_root) or not resolved.exists() or not resolved.is_file():
             self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
             return
         content = resolved.read_bytes()

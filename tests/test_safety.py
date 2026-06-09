@@ -165,10 +165,25 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Jarvis 0.1.test build 999", report)
         self.assertIn("Source commit: abc1234", report)
         self.assertIn("GitHub: origin/codex/test (up to date)", report)
+        self.assertIn("http://127.0.0.1:8765/overnight-report/", report)
+        self.assertIn("http://127.0.0.1:8765/overnight-workboard/", report)
         self.assertIn("http://127.0.0.1:8765/wake-audition/", report)
         self.assertIn(str(PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"), report)
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
+
+    def test_verify_safe_checks_overnight_report_routes(self):
+        def fake_http_status(_base_url, path, **_kwargs):
+            if path == "/overnight-report/":
+                return 200, "<!doctype html><title>Jarvis Master Report</title>"
+            if path == "/overnight-workboard/":
+                return 200, "<!doctype html><title>Jarvis Overnight Workboard</title>"
+            return 404, ""
+
+        with patch("scripts.verify_safe.http_status", side_effect=fake_http_status):
+            detail = verify_safe.check_endpoint_overnight_report_routes("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "report and workboard HTML routes available")
 
     def test_temp_app_command_retries_repeated_empty_sigkill_before_passing(self):
         calls = []
@@ -3477,10 +3492,12 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("master report", result["reply"])
         self.assertIn("2 shipped changes", result["reply"])
         self.assertIn("Verification: 89/89 passed", result["reply"])
-        self.assertIn("workboard paths are included", result["reply"])
+        self.assertIn("workboard URLs and paths are included", result["reply"])
         self.assertNotIn(str(root), result["reply"])
         self.assertEqual(result["workboard_path"], str(workboard))
         self.assertEqual(result["report_path"], str(report))
+        self.assertEqual(result["workboard_url"], "http://127.0.0.1:8765/overnight-workboard/")
+        self.assertEqual(result["report_url"], "http://127.0.0.1:8765/overnight-report/")
         self.assertNotIn("morning report draft", result["reply"].lower())
 
     def test_overnight_work_status_clears_next_checks_when_live_qa_complete(self):

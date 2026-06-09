@@ -1093,6 +1093,16 @@ def check_endpoint_wake_audition(base_url: str) -> str:
     return f"wake score {score.get('score')}"
 
 
+def check_endpoint_overnight_report_routes(base_url: str) -> str:
+    report_status, report_body = http_status(base_url, "/overnight-report/")
+    workboard_status, workboard_body = http_status(base_url, "/overnight-workboard/")
+    require(report_status == 200, f"report status={report_status}")
+    require(workboard_status == 200, f"workboard status={workboard_status}")
+    require("Jarvis Master Report" in report_body, "report title missing")
+    require("Jarvis Overnight Workboard" in workboard_body, "workboard title missing")
+    return "report and workboard HTML routes available"
+
+
 def check_endpoint_speech_mute(base_url: str) -> str:
     muted = post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
     try:
@@ -1330,6 +1340,7 @@ def run_checks() -> dict[str, Any]:
         results.append(endpoint_check("endpoint_plan_preview", lambda: check_endpoint_plan_preview(active_base_url)))
         results.append(endpoint_check("endpoint_wake_simulation", lambda: check_endpoint_wake_simulation(active_base_url)))
         results.append(endpoint_check("endpoint_wake_audition", lambda: check_endpoint_wake_audition(active_base_url)))
+        results.append(endpoint_check("endpoint_overnight_report_routes", lambda: check_endpoint_overnight_report_routes(active_base_url)))
         results.append(endpoint_check("endpoint_speech_mute", lambda: check_endpoint_speech_mute(active_base_url)))
         results.append(endpoint_check("endpoint_prompt_injection_scan", lambda: check_endpoint_prompt_injection_scan(active_base_url)))
         results.append(endpoint_check("endpoint_read_only_shell_allowlist", lambda: check_endpoint_read_only_shell_allowlist(active_base_url)))

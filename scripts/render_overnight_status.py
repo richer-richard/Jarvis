@@ -36,13 +36,14 @@ SHIPPED_ITEMS = [
     "Final answers with normal reply text now auto-speak by default instead of leaving only the working line audible.",
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
+    "The master report and workboard now have read-only loopback URLs at /overnight-report/ and /overnight-workboard/.",
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 380/380 passed after the wake, mute, final-speech, and speech-alignment work.",
+    "Python safety suite: 381/381 passed after the wake, mute, final-speech, report-route, and speech-alignment work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels and worker checks.",
-    "Live safe verifier passed 91/91 after the speech-mute endpoint and wake-audition endpoint were added.",
+    "Live safe verifier passed 92/92 after the speech-mute, wake-audition, and report-route endpoints were added.",
     "Live Jarvis health showed the rebuilt app running from bundled app resources.",
     "Live UI inspection showed the Jarvis panel with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
     "A muted live TTS probe returned the exact sanitized text_preview that Jarvis was asked to speak.",
@@ -71,6 +72,8 @@ RISK_ITEMS = [
 ]
 
 SUPPORTING_FILES = [
+    ("http://127.0.0.1:8765/overnight-report/", "Loopback master report"),
+    ("http://127.0.0.1:8765/overnight-workboard/", "Loopback overnight workboard"),
     ("runtime/overnight_status/index.html", "Live overnight workboard"),
     ("runtime/overnight_status/report.html", "This master report"),
     ("http://127.0.0.1:8765/wake-audition/", "Hey Jarvis wake audition lab"),
@@ -260,6 +263,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
         ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),
+        ("done", "Add report loopback URLs", "The master report and workboard are reachable from the running Jarvis worker."),
         ("working", "Next: real-world Leo testing", "Needs actual microphone, room noise, and false-wake feedback."),
     ]
     items = "\n".join(task_item(*task) for task in tasks)

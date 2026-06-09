@@ -5272,6 +5272,8 @@ def overnight_work_status() -> dict[str, Any]:
     workboard_path = PROJECT_ROOT / "runtime" / "overnight_status" / "index.html"
     report_path = PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"
     stt_path = PROJECT_ROOT / "runtime" / "stt_audition" / "index.html"
+    workboard_url = "http://127.0.0.1:8765/overnight-workboard/"
+    report_url = "http://127.0.0.1:8765/overnight-report/"
     bundle_path = _current_jarvis_bundle_path()
     artifacts = {
         "workboard": _runtime_file_status(workboard_path),
@@ -5326,7 +5328,7 @@ def overnight_work_status() -> dict[str, Any]:
             f"{report_snapshot['risk_count']} risk notes, and "
             f"{report_snapshot['supporting_file_count']} supporting links. "
             "This status route did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
-            "The master report and workboard paths are included in the diagnostic details."
+            "The master report and workboard URLs and paths are included in the diagnostic details."
         )
         if report_integrity["status"] == "current":
             reply += " Report integrity is current."
@@ -5338,7 +5340,7 @@ def overnight_work_status() -> dict[str, Any]:
             f"{'available' if workboard_exists else 'missing'} and the master report is "
             f"{'available' if report_exists else 'missing'}. "
             "This status route did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
-            f"Workboard: {workboard_path}. Report: {report_path}."
+            f"Workboard: {workboard_url}. Report: {report_url}."
         )
     return {
         "tool": "diagnostics.overnight",
@@ -5352,6 +5354,8 @@ def overnight_work_status() -> dict[str, Any]:
         "sent_network_request": False,
         "workboard_path": str(workboard_path),
         "report_path": str(report_path),
+        "workboard_url": workboard_url,
+        "report_url": report_url,
         "stt_audition_path": str(stt_path),
         "artifacts": artifacts,
         "master_report_snapshot": report_snapshot,
