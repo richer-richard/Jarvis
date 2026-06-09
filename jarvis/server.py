@@ -606,6 +606,14 @@ STATE = JarvisServer()
 
 def _stream_status_text(preview: dict[str, Any]) -> str:
     tool = str(preview.get("tool") or "")
+    app_name = _preview_app_name(preview)
+    if app_name:
+        if tool == "app.open":
+            return f"Yes sir, opening {app_name} now."
+        if tool == "app.focus":
+            return f"Yes sir, focusing {app_name} now."
+        if tool == "app.status":
+            return f"Yes sir, checking {app_name} now."
     labels = {
         "outlook.visible_summary": "Yes sir, checking your email now.",
         "diagnostics.email": "Yes sir, checking the email setup now.",
@@ -661,6 +669,22 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "policy.strong_confirmation": "Checking safety policy.",
     }
     return labels.get(tool, "Yes sir, checking this now.")
+
+
+def _preview_app_name(preview: dict[str, Any]) -> str:
+    result = preview.get("result")
+    if not isinstance(result, dict):
+        return ""
+    plan = result.get("plan")
+    if not isinstance(plan, dict):
+        return ""
+    for key in ("app", "app_name", "requested_app"):
+        value = plan.get(key)
+        if isinstance(value, str):
+            cleaned = re.sub(r"\s+", " ", value).strip(" .")
+            if cleaned:
+                return cleaned[:80]
+    return ""
 
 
 def _attach_auto_speech(data: dict[str, Any], *, reason: str) -> None:

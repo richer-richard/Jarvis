@@ -49,6 +49,7 @@ from jarvis.server import (
     _bounded_int,
     _conversation_history_from_payload,
     _host_from_header,
+    _stream_status_text,
     _verification_detail,
     _verification_is_fresh,
     run,
@@ -7260,6 +7261,20 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(speak_mock.call_args_list[0].kwargs["reason"], "status")
         self.assertEqual(speak_mock.call_args_list[1].kwargs["reason"], "final")
         self.assertIn("Jarvis", speak_mock.call_args_list[1].args[0])
+
+    def test_stream_status_text_uses_app_name_when_preview_has_one(self):
+        self.assertEqual(
+            _stream_status_text({"tool": "app.status", "result": {"plan": {"app_name": "Safari"}}}),
+            "Yes sir, checking Safari now.",
+        )
+        self.assertEqual(
+            _stream_status_text({"tool": "app.open", "result": {"plan": {"app": "Microsoft Outlook"}}}),
+            "Yes sir, opening Microsoft Outlook now.",
+        )
+        self.assertEqual(
+            _stream_status_text({"tool": "app.focus", "result": {"plan": {"requested_app": "Teams"}}}),
+            "Yes sir, focusing Teams now.",
+        )
 
     def test_streamed_overnight_status_uses_report_wording(self):
         with tempfile.TemporaryDirectory() as temp_dir:

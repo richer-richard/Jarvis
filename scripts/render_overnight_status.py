@@ -37,6 +37,7 @@ SHIPPED_ITEMS = [
     "Wake-lab Copy JSON now includes the current transcript, current score, and recommendation even before a run is saved.",
     "Mac/device-status requests now go through the first model's tool call before reading local device facts.",
     "App list/status/running/focus/open requests now give the first model the tool choice before local app parsing runs.",
+    "Streaming app working lines now include the app name when Jarvis already knows it, such as Yes sir, checking Safari now.",
     "Final answers with normal reply text now auto-speak by default instead of leaving only the working line audible.",
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
@@ -44,7 +45,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 387/387 passed after the wake, mute, final-speech, report-route, speech-alignment, and model-selected device/app-routing work.",
+    "Python safety suite: 388/388 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, and app-specific status-line work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 92/92 after the speech-mute, wake-audition, and report-route endpoints were added.",
@@ -55,6 +56,7 @@ PROOF_ITEMS = [
     "A muted live hello stream matched visible text, final reply, and TTS text_preview.",
     "A muted live Mac-status probe returned diagnostics.device with routing.source=model_tool_call.",
     "Muted live app-status and app-running probes returned app.status/app.running with routing.source=model_tool_call and did not launch or focus apps.",
+    "A muted live streaming app-status probe displayed Yes sir, checking Safari now before the final answer.",
 ]
 
 TRY_ITEMS = [
@@ -269,6 +271,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Add wake-lab decision summary", "Runs now summarize detected count, best noisy pass, and next step."),
         ("done", "Route Mac status through first model", "Device facts are read only after the first model selects diagnostics.device."),
         ("done", "Route app status through first model", "App list/status/running/focus/open requests now record model_tool_call routing."),
+        ("done", "Make app working lines specific", "Streaming app status says the app name when preview already has it."),
         ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
         ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),
