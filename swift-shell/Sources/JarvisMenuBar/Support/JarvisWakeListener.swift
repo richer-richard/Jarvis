@@ -244,6 +244,9 @@ final class JarvisWakeListener {
             }
             command = wake.command
         }
+        guard !Self.isWakeGreetingEcho(command) else {
+            return
+        }
         guard command.count >= 2 else {
             return
         }
@@ -353,6 +356,10 @@ final class JarvisWakeListener {
         normalized(value)
             .replacingOccurrences(of: #"^(please\s+)+"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isWakeGreetingEcho(_ value: String) -> Bool {
+        ["yes", "yes sir", "yes sir yes sir"].contains(normalized(value))
     }
 
     private static func phraseSimilarity(_ left: String, _ right: String) -> Double {
