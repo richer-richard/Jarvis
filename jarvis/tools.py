@@ -5303,7 +5303,7 @@ def overnight_work_status() -> dict[str, Any]:
             f"{report_snapshot['tomorrow_count']} things you should be able to try, "
             f"{report_snapshot['risk_count']} risk notes, and "
             f"{report_snapshot['supporting_file_count']} supporting links. "
-            "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
+            "This status route did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
             "The master report and workboard paths are included in the diagnostic details."
         )
         if report_integrity["status"] == "current":
@@ -5315,7 +5315,7 @@ def overnight_work_status() -> dict[str, Any]:
             "Overnight status: the workboard is "
             f"{'available' if workboard_exists else 'missing'} and the master report is "
             f"{'available' if report_exists else 'missing'}. "
-            "I did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
+            "This status route did not open a browser, launch Jarvis, record audio, read private content, or contact the MacBook Air. "
             f"Workboard: {workboard_path}. Report: {report_path}."
         )
     return {
