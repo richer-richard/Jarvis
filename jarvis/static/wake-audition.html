@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jarvis Wake Audition</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/wake-audition.css" />
+  </head>
+  <body>
+    <main class="wake-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Jarvis Voice Lab</p>
+          <h1>Hey Jarvis Wake Audition</h1>
+        </div>
+        <div class="status-row">
+          <span id="api-status" class="pill">API</span>
+          <span id="mic-status" class="pill">Mic</span>
+          <span id="recognizer-status" class="pill">Recognizer</span>
+        </div>
+      </header>
+
+      <section class="control-band" aria-label="Wake recording controls">
+        <div class="threshold-control">
+          <label for="threshold-slider">Threshold</label>
+          <input id="threshold-slider" type="range" min="0.5" max="0.98" step="0.001" value="0.82" />
+          <output id="threshold-output" for="threshold-slider">0.820</output>
+        </div>
+        <div class="button-row">
+          <button id="start-listener" type="button">Start</button>
+          <button id="stop-listener" type="button" disabled>Stop</button>
+          <button id="record-sample" type="button">Record</button>
+          <button id="stop-recording" type="button" disabled>End</button>
+          <button id="save-sample" type="button" disabled>Save</button>
+          <button id="copy-export" type="button">Copy JSON</button>
+        </div>
+      </section>
+
+      <section class="live-grid">
+        <article class="panel transcript-panel">
+          <div class="panel-title">
+            <h2>Live Transcript</h2>
+            <span id="wake-result" class="score-chip">Waiting</span>
+          </div>
+          <textarea id="manual-transcript" spellcheck="true" rows="5" placeholder="Recognized speech appears here. You can also paste or fix a transcript."></textarea>
+          <div class="score-grid">
+            <div>
+              <span class="label">Score</span>
+              <strong id="score-value">0.000</strong>
+            </div>
+            <div>
+              <span class="label">Phrase</span>
+              <strong id="phrase-value">none</strong>
+            </div>
+            <div>
+              <span class="label">Command</span>
+              <strong id="command-value">none</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel sample-panel">
+          <div class="panel-title">
+            <h2>Last Sample</h2>
+            <span id="sample-status" class="score-chip">None</span>
+          </div>
+          <audio id="sample-player" controls></audio>
+          <div class="noise-control">
+            <label for="noise-slider">Noise</label>
+            <input id="noise-slider" type="range" min="-36" max="6" step="1" value="-18" />
+            <output id="noise-output" for="noise-slider">-18 dB</output>
+          </div>
+          <div class="button-row secondary">
+            <button id="play-noise" type="button" disabled>Play Noise</button>
+            <button id="loopback-trial" type="button" disabled>Trial</button>
+            <button id="download-sample" type="button" disabled>Download</button>
+          </div>
+          <p id="trial-status" class="trial-status">No loopback trial yet.</p>
+        </article>
+      </section>
+
+      <section class="panel table-panel" aria-label="Wake audition results">
+        <div class="panel-title">
+          <h2>Runs</h2>
+          <span id="run-count" class="score-chip">0 saved</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Type</th>
+                <th>Transcript</th>
+                <th>Score</th>
+                <th>Noise</th>
+                <th>Detected</th>
+                <th>File</th>
+              </tr>
+            </thead>
+            <tbody id="run-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="/static/wake-audition.js"></script>
+  </body>
+</html>

@@ -22,6 +22,12 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var permissionText: String = "Permissions not checked"
     @Published private(set) var permissions: [PermissionReadiness] = []
     @Published private(set) var isBusy: Bool = false
+    @Published private(set) var wakeModeText: String = "Wake Off"
+    @Published private(set) var wakeDetailText: String = "Hey Jarvis listener is off."
+    @Published private(set) var wakeTranscriptText: String = ""
+    @Published private(set) var isWakeListening: Bool = false
+    @Published private(set) var isSpeechMuted: Bool = false
+    @Published private(set) var speechMuteText: String = "Speech On"
     @Published private(set) var chatExportText: String = "Chat JSON ready"
     @Published private(set) var messages: [ChatMessage] = [
         ChatMessage(
@@ -32,6 +38,7 @@ final class JarvisShellModel: ObservableObject {
 
     private let client: JarvisClient
     private let workerSupervisor: JarvisWorkerSupervisor
+    private let wakeListener = JarvisWakeListener()
     private var lastHealthDiagnostics: [String: Any] = [:]
     private var lastReadinessDiagnostics: [String: Any] = [:]
     private var lastCommandDiagnostics: [String: Any] = [:]
@@ -79,6 +86,7 @@ final class JarvisShellModel: ObservableObject {
         "screen status",
         "hotkey status",
         "wake status",
+        "Hey Jarvis wake audition status",
         "Jarvis launch status",
         "email backend status",
         "check my email and summarize the newest email in my inbox",
@@ -102,6 +110,7 @@ final class JarvisShellModel: ObservableObject {
         let resolvedClient = client ?? (try? JarvisClient.fromEnvironment()) ?? JarvisClient(baseURL: URL(string: "http://127.0.0.1:8765")!)
         self.client = resolvedClient
         self.workerSupervisor = JarvisWorkerSupervisor(client: resolvedClient)
+        configureWakeListener()
     }
 
     func refresh() {
@@ -141,10 +150,111 @@ final class JarvisShellModel: ObservableObject {
     }
 
     func stopWorkerMonitoring() {
+        wakeListener.stop()
         codexActivityTask?.cancel()
         codexActivityTask = nil
         workerSupervisor.stopMonitoring()
         workerSupervisor.stopStartedWorker()
+    }
+
+    func toggleWakeListener() {
+        if isWakeListening {
+            wakeListener.stop()
+        } else {
+            wakeListener.start()
+        }
+    }
+
+    func stopWakeListener() {
+        wakeListener.stop()
+    }
+
+    func toggleSpeechMuted() {
+        let target = !isSpeechMuted
+        applySpeechMuteState(muted: target)
+        Task {
+            do {
+                let startup = await workerSupervisor.ensureRunning()
+                workerText = startup.description
+                guard startup.isReady else {
+                    throw ShellModelError.workerUnavailable(startup.description)
+                }
+                let response = try await client.setSpeechMuted(target)
+                applySpeechMuteResponse(response)
+                state = response.muted ? "Muted" : "Ready"
+                chatExportText = response.muted ? "Speech muted" : "Speech unmuted"
+                messages.append(
+                    ChatMessage(
+                        role: .system,
+                        text: response.muted ? "Jarvis speech is muted." : "Jarvis speech is on."
+                    )
+                )
+            } catch {
+                applySpeechMuteState(muted: !target)
+                state = "Error"
+                chatExportText = "Mute failed"
+                messages.append(ChatMessage(role: .jarvis, text: "I could not change speech mute: \(error)"))
+            }
+        }
+    }
+
+    private func refreshSpeechMuteStatus() async {
+        do {
+            applySpeechMuteResponse(try await client.speechMuteStatus())
+        } catch {
+            speechMuteText = Self.speechMuteText(muted: isSpeechMuted)
+        }
+    }
+
+    private func applySpeechMuteResponse(_ response: SpeechMuteResponse) {
+        applySpeechMuteState(muted: response.muted)
+    }
+
+    private func applySpeechMuteState(muted: Bool) {
+        isSpeechMuted = muted
+        speechMuteText = Self.speechMuteText(muted: muted)
+    }
+
+    static func speechMuteText(muted: Bool) -> String {
+        muted ? "Muted" : "Speech On"
+    }
+
+    private func configureWakeListener() {
+        wakeListener.onStateChange = { [weak self] snapshot in
+            guard let self else {
+                return
+            }
+            isWakeListening = snapshot.running
+            wakeModeText = "Wake \(snapshot.phase)"
+            wakeDetailText = "\(snapshot.status) via \(snapshot.engine)"
+            wakeTranscriptText = snapshot.transcript
+        }
+        wakeListener.onWakeDetected = { [weak self] transcript in
+            guard let self else {
+                return
+            }
+            state = "Listening"
+            turnPhaseText = "Awake"
+            wakeTranscriptText = transcript
+            messages.append(ChatMessage(role: .jarvis, text: "Yes sir?", detail: "Wake detected."))
+            Task {
+                if !self.isSpeechMuted {
+                    _ = try? await self.client.speakStatus("Yes sir?")
+                }
+            }
+        }
+        wakeListener.onCommandCaptured = { [weak self] command, transcript in
+            guard let self else {
+                return
+            }
+            wakeTranscriptText = transcript
+            wakeDetailText = "Captured: \(command)"
+            guard !isBusy else {
+                messages.append(ChatMessage(role: .jarvis, text: "I heard \(command), but I am still finishing the current task.", detail: "Wake command held."))
+                return
+            }
+            submit(command)
+        }
     }
 
     func submitCurrentCommand() {
@@ -194,8 +304,18 @@ final class JarvisShellModel: ObservableObject {
                 "codex_activity": codexActivityText,
                 "verification": verificationText,
                 "permission_summary": permissionText,
-                "fast_model": Self.redactedJSONValue(lastHealthDiagnostics["fast_model"] ?? NSNull()),
-                "worker_runtime": Self.redactedJSONValue(lastHealthDiagnostics["runtime"] ?? NSNull()),
+            "wake": [
+                "mode": wakeModeText,
+                "detail": wakeDetailText,
+                "transcript": Self.redactChatExportText(wakeTranscriptText),
+                "listening": isWakeListening,
+            ],
+            "speech": [
+                "muted": isSpeechMuted,
+                "mute_label": speechMuteText,
+            ],
+            "fast_model": Self.redactedJSONValue(lastHealthDiagnostics["fast_model"] ?? NSNull()),
+            "worker_runtime": Self.redactedJSONValue(lastHealthDiagnostics["runtime"] ?? NSNull()),
             ],
             "diagnostics": [
                 "health": Self.redactedJSONValue(lastHealthDiagnostics),
@@ -264,6 +384,7 @@ final class JarvisShellModel: ObservableObject {
             codexText = health.status.codex.version ?? "Codex CLI not found"
             lastHealthDiagnostics = Self.healthDiagnostics(from: health)
             let runningCodexJobCount = health.status.codexJobs?.runningCount ?? 0
+            await refreshSpeechMuteStatus()
             await refreshCodexActivity()
             if runningCodexJobCount > 0 {
                 startCodexActivityPolling()
@@ -463,7 +584,9 @@ final class JarvisShellModel: ObservableObject {
                 let statusText = "Yes sir, checking what Outlook is showing now."
                 _ = appendJarvisMessage(text: statusText, detail: "Working")
                 visibleStatusLines.append(statusText)
-                _ = try? await client.speakStatus(statusText)
+                if !isSpeechMuted {
+                    _ = try? await client.speakStatus(statusText)
+                }
                 recordTurnPhase("Working", detail: statusText)
                 response = try await runNativeOutlookRead(commandText)
             } else {
@@ -581,7 +704,7 @@ final class JarvisShellModel: ObservableObject {
         let reply = [
             "Keyboard shortcut: \(shortcut).",
             "Press it to open or focus the Jarvis panel.",
-            "This is the reliable wake path for now. Real Hey Jarvis microphone wake-word listening is not active yet.",
+            "Experimental Hey Jarvis microphone wake is available from the app panel.",
         ].joined(separator: "\n")
         resultText = [
             "Command: \(commandText)",
@@ -711,9 +834,9 @@ final class JarvisShellModel: ObservableObject {
             "- Speech Recognition: \(speech?.state ?? "Unknown"). \(speech?.detail ?? "No speech-recognition status available.")",
             "- Keyboard wake/focus: \(shortcut).",
             "- Typed wake simulation: available for Hey Jarvis, OK Jarvis, and Okay Jarvis.",
-            "- Background Hey Jarvis microphone listener: not active yet.",
-            "- Speech-to-text command transcription: planned; typed and pasted dictation are already treated as punctuation-poor input.",
-            "- TTS: automatic final spoken replies are enabled for supported routes, and explicit local `speak ...` / `say out loud ...` commands still exist.",
+            "- Experimental Hey Jarvis microphone listener: \(isWakeListening ? "running" : "available but off").",
+            "- Speech-to-text command transcription: available through the experimental listener; dictated text is treated as punctuation-poor input.",
+            "- TTS: \(isSpeechMuted ? "muted from the app menu" : "automatic final spoken replies are enabled for supported routes, and explicit local `speak ...` / `say out loud ...` commands still exist").",
             "This did not record audio, transcribe audio, or request new permissions.",
         ].joined(separator: "\n")
         resultText = [
@@ -723,7 +846,7 @@ final class JarvisShellModel: ObservableObject {
             "Summary: Read native voice status.",
             "Microphone: \(microphone?.state ?? "Unknown")",
             "Speech Recognition: \(speech?.state ?? "Unknown")",
-            "Voice wake active: false",
+            "Voice wake active: \(isWakeListening)",
         ].joined(separator: "\n")
         lastCommandDiagnostics = [
             "command": commandText,
@@ -733,8 +856,12 @@ final class JarvisShellModel: ObservableObject {
             "permissions": Self.permissionDiagnostics(snapshot),
             "keyboard_shortcut": shortcut,
             "typed_wake_simulation_available": true,
-            "microphone_wake_available": false,
-            "speech_to_text_available": false,
+            "microphone_wake_available": true,
+            "speech_to_text_available": true,
+            "experimental_wake_listener_available": true,
+            "experimental_wake_listener_active": isWakeListening,
+            "wake_transcript": Self.redactChatExportText(wakeTranscriptText),
+            "speech_muted": isSpeechMuted,
             "automatic_tts_enabled": true,
             "final_answer_speech_expected": true,
         ]

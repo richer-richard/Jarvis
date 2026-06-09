@@ -87,7 +87,7 @@ from .config import (
 )
 from .injection import scan_untrusted_text
 from .safety import classify_command, classify_shell_command, is_shell_allowed
-from .wake import WAKE_PHRASES, detect_wake_command
+from .wake import DEFAULT_WAKE_THRESHOLD, WAKE_PHRASES, detect_wake_command, score_wake_transcript
 
 
 APP_STARTED_AT = time.time()
@@ -97,6 +97,7 @@ ACTIVE_TIMERS_LOCK = threading.Lock()
 SPEECH_PROCESS: Any | None = None
 SPEECH_PROCESS_REASON: str | None = None
 SPEECH_GENERATION = 0
+SPEECH_MUTED = False
 SPEECH_LOCK = threading.Lock()
 STATUS_TO_FINAL_QUEUE_TIMEOUT_SECONDS = 1.4
 PIPER_WORKER_PROCESS: subprocess.Popen[str] | None = None
@@ -428,7 +429,15 @@ def tool_registry() -> dict[str, Any]:
                 "mode": "execute",
                 "risk": "read_only",
                 "available": True,
-                "description": "Reports current keyboard/text wake support and clearly labels real microphone wake as not active yet.",
+                "description": "Reports keyboard/text wake support and the experimental native Hey Jarvis listener surface.",
+            },
+            {
+                "id": "voice.wake_audition",
+                "label": "Wake Audition",
+                "mode": "local_test_surface",
+                "risk": "local_audio_test_after_user_records",
+                "available": True,
+                "description": "Serves the local Hey Jarvis audition page and scores wake transcripts/noise trials. Saved audio stays under runtime/.",
             },
             {
                 "id": "voice.stt_audition",
@@ -1826,15 +1835,23 @@ def _start_piper_speech_async(
 
 def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -> dict[str, Any]:
     """Speak text without blocking the command response."""
-    if not force and not TTS_AUTOMATIC_ENABLED:
-        return {"spoken": False, "status": "disabled", "reason": reason}
-    if not force and reason == "status" and not TTS_SPEAK_STATUS:
-        return {"spoken": False, "status": "status_speech_disabled", "reason": reason}
     spoken = _sanitize_spoken_text(text)
     if not spoken:
         return {"spoken": False, "status": "empty", "reason": reason}
     started_at = time.monotonic()
     with SPEECH_LOCK:
+        if SPEECH_MUTED:
+            return {
+                "spoken": False,
+                "status": "muted",
+                "reason": reason,
+                "text_length": len(spoken),
+                **_duration_fields(started_at),
+            }
+        if not force and not TTS_AUTOMATIC_ENABLED:
+            return {"spoken": False, "status": "disabled", "reason": reason, **_duration_fields(started_at)}
+        if not force and reason == "status" and not TTS_SPEAK_STATUS:
+            return {"spoken": False, "status": "status_speech_disabled", "reason": reason, **_duration_fields(started_at)}
         queued_after_status = _queue_final_after_status_locked(
             spoken,
             reason=reason,
@@ -1868,6 +1885,45 @@ def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -
             started_at=started_at,
             stop_status=stop_status,
         )
+
+
+def speech_mute_status() -> dict[str, Any]:
+    """Return the runtime Jarvis speech mute state."""
+    with SPEECH_LOCK:
+        active = SPEECH_PROCESS is not None and getattr(SPEECH_PROCESS, "poll", lambda: 0)() is None
+        return {
+            "tool": "voice.speech_mute",
+            "status": "muted" if SPEECH_MUTED else "unmuted",
+            "muted": SPEECH_MUTED,
+            "active_speech": active,
+            "speech_reason": SPEECH_PROCESS_REASON,
+            "reply": "Jarvis speech is muted." if SPEECH_MUTED else "Jarvis speech is on.",
+        }
+
+
+def set_speech_muted(muted: bool) -> dict[str, Any]:
+    """Mute or unmute Jarvis speech and stop current playback when muting."""
+    global SPEECH_MUTED
+    started_at = time.monotonic()
+    with SPEECH_LOCK:
+        previous = SPEECH_MUTED
+        SPEECH_MUTED = bool(muted)
+        stop_status = _stop_active_speech_locked(timeout_seconds=0.6) if SPEECH_MUTED else {}
+        active = SPEECH_PROCESS is not None and getattr(SPEECH_PROCESS, "poll", lambda: 0)() is None
+    return {
+        "tool": "voice.speech_mute",
+        "status": "muted" if SPEECH_MUTED else "unmuted",
+        "executed": True,
+        "muted": SPEECH_MUTED,
+        "previous_muted": previous,
+        "active_speech": active,
+        "interrupted_previous": bool(stop_status.get("interrupted_previous")),
+        "started_audio": False,
+        "played_audio": False,
+        **stop_status,
+        **_duration_fields(started_at),
+        "reply": "Jarvis speech is muted." if SPEECH_MUTED else "Jarvis speech is on.",
+    }
 
 
 def stop_speaking() -> dict[str, Any]:
@@ -2285,6 +2341,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "voice.stt_score", "kind": "read_only", "description": "Score a pasted STT transcript against a reference sentence without recording audio."},
         {"id": "voice.stt_recommendation", "kind": "read_only", "description": "Rank pasted STT audition export rows and recommend the strongest candidate without recording audio."},
         {"id": "voice.loop_simulation", "kind": "read_only_text_only", "description": "Simulate wake, greeting, command capture, and command preview without microphone or audio."},
+        {"id": "voice.wake_audition", "kind": "local_test_surface", "description": "Open/report the local Hey Jarvis wake audition page and score provided transcripts without sending audio away."},
         {"id": "ui.overlay", "kind": "read_only_plan", "description": "Plan the future visible Jarvis overlay/popup UI without opening windows or changing UI."},
         {"id": "ui.automation", "kind": "planned_private_app_control", "description": "Future app UI clicking/typing/navigation route with permission checks and confirmation gates."},
     ]
@@ -3175,11 +3232,11 @@ def voice_session_plan(command: str | None = None) -> dict[str, Any]:
     phases = [
         {
             "id": "wake",
-            "status": "planned_not_active",
+            "status": "experimental",
             "trigger": "Hey Jarvis",
             "visible_text": "Hello sir.",
             "spoken_text": "Hello sir.",
-            "notes": "Current production path still needs a real microphone wake listener; typed wake simulation is available now.",
+            "notes": "Experimental microphone wake is now available in the macOS app; typed wake simulation remains the safe deterministic test path.",
         },
         {
             "id": "acknowledge",
@@ -3191,13 +3248,13 @@ def voice_session_plan(command: str | None = None) -> dict[str, Any]:
         },
         {
             "id": "speech_to_text",
-            "status": "planned",
+            "status": "experimental",
             "visible_text": "Listening...",
             "spoken_text": None,
             "target_first_result_ms": 700,
             "target_final_result_ms": 1600,
             "candidate_plan_tool": "voice.stt_session_plan",
-            "notes": "STT audition decides the engine; no microphone permission is requested by this plan.",
+            "notes": "The app can use Apple Speech in the experimental listener; the audition page remains the comparison and threshold-tuning surface.",
         },
         {
             "id": "route_command",
@@ -3351,29 +3408,79 @@ def ui_overlay_plan(mode: str | None = None) -> dict[str, Any]:
 
 def wake_status() -> dict[str, Any]:
     wake_phrases = tuple(phrase.title() for phrase in WAKE_PHRASES)
+    audition_path = PROJECT_ROOT / "runtime" / "wake_audition"
+    audition_page_url = "http://127.0.0.1:8765/wake-audition/"
     reply = (
         "Wake status: keyboard shortcut wake/focus is available with Command+Option+J. "
         "Typed wake simulation is available for Hey Jarvis, OK Jarvis, and Okay Jarvis. "
-        "Real background microphone wake-word listening is not active yet."
+        "Experimental Hey Jarvis microphone listening is available in the macOS app as a toggle, "
+        f"and the wake audition page is at {audition_page_url}."
     )
     return {
         "tool": "diagnostics.wake",
         "executed": True,
-        "status": "partial",
+        "status": "experimental",
         "keyboard_shortcut": "Command+Option+J",
         "keyboard_wake_available": True,
         "typed_wake_simulation_available": True,
         "typed_wake_phrases": list(wake_phrases),
-        "microphone_wake_available": False,
-        "speech_to_text_available": False,
+        "microphone_wake_available": True,
+        "speech_to_text_available": True,
         "background_listener_active": False,
-        "missing_for_voice_wake": [
-            "Microphone permission",
-            "Speech Recognition permission",
-            "Local wake-word listener",
+        "background_listener_state_source": "Swift app runtime toggle, not tracked by Python worker",
+        "experimental_native_listener_available": True,
+        "wake_threshold": DEFAULT_WAKE_THRESHOLD,
+        "wake_audition_page_url": audition_page_url,
+        "wake_audition_runtime_dir": str(audition_path),
+        "still_needed_for_voice_wake": [
+            "Leo false-wake testing in the live app",
             "False-wake tuning with Leo's real voice",
+            "Long-running recognition restart hardening",
         ],
         "reply": reply,
+    }
+
+
+def wake_audition_status() -> dict[str, Any]:
+    sample_dir = PROJECT_ROOT / "runtime" / "wake_audition" / "samples"
+    samples = sorted(sample_dir.glob("*.json")) if sample_dir.exists() else []
+    return {
+        "tool": "voice.wake_audition",
+        "executed": True,
+        "status": "available",
+        "read_private_content": False,
+        "recorded_audio": False,
+        "requested_microphone_permission": False,
+        "sent_audio": False,
+        "page_url": "http://127.0.0.1:8765/wake-audition/",
+        "runtime_dir": str(sample_dir.parent),
+        "sample_count": len(samples),
+        "wake_phrases": list(WAKE_PHRASES),
+        "default_threshold": DEFAULT_WAKE_THRESHOLD,
+        "recommended_threshold": DEFAULT_WAKE_THRESHOLD,
+        "noise_trial_goal": "Find the highest generated-noise trial where transcripts still score above threshold.",
+        "reply": "Wake audition is available locally. Open /wake-audition/ to record samples, save them under runtime, and score Hey Jarvis transcripts against the current threshold.",
+    }
+
+
+def wake_audition_score(transcript: str, *, threshold: float | None = None, noise_db: float | None = None) -> dict[str, Any]:
+    resolved_threshold = DEFAULT_WAKE_THRESHOLD if threshold is None else _clamp_float(float(threshold), 0.5, 0.98)
+    score = score_wake_transcript(str(transcript or ""), threshold=resolved_threshold).to_dict()
+    return {
+        "tool": "voice.wake_audition",
+        "executed": True,
+        "status": "scored",
+        "read_private_content": False,
+        "recorded_audio": False,
+        "requested_microphone_permission": False,
+        "sent_audio": False,
+        "noise_db": noise_db,
+        **score,
+        "reply": (
+            f"Wake score {score['score']:.3f}; detected"
+            if score["detected"]
+            else f"Wake score {score['score']:.3f}; below threshold"
+        ),
     }
 
 
@@ -5517,6 +5624,7 @@ def _live_preflight_required_tool_ids() -> set[str]:
         "voice.stt_recommendation",
         "voice.loop_simulation",
         "voice.wake_simulation",
+        "voice.wake_audition",
         "safety.injection_scan",
         "diagnostics.codex_chats",
         "codex.chat_plan",
@@ -5611,7 +5719,7 @@ def _overnight_requirement_audit(
             "id": "voice_recognition_audition_prep",
             "status": "implemented_terminal_verified" if bool(artifacts.get("stt_audition", {}).get("exists")) else "artifact_missing",
             "evidence": ["runtime/stt_audition/index.html", "voice.stt_candidates", "voice.stt_session_plan", "voice.stt_score", "voice.stt_recommendation"],
-            "remaining": "Real microphone wake/STT is not enabled yet.",
+            "remaining": "Experimental app wake/STT exists; false-wake tuning and long-run reliability are still unfinished.",
         },
         {
             "id": "master_report",
@@ -5716,14 +5824,15 @@ def capabilities_status() -> dict[str, Any]:
         {
             "id": "wake",
             "status": "partial",
-            "summary": "Keyboard wake and typed wake simulation are available; real microphone wake-word listening is not active yet.",
+            "summary": "Keyboard wake, typed wake simulation, and an experimental Hey Jarvis microphone listener are available; false-wake tuning still needs Leo testing.",
             "test_prompt": "wake status",
             "needs_leo": True,
+            "audition_page": wake.get("wake_audition_page_url"),
         },
         {
             "id": "speech_to_text",
-            "status": "prep_ready" if stt.get("page_exists") else "not_built",
-            "summary": "Real microphone speech-to-text is not built yet, but the local STT audition page is ready for comparing recognition candidates.",
+            "status": "partial",
+            "summary": "Experimental command transcription exists through the macOS listener; the STT audition page remains the comparison surface for accuracy and punctuation.",
             "test_prompt": "stt audition status",
             "needs_leo": True,
             "audition_page": stt.get("page_path"),
@@ -5778,16 +5887,16 @@ def capabilities_status() -> dict[str, Any]:
     prepared = sum(1 for item in capabilities if item["status"] == "prep_ready")
     needs_attention = sum(1 for item in capabilities if item["status"] in {"not_built", "unavailable", "missing", "needs_attention"})
     not_live_features = [
-        "real microphone speech-to-text",
         "full raw chat-history memory",
-        "background wake-word listening",
+        "hardened false-wake tuning",
+        "long-running wake listener reliability",
     ]
     reply = (
         f"Capability status: {working} working, {partial} partial, {prepared} prepared, {needs_attention} needing attention. "
         "Working now includes typed chat, fast casual chat, latency status, Codex async delegation, launch diagnostics, source-access diagnostics, and the overnight workboard route. "
-        "Partial work includes email, quick device controls, guarded middle planning, remote helper diagnostics, Jarvis-Codex daily memory, wake, TTS with stop-speaking interruption, and computer control. "
-        "Prepared but not live yet includes the STT audition page. "
-        "Not active yet: real microphone speech-to-text, full raw chat-history memory, and background wake-word listening. "
+        "Partial work includes email, quick device controls, guarded middle planning, remote helper diagnostics, Jarvis-Codex daily memory, experimental wake/STT, TTS with stop-speaking interruption, and computer control. "
+        "Prepared surfaces include the STT and wake audition pages. "
+        "Not finished yet: full raw chat-history memory, hardened false-wake tuning, and long-running wake listener reliability. "
         "This diagnostic did not read email, screenshots, microphone audio, or files."
     )
     return {

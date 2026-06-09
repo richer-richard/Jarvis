@@ -248,6 +248,26 @@ public struct JarvisClient: Sendable {
         return try await perform(request, as: SpeechStatusResponse.self)
     }
 
+    public func speechMuteStatus() async throws -> SpeechMuteResponse {
+        try await get(["api", "speech", "mute"], as: SpeechMuteResponse.self)
+    }
+
+    public func setSpeechMuted(_ muted: Bool) async throws -> SpeechMuteResponse {
+        let url = baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("speech")
+            .appendingPathComponent("mute")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = Self.quickTimeout
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["muted": muted],
+            options: []
+        )
+        return try await perform(request, as: SpeechMuteResponse.self)
+    }
+
     private func get<T: Decodable>(_ path: [String], as type: T.Type) async throws -> T {
         let url = path.reduce(baseURL) { partial, component in
             partial.appendingPathComponent(component)

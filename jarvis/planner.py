@@ -74,6 +74,7 @@ from .tools import (
     ui_overlay_plan,
     voice_session_plan,
     voice_loop_simulation,
+    wake_audition_status,
     wake_status,
     wake_phrase_simulation,
 )
@@ -161,6 +162,11 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     {
         "tool": "voice.stt_candidates",
         "description": "Report speech-recognition candidates and installed local engine evidence without recording audio.",
+        "entities": [],
+    },
+    {
+        "tool": "voice.wake_audition",
+        "description": "Report the local Hey Jarvis wake audition page for recording wake samples, scoring transcripts, and tuning the wake threshold.",
         "entities": [],
     },
     {
@@ -528,6 +534,8 @@ class Planner:
             result = start_codex_continue_job(text, history=history)
             summary = "Continued Codex CLI job." if result.get("status") == "running" else "Tried to continue Codex CLI job."
             return self._result(text, "codex.job", summary, assessment, result, bool(result.get("executed")))
+        if _looks_like_wake_audition_status(lower):
+            return self._result(text, "voice.wake_audition", "Read Hey Jarvis wake audition status.", assessment, wake_audition_status(), True)
         wake_transcript = _extract_wake_transcript(text)
         if wake_transcript is not None:
             return self._result(text, "voice.wake_simulation", "Ran text-only wake phrase simulation.", assessment, wake_phrase_simulation(wake_transcript), True)
@@ -605,6 +613,8 @@ class Planner:
             return self._result(text, "diagnostics.launch", "Read local Jarvis launch status.", assessment, launch_status(), True)
         if _looks_like_wake_status(lower):
             return self._result(text, "diagnostics.wake", "Read local Jarvis wake status.", assessment, wake_status(), True)
+        if _looks_like_wake_audition_status(lower):
+            return self._result(text, "voice.wake_audition", "Read Hey Jarvis wake audition status.", assessment, wake_audition_status(), True)
         stt_score_payload = _extract_stt_score_payload(text)
         if stt_score_payload is not None:
             result = stt_score_transcript(**stt_score_payload)
@@ -776,6 +786,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.codex_speed", assessment, True)
         if lower.startswith("find ") or lower.startswith("search "):
             return self._preview_result(text, "files.search", assessment, True)
+        if _looks_like_wake_audition_status(lower):
+            return self._preview_result(text, "voice.wake_audition", assessment, True)
         if _extract_wake_transcript(text) is not None:
             return self._preview_result(text, "voice.wake_simulation", assessment, True)
         if _extract_injection_scan_text(text) is not None:
@@ -812,6 +824,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.launch", assessment, True)
         if _looks_like_wake_status(lower):
             return self._preview_result(text, "diagnostics.wake", assessment, True)
+        if _looks_like_wake_audition_status(lower):
+            return self._preview_result(text, "voice.wake_audition", assessment, True)
         stt_score_payload = _extract_stt_score_payload(text)
         if stt_score_payload is not None:
             return self._preview_result(text, "voice.stt_score", assessment, True, plan={"planned_only": True, **stt_score_payload})
@@ -960,6 +974,10 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "voice.stt_candidates", assessment, True, plan={"intent": intent})
             return self._result(text, "voice.stt_candidates", "Read speech-recognition candidate status.", assessment, stt_candidate_status(), True)
+        if selected_tool == "voice.wake_audition":
+            if not execute:
+                return self._preview_result(text, "voice.wake_audition", assessment, True, plan={"intent": intent})
+            return self._result(text, "voice.wake_audition", "Read Hey Jarvis wake audition status.", assessment, wake_audition_status(), True)
         if selected_tool == "voice.stt_session_plan":
             candidate_id = _clean_optional_entity(entities.get("candidate_id"))
             reference_sentence = _clean_optional_entity(entities.get("reference_sentence"))
@@ -2533,6 +2551,33 @@ def _looks_like_stt_audition_status(lower: str) -> bool:
     mutation_cues = ("start recording", "record now", "listen now", "turn on microphone", "enable microphone")
     return (
         any(cue in lower for cue in stt_cues)
+        and any(cue in lower for cue in audition_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_wake_audition_status(lower: str) -> bool:
+    wake_cues = (
+        "hey jarvis",
+        "wake word",
+        "wake phrase",
+        "wake listener",
+        "microphone wake",
+    )
+    audition_cues = (
+        "audition",
+        "test page",
+        "recording page",
+        "sample page",
+        "threshold",
+        "noise test",
+        "noise trial",
+        "wake test",
+        "wake score",
+    )
+    mutation_cues = ("start recording", "record now", "listen now", "turn on microphone")
+    return (
+        any(cue in lower for cue in wake_cues)
         and any(cue in lower for cue in audition_cues)
         and not any(cue in lower for cue in mutation_cues)
     )

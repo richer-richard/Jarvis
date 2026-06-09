@@ -20,6 +20,17 @@ public struct SpeechStatusResponse: Decodable, Sendable {
     public let speech: JSONValue?
 }
 
+public struct SpeechMuteResponse: Decodable, Sendable {
+    public let tool: String?
+    public let status: String?
+    public let executed: Bool?
+    public let muted: Bool
+    public let previousMuted: Bool?
+    public let activeSpeech: Bool?
+    public let interruptedPrevious: Bool?
+    public let reply: String?
+}
+
 public struct Confirmation: Decodable, Sendable {
     public let required: Bool
     public let kind: String

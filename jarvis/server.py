@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import base64
+import binascii
 import mimetypes
+import re
 import threading
 import time
+import uuid
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,14 +35,19 @@ from .tools import (
     codex_activity_snapshot,
     outlook_visible_text_summary,
     prewarm_tts_async,
+    set_speech_muted,
+    speech_mute_status,
     speak_text_async,
     stream_fast_local_chat_events,
     system_status,
     tool_registry,
+    wake_audition_score,
+    wake_audition_status,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_VERIFICATION_AGE_SECONDS = 12 * 60 * 60
+MAX_WAKE_SAMPLE_BYTES = 8 * 1024 * 1024
 
 
 class JarvisServer:
@@ -319,6 +329,12 @@ class JarvisServer:
             "speech": speech,
         }
 
+    def speech_mute_status(self) -> dict[str, Any]:
+        return speech_mute_status()
+
+    def set_speech_muted(self, muted: bool) -> dict[str, Any]:
+        return set_speech_muted(muted)
+
     def plan(self, command: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         return self.planner.preview(command, history=history).to_dict()
 
@@ -340,8 +356,10 @@ class JarvisServer:
                     "GET /api/audit/status",
                     "GET /api/audit",
                     "GET /api/self-check",
+                    "GET /api/speech/mute",
                     "POST /api/mode",
                     "POST /api/plan",
+                    "POST /api/speech/mute",
                 ],
             }
 
@@ -431,6 +449,7 @@ class JarvisServer:
             "voice.stt_recommendation",
             "voice.loop_simulation",
             "voice.wake_simulation",
+            "voice.wake_audition",
             "safety.injection_scan",
             "diagnostics.codex_chats",
             "codex.chat_plan",
@@ -616,6 +635,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "voice.stt_score": "Yes sir, scoring that transcript now.",
         "voice.stt_recommendation": "Yes sir, ranking the speech recognition results now.",
         "voice.loop_simulation": "Yes sir, testing the voice loop now.",
+        "voice.wake_audition": "Yes sir, checking the wake test page now.",
         "files.search": "Yes sir, searching your files now.",
         "app.list": "Yes sir, checking which apps I can open now.",
         "app.status": "Yes sir, checking that app now.",
@@ -684,6 +704,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         if route.path == "/":
             self._send_file(STATIC_DIR / "index.html")
             return
+        if route.path in {"/wake-audition", "/wake-audition/"}:
+            self._send_file(STATIC_DIR / "wake-audition.html")
+            return
         if route.path.startswith("/static/"):
             self._send_file(STATIC_DIR / route.path.removeprefix("/static/"))
             return
@@ -720,6 +743,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         if route.path == "/api/self-check":
             self._send_json(run_self_checks())
+            return
+        if route.path == "/api/speech/mute":
+            self._send_json(STATE.speech_mute_status())
+            return
+        if route.path == "/api/wake-audition/status":
+            self._send_json(wake_audition_status())
             return
         self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
@@ -797,6 +826,55 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(STATE.speak_status(text))
+            return
+        if route.path == "/api/speech/mute":
+            try:
+                payload = self._read_json_payload()
+                if "muted" not in payload or not isinstance(payload["muted"], bool):
+                    self._send_json({"error": "`muted` must be true or false"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+            except RequestBodyTooLarge:
+                self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return
+            except UnsupportedContentType:
+                self._send_json({"error": "Content-Type must be application/json"}, status=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+                return
+            except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(STATE.set_speech_muted(payload["muted"]))
+            return
+        if route.path == "/api/wake-audition/score":
+            try:
+                payload = self._read_json_payload()
+                transcript = str(payload.get("transcript", ""))
+                threshold = payload.get("threshold")
+                noise_db = payload.get("noise_db")
+            except RequestBodyTooLarge:
+                self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return
+            except UnsupportedContentType:
+                self._send_json({"error": "Content-Type must be application/json"}, status=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+                return
+            except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            parsed_threshold = _optional_float(threshold)
+            parsed_noise_db = _optional_float(noise_db)
+            self._send_json(wake_audition_score(transcript, threshold=parsed_threshold, noise_db=parsed_noise_db))
+            return
+        if route.path == "/api/wake-audition/sample":
+            try:
+                payload = self._read_json_payload(max_bytes=MAX_WAKE_SAMPLE_BYTES)
+                self._send_json(_save_wake_audition_sample(payload))
+            except RequestBodyTooLarge:
+                self._send_json({"error": "Audio sample body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            except UnsupportedContentType:
+                self._send_json({"error": "Content-Type must be application/json"}, status=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+            except (TypeError, ValueError, UnicodeDecodeError, binascii.Error) as exc:
+                self._send_json({"error": f"Invalid wake sample: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+            except OSError as exc:
+                self._send_json({"error": f"Could not save wake sample: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         if route.path == "/api/command/stream":
             try:
@@ -883,6 +961,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             "script-src 'self'; "
             "style-src 'self'; "
             "img-src 'self' data:; "
+            "media-src 'self' blob: data:; "
             "connect-src 'self'; "
             "base-uri 'none'; "
             "form-action 'none'; "
@@ -892,14 +971,14 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _host_header_allowed(self) -> bool:
         return host_allowed(_host_from_header(self.headers.get("Host", "")))
 
-    def _read_json_payload(self) -> dict[str, Any]:
+    def _read_json_payload(self, *, max_bytes: int = MAX_REQUEST_BYTES) -> dict[str, Any]:
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
             raise UnsupportedContentType()
         content_length = int(self.headers.get("Content-Length", "0"))
         if content_length < 0:
             raise ValueError("Content-Length must be non-negative")
-        if content_length > MAX_REQUEST_BYTES:
+        if content_length > max_bytes:
             raise RequestBodyTooLarge()
         body = self.rfile.read(content_length)
         payload = json.loads(body.decode("utf-8") or "{}")
@@ -944,6 +1023,97 @@ def _bounded_int(raw: str, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, value))
+
+
+def _optional_float(raw: Any) -> float | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value != value:
+        return None
+    return value
+
+
+def _save_wake_audition_sample(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_audio = str(payload.get("audio_base64") or "")
+    if "," in raw_audio and raw_audio[:64].lower().startswith("data:"):
+        raw_audio = raw_audio.split(",", 1)[1]
+    audio_bytes = base64.b64decode(raw_audio.encode("ascii"), validate=True)
+    if not audio_bytes:
+        raise ValueError("audio_base64 is empty")
+    if len(audio_bytes) > MAX_WAKE_SAMPLE_BYTES:
+        raise ValueError("audio sample is too large")
+
+    sample_id = _clean_sample_id(payload.get("sample_id"))
+    mime_type = _clean_mime_type(payload.get("mime_type"))
+    extension = _audio_extension(mime_type)
+    sample_dir = PROJECT_ROOT / "runtime" / "wake_audition" / "samples"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = sample_dir / f"{sample_id}{extension}"
+    metadata_path = sample_dir / f"{sample_id}.json"
+
+    transcript = str(payload.get("transcript") or "")[:1000]
+    threshold = _optional_float(payload.get("threshold"))
+    noise_db = _optional_float(payload.get("noise_db"))
+    score = wake_audition_score(transcript, threshold=threshold, noise_db=noise_db)
+    audio_path.write_bytes(audio_bytes)
+    metadata = {
+        "sample_id": sample_id,
+        "created_at": time.time(),
+        "mime_type": mime_type,
+        "audio_path": str(audio_path),
+        "bytes": len(audio_bytes),
+        "transcript": transcript,
+        "threshold": score.get("threshold"),
+        "noise_db": noise_db,
+        "score": score,
+        "source": str(payload.get("source") or "wake-audition-page")[:80],
+    }
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return {
+        "tool": "voice.wake_audition",
+        "status": "saved",
+        "executed": True,
+        "read_private_content": False,
+        "sent_audio": False,
+        "sample_id": sample_id,
+        "mime_type": mime_type,
+        "bytes": len(audio_bytes),
+        "audio_path": str(audio_path),
+        "metadata_path": str(metadata_path),
+        "score": score,
+        "reply": "Wake sample saved locally under Jarvis runtime.",
+    }
+
+
+def _clean_sample_id(raw: Any) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(raw or "").strip())[:80].strip(".-")
+    if not text:
+        text = f"wake-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    return text
+
+
+def _clean_mime_type(raw: Any) -> str:
+    text = str(raw or "audio/webm").split(";", 1)[0].strip().lower()
+    if not re.fullmatch(r"audio/[a-z0-9.+-]+", text):
+        return "audio/webm"
+    return text[:80]
+
+
+def _audio_extension(mime_type: str) -> str:
+    mapping = {
+        "audio/webm": ".webm",
+        "audio/mp4": ".m4a",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/ogg": ".ogg",
+    }
+    return mapping.get(mime_type, ".audio")
 
 
 def _clean_reason(reason: str) -> str:

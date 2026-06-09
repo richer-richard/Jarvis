@@ -976,6 +976,7 @@ def check_endpoint_tools(base_url: str) -> str:
         "system.status",
         "shell.read_only",
         "voice.wake_simulation",
+        "voice.wake_audition",
         "policy.pause",
         "policy.strong_confirmation",
     }
@@ -1073,6 +1074,38 @@ def check_endpoint_wake_simulation(base_url: str) -> str:
     dangerous_assessment = dangerous_result.get("command_assessment") or {}
     require(dangerous_assessment.get("requires_typed_confirmation") is True, "dangerous wake command was not classified as typed confirmation")
     return "text wake phrase detected and extracted command assessed"
+
+
+def check_endpoint_wake_audition(base_url: str) -> str:
+    status = get_json("/api/wake-audition/status", base_url=base_url)
+    require(status.get("tool") == "voice.wake_audition", f"status tool was {status.get('tool')}")
+    require(status.get("status") == "available", f"status was {status.get('status')}")
+    require("/wake-audition/" in str(status.get("page_url")), f"page url was {status.get('page_url')}")
+
+    score = post_json(
+        "/api/wake-audition/score",
+        {"transcript": "hey jervis check status", "threshold": 0.82, "noise_db": -18},
+        base_url=base_url,
+    )
+    require(score.get("tool") == "voice.wake_audition", f"score tool was {score.get('tool')}")
+    require(score.get("detected") is True, f"wake was not detected: {score}")
+    require(score.get("command") == "check status", f"command was {score.get('command')}")
+    return f"wake score {score.get('score')}"
+
+
+def check_endpoint_speech_mute(base_url: str) -> str:
+    muted = post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
+    try:
+        require(muted.get("tool") == "voice.speech_mute", f"mute tool was {muted.get('tool')}")
+        require(muted.get("muted") is True, f"mute state was {muted.get('muted')}")
+        status = get_json("/api/speech/mute", base_url=base_url)
+        require(status.get("muted") is True, f"status muted was {status.get('muted')}")
+        speech = post_json("/api/speech/status", {"text": "Verifier should stay quiet."}, base_url=base_url)
+        speech_status = (speech.get("speech") or {}).get("status")
+        require(speech.get("executed") is False and speech_status == "muted", f"speech status was {speech}")
+    finally:
+        post_json("/api/speech/mute", {"muted": False}, base_url=base_url)
+    return "speech mute toggled and blocked status speech"
 
 
 def check_endpoint_prompt_injection_scan(base_url: str) -> str:
@@ -1296,6 +1329,8 @@ def run_checks() -> dict[str, Any]:
         results.append(endpoint_check("endpoint_dangerous_policy", lambda: check_endpoint_dangerous_policy(active_base_url)))
         results.append(endpoint_check("endpoint_plan_preview", lambda: check_endpoint_plan_preview(active_base_url)))
         results.append(endpoint_check("endpoint_wake_simulation", lambda: check_endpoint_wake_simulation(active_base_url)))
+        results.append(endpoint_check("endpoint_wake_audition", lambda: check_endpoint_wake_audition(active_base_url)))
+        results.append(endpoint_check("endpoint_speech_mute", lambda: check_endpoint_speech_mute(active_base_url)))
         results.append(endpoint_check("endpoint_prompt_injection_scan", lambda: check_endpoint_prompt_injection_scan(active_base_url)))
         results.append(endpoint_check("endpoint_read_only_shell_allowlist", lambda: check_endpoint_read_only_shell_allowlist(active_base_url)))
 

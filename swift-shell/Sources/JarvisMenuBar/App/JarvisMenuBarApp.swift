@@ -154,8 +154,9 @@ struct JarvisMenuBarApp {
 }
 
 @MainActor
-final class JarvisAppDelegate: NSObject, NSApplicationDelegate {
+final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
+    private var speechMuteItem: NSMenuItem?
     private var panel: NSWindow?
     private let model = JarvisShellModel()
     private var hotKeyService: JarvisHotKeyService?
@@ -239,10 +240,14 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate {
         item.button?.imagePosition = .imageLeading
 
         let menu = NSMenu()
+        menu.delegate = self
         menu.addItem(NSMenuItem(title: "Open Panel", action: #selector(openPanel), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "Run Status", action: #selector(runStatus), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "d"))
         menu.addItem(NSMenuItem(title: "Shortcut: Command+Option+J", action: #selector(showHotKeyStatus), keyEquivalent: ""))
+        let muteItem = NSMenuItem(title: Self.speechMuteMenuTitle(muted: model.isSpeechMuted), action: #selector(toggleSpeechMute), keyEquivalent: "")
+        speechMuteItem = muteItem
+        menu.addItem(muteItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Jarvis", action: #selector(quit), keyEquivalent: "q"))
 
@@ -262,7 +267,15 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate {
         if let override = JarvisMenuBarApp.environmentFlag("JARVIS_SHOW_MENU_BAR_ITEM", environment: environment) {
             return override
         }
-        return false
+        return true
+    }
+
+    static func speechMuteMenuTitle(muted: Bool) -> String {
+        muted ? "Keep Blabbering" : "Shut Up"
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        updateSpeechMuteMenuItem()
     }
 
     private static func statusItemImage() -> NSImage? {
@@ -319,6 +332,15 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openDashboard() {
         NSWorkspace.shared.open(model.dashboardURL)
+    }
+
+    @objc private func toggleSpeechMute() {
+        model.toggleSpeechMuted()
+        updateSpeechMuteMenuItem()
+    }
+
+    private func updateSpeechMuteMenuItem() {
+        speechMuteItem?.title = Self.speechMuteMenuTitle(muted: model.isSpeechMuted)
     }
 
     @objc private func pasteCommand(_ sender: Any?) {

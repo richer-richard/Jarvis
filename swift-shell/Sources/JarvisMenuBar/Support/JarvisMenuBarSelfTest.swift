@@ -115,11 +115,20 @@ enum JarvisMenuBarSelfTest {
         guard JarvisMenuBarApp.activationPolicy(environment: ["JARVIS_SHOW_DOCK_ICON": "no"]) == .accessory else {
             throw SelfTestError.failed("Debug Dock-icon override should allow accessory activation policy.")
         }
-        guard !JarvisAppDelegate.menuBarItemEnabled(environment: [:]) else {
-            throw SelfTestError.failed("Menu-bar item should be disabled by default for normal Dock app mode.")
+        guard JarvisAppDelegate.menuBarItemEnabled(environment: [:]) else {
+            throw SelfTestError.failed("Menu-bar item should be enabled by default beside normal Dock app mode.")
+        }
+        guard !JarvisAppDelegate.menuBarItemEnabled(environment: ["JARVIS_SHOW_MENU_BAR_ITEM": "no"]) else {
+            throw SelfTestError.failed("Menu-bar item override should allow hiding the status item.")
         }
         guard JarvisAppDelegate.menuBarItemEnabled(environment: ["JARVIS_SHOW_MENU_BAR_ITEM": "on"]) else {
             throw SelfTestError.failed("Menu-bar item override should allow enabling the status item.")
+        }
+        guard JarvisAppDelegate.speechMuteMenuTitle(muted: false) == "Shut Up" else {
+            throw SelfTestError.failed("Unmuted menu title should be Shut Up.")
+        }
+        guard JarvisAppDelegate.speechMuteMenuTitle(muted: true) == "Keep Blabbering" else {
+            throw SelfTestError.failed("Muted menu title should be Keep Blabbering.")
         }
         guard !JarvisShellModel.shouldUseNativeVoiceStatus("tts status") else {
             throw SelfTestError.failed("TTS status should route to backend diagnostics.tts, not the native voice snapshot.")

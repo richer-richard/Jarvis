@@ -109,9 +109,11 @@ from jarvis.tools import (
     ui_overlay_plan,
     voice_loop_simulation,
     voice_session_plan,
+    wake_audition_score,
+    wake_audition_status,
     wake_status,
 )
-from jarvis.wake import WakeSession, detect_wake_command
+from jarvis.wake import WakeSession, detect_wake_command, score_wake_transcript
 from scripts import verify_safe
 from scripts.morning_status import (
     MAX_VERIFICATION_AGE_SECONDS as MORNING_MAX_VERIFICATION_AGE_SECONDS,
@@ -408,6 +410,7 @@ class PlannerTests(unittest.TestCase):
             "stt audition status": "voice.stt_audition",
             "speech recognition audition page": "voice.stt_audition",
             "speech recognition candidates": "voice.stt_candidates",
+            "Hey Jarvis wake audition status": "voice.wake_audition",
             "voice recognition models": "voice.stt_candidates",
             "speech recognition test plan": "voice.stt_session_plan",
             "stt audition plan": "voice.stt_session_plan",
@@ -487,12 +490,13 @@ class PlannerTests(unittest.TestCase):
         result = capabilities_status()
         stt = next(item for item in result["capabilities"] if item["id"] == "speech_to_text")
 
-        if stt["status"] == "prep_ready":
-            self.assertGreaterEqual(result["counts"]["prepared"], 1)
-            self.assertIn("Prepared but not live yet", result["reply"])
+        self.assertEqual(stt["status"], "partial")
+        self.assertIn("Experimental command transcription", stt["summary"])
         self.assertGreaterEqual(result["counts"]["not_live"], 1)
-        self.assertIn("real microphone speech-to-text", result["not_live_features"])
-        self.assertIn("background wake-word listening", result["not_live_features"])
+        self.assertIn("hardened false-wake tuning", result["not_live_features"])
+        self.assertIn("long-running wake listener reliability", result["not_live_features"])
+        self.assertNotIn("real microphone speech-to-text", result["not_live_features"])
+        self.assertNotIn("background wake-word listening", result["not_live_features"])
         self.assertNotIn("0 not ready", result["reply"])
 
     def test_codex_route_starts_async_job_for_broad_requests(self):
@@ -2030,7 +2034,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("typed_chat", [item["id"] for item in result.result["capabilities"]])
         tts_capability = next(item for item in result.result["capabilities"] if item["id"] == "tts")
         self.assertEqual(tts_capability["stop_tool"], "voice.stop_speaking")
-        self.assertIn("background wake-word listening", result.result["reply"])
+        self.assertIn("experimental wake/STT", result.result["reply"])
         self.assertIn("stop-speaking interruption", result.result["reply"])
         self.assertIn("did not read email", result.result["reply"])
 
@@ -2477,16 +2481,48 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(permissions["bundle_path"], str(running_bundle))
         self.assertTrue(permissions["surfaces"][0]["declared_in_bundle"])
 
-    def test_wake_status_reports_voice_wake_not_active(self):
+    def test_wake_status_reports_experimental_voice_wake(self):
         result = wake_status()
 
         self.assertEqual(result["tool"], "diagnostics.wake")
-        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["status"], "experimental")
         self.assertTrue(result["keyboard_wake_available"])
         self.assertTrue(result["typed_wake_simulation_available"])
-        self.assertFalse(result["microphone_wake_available"])
+        self.assertTrue(result["microphone_wake_available"])
+        self.assertTrue(result["experimental_native_listener_available"])
         self.assertFalse(result["background_listener_active"])
-        self.assertIn("not active yet", result["reply"])
+        self.assertIn("/wake-audition/", result["wake_audition_page_url"])
+        self.assertIn("experimental", result["reply"].lower())
+
+    def test_wake_audition_status_reports_local_test_surface(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch("jarvis.tools.PROJECT_ROOT", root):
+                result = wake_audition_status()
+
+        self.assertEqual(result["tool"], "voice.wake_audition")
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["sample_count"], 0)
+        self.assertFalse(result["recorded_audio"])
+        self.assertFalse(result["sent_audio"])
+        self.assertIn("/wake-audition/", result["page_url"])
+        self.assertGreaterEqual(result["default_threshold"], 0.8)
+
+    def test_wake_audition_score_accepts_close_jarvis_transcript(self):
+        result = wake_audition_score("hey jervis check email")
+
+        self.assertEqual(result["tool"], "voice.wake_audition")
+        self.assertEqual(result["status"], "scored")
+        self.assertTrue(result["detected"])
+        self.assertEqual(result["command"], "check email")
+        self.assertGreaterEqual(result["score"], result["threshold"])
+        self.assertFalse(result["recorded_audio"])
+
+    def test_wake_score_rejects_unrelated_speech(self):
+        result = score_wake_transcript("please check my email later")
+
+        self.assertFalse(result.detected)
+        self.assertLess(result.score, result.threshold)
 
     def test_stt_audition_status_reports_local_page_without_audio(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3757,7 +3793,82 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('NSMenuItem(title: "Close Window", action: #selector(closeWindow), keyEquivalent: "w")', app_source)
         self.assertIn("panel?.performClose(nil)", app_source)
         self.assertIn("window.level = .normal", app_source)
+        self.assertIn('return true', app_source)
         self.assertNotIn("<key>LSUIElement</key>", bundle_script)
+
+    def test_swift_menu_bar_has_shut_up_toggle_contract(self):
+        app_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "App"
+            / "JarvisMenuBarApp.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        client_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisClient"
+            / "JarvisClient.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"Shut Up"', app_source)
+        self.assertIn('"Keep Blabbering"', app_source)
+        self.assertIn("toggleSpeechMute", app_source)
+        self.assertIn("menuNeedsUpdate", app_source)
+        self.assertIn("toggleSpeechMuted()", model_source)
+        self.assertIn("isSpeechMuted", model_source)
+        self.assertIn("setSpeechMuted", client_source)
+        self.assertIn('appendingPathComponent("mute")', client_source)
+
+    def test_swift_app_has_experimental_wake_listener_contract(self):
+        listener_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Support"
+            / "JarvisWakeListener.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        view_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Views"
+            / "JarvisPanelView.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("SFSpeechRecognizer", listener_source)
+        self.assertIn("AVAudioEngine", listener_source)
+        self.assertIn("AVCaptureDevice.requestAccess", listener_source)
+        self.assertIn("SFSpeechRecognizer.requestAuthorization", listener_source)
+        self.assertIn("requiresOnDeviceRecognition", listener_source)
+        self.assertIn("onWakeDetected", listener_source)
+        self.assertIn("onCommandCaptured", listener_source)
+        self.assertIn("wakeListener.start()", model_source)
+        self.assertIn("wakeListener.stop()", model_source)
+        self.assertIn('text: "Yes sir?"', model_source)
+        self.assertIn("submit(command)", model_source)
+        self.assertIn("WakeToggleButton", view_source)
+        self.assertIn("model.wakeModeText", view_source)
 
     def test_swift_permission_footer_names_app_scope(self):
         service_source = (
@@ -3819,6 +3930,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("voice.stt_score", tool_ids)
         self.assertIn("voice.stt_recommendation", tool_ids)
         self.assertIn("voice.loop_simulation", tool_ids)
+        self.assertIn("voice.wake_audition", tool_ids)
         self.assertIn("voice.stop_speaking", tool_ids)
         self.assertIn("diagnostics.overnight", tool_ids)
         self.assertIn("diagnostics.final_qa", tool_ids)
@@ -4786,6 +4898,57 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertFalse(result["interrupted_previous"])
         self.assertFalse(result["started_audio"])
         self.assertEqual(result["reply"], "I was not speaking.")
+
+    def test_speech_mute_blocks_future_audio_until_unmuted(self):
+        try:
+            muted = jarvis_tools.set_speech_muted(True)
+            result = jarvis_tools.speak_text_async("Jarvis should stay quiet.", reason="final", force=True)
+            status = jarvis_tools.speech_mute_status()
+        finally:
+            jarvis_tools.set_speech_muted(False)
+
+        self.assertTrue(muted["muted"])
+        self.assertEqual(muted["status"], "muted")
+        self.assertFalse(result["spoken"])
+        self.assertEqual(result["status"], "muted")
+        self.assertTrue(status["muted"])
+
+    def test_speech_mute_interrupts_active_audio_when_enabled(self):
+        class FakeProcess:
+            def __init__(self):
+                self.running = True
+                self.terminated = False
+
+            def poll(self):
+                return None if self.running else 0
+
+            def terminate(self):
+                self.terminated = True
+                self.running = False
+
+            def kill(self):
+                self.running = False
+
+            def wait(self, timeout=None):
+                self.running = False
+                return 0
+
+        process = FakeProcess()
+        with jarvis_tools.SPEECH_LOCK:
+            jarvis_tools.SPEECH_PROCESS = process
+            jarvis_tools.SPEECH_PROCESS_REASON = "final"
+            jarvis_tools.SPEECH_MUTED = False
+        try:
+            result = jarvis_tools.set_speech_muted(True)
+        finally:
+            with jarvis_tools.SPEECH_LOCK:
+                jarvis_tools.SPEECH_PROCESS = None
+                jarvis_tools.SPEECH_PROCESS_REASON = None
+                jarvis_tools.SPEECH_MUTED = False
+
+        self.assertTrue(result["muted"])
+        self.assertTrue(result["interrupted_previous"])
+        self.assertTrue(process.terminated)
 
     def test_auto_speech_sanitizer_flattens_audio_unfriendly_formatting(self):
         spoken = jarvis_tools._sanitize_spoken_text(
@@ -6580,6 +6743,20 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(response["speech"]["reason"], "status")
         speak_mock.assert_called_once_with("Yes sir, checking your email now.", reason="status")
 
+    def test_speech_mute_api_updates_runtime_state(self):
+        server = JarvisServer()
+        try:
+            muted = server.set_speech_muted(True)
+            status = server.speech_mute_status()
+            spoken = server.speak_status("This should not play.")
+        finally:
+            server.set_speech_muted(False)
+
+        self.assertTrue(muted["muted"])
+        self.assertTrue(status["muted"])
+        self.assertFalse(spoken["executed"])
+        self.assertEqual(spoken["speech"]["status"], "muted")
+
     def test_stream_command_passes_history_to_fast_chat_without_router_delay(self):
         fake_events = [
             {"event": "delta", "data": {"text": "Correct, "}},
@@ -7589,7 +7766,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(preflight["summary"]["recommended_total"], len(recommended_ids))
         self.assertEqual(preflight["summary"]["required_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "required" and check["passed"]))
         policy_gate = next(check for check in preflight["checks"] if check["id"] == "policy_gates_loaded")
-        self.assertIn("40/40", policy_gate["detail"])
+        self.assertIn("41/41", policy_gate["detail"])
         self.assertEqual(preflight["summary"]["recommended_passed"], sum(1 for check in preflight["checks"] if check["severity"] == "recommended" and check["passed"]))
         self.assertEqual(check_ids, required_ids.union(recommended_ids))
 
@@ -7828,7 +8005,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 {
                     "id": "voice_recognition_audition_prep",
                     "status": "implemented_terminal_verified",
-                    "remaining": "Real microphone wake/STT is not enabled yet.",
+                    "remaining": "Experimental wake/STT exists; false-wake tuning remains.",
                 },
                 {"id": "master_report", "status": "prepared", "remaining": "Foreground visual QA is deferred."},
                 {"id": "rebuilt_bundle", "status": "available", "remaining": "Live app relaunch is deferred."},

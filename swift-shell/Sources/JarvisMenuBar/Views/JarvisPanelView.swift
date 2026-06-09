@@ -38,6 +38,7 @@ struct JarvisPanelView: View {
 
             HStack(spacing: 7) {
                 StatusChip(label: model.modeText)
+                StatusChip(label: model.wakeModeText)
                 StatusChip(label: model.state)
                 StatusChip(label: model.turnPhaseText)
                 StatusChip(label: model.connection)
@@ -95,11 +96,12 @@ struct JarvisPanelView: View {
     }
 
     private var quickActions: some View {
-        HStack(spacing: 8) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 86), spacing: 8)], spacing: 8) {
             QuickActionButton("Email", command: "check my email", model: model)
             QuickActionButton("Status", command: "status", model: model)
             QuickActionButton("Report", command: "overnight status", model: model)
             QuickActionButton("Wake Test", command: "wake: Hey Jarvis status", model: model)
+            WakeToggleButton(model: model)
             QuickActionButton("Screen", command: "screenshot capability", model: model)
             QuickActionButton("Codex", command: "ask Codex to review this project", model: model)
         }
@@ -201,6 +203,7 @@ struct JarvisPanelView: View {
                 FooterColumn(title: "Worker", value: model.workerText)
                 FooterColumn(title: "Audit", value: model.auditText)
                 FooterColumn(title: "Verification", value: model.verificationText)
+                FooterColumn(title: "Wake", value: model.wakeDetailText)
             }
 
             LazyVGrid(
@@ -448,6 +451,18 @@ private struct QuickActionButton: View {
         }
         .frame(maxWidth: .infinity)
         .disabled(model.isBusy || model.isPaused)
+    }
+}
+
+private struct WakeToggleButton: View {
+    let model: JarvisShellModel
+
+    var body: some View {
+        Button(model.isWakeListening ? "Wake Off" : "Hey Jarvis") {
+            model.toggleWakeListener()
+        }
+        .frame(maxWidth: .infinity)
+        .help("Start or stop the experimental Hey Jarvis microphone listener.")
     }
 }
 
