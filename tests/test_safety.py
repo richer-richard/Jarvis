@@ -4164,6 +4164,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("requiresOnDeviceRecognition", listener_source)
         self.assertIn("onWakeDetected", listener_source)
         self.assertIn("onCommandCaptured", listener_source)
+        self.assertIn("onCommandIgnored", listener_source)
         self.assertIn("testDetectWake", listener_source)
         self.assertIn('"hey jervis please check email"', self_test_source)
         self.assertIn(
@@ -4175,11 +4176,13 @@ class RuntimeSurfaceTests(unittest.TestCase):
             listener_source,
         )
         self.assertIn(
-            'if wake.detected {\n            guard !wake.command.isEmpty else {\n                return\n            }\n            command = wake.command',
+            'if wake.detected {\n            guard !wake.command.isEmpty else {\n                onCommandIgnored?("repeated_wake", transcript, "")\n                return\n            }\n            command = wake.command',
             listener_source,
         )
         self.assertIn("isWakeGreetingEcho", listener_source)
         self.assertIn('"yes sir"', listener_source)
+        self.assertIn('onCommandIgnored?("repeated_wake"', listener_source)
+        self.assertIn('onCommandIgnored?("wake_greeting_echo"', listener_source)
         self.assertIn("wakeListener.start()", model_source)
         self.assertIn("wakeListener.stop()", model_source)
         self.assertIn('text: "Yes sir?"', model_source)
@@ -4187,6 +4190,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("wakeEventLog", model_source)
         self.assertIn('recordWakeEvent("wake_detected"', model_source)
         self.assertIn('recordWakeEvent("command_captured"', model_source)
+        self.assertIn('event = "command_ignored_repeated_wake"', model_source)
+        self.assertIn('event = "command_ignored_echo"', model_source)
         self.assertIn('"recent_events": wakeEventLog', model_source)
         self.assertIn("WakeToggleButton", view_source)
         self.assertIn("model.wakeModeText", view_source)

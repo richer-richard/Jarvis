@@ -270,6 +270,25 @@ final class JarvisShellModel: ObservableObject {
             }
             submit(command)
         }
+        wakeListener.onCommandIgnored = { [weak self] reason, transcript, command in
+            guard let self else {
+                return
+            }
+            let event: String
+            let detail: String
+            switch reason {
+            case "repeated_wake":
+                event = "command_ignored_repeated_wake"
+                detail = "Ignored repeated wake phrase while waiting for a command."
+            case "wake_greeting_echo":
+                event = "command_ignored_echo"
+                detail = "Ignored Jarvis's wake greeting echo while waiting for a command."
+            default:
+                event = "command_ignored"
+                detail = "Ignored wake-listener transcript while waiting for a command."
+            }
+            recordWakeEvent(event, detail: detail, transcript: transcript, command: command)
+        }
     }
 
     private func recordWakeEvent(_ event: String, detail: String = "", transcript: String = "", command: String = "") {

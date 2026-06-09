@@ -17,6 +17,7 @@ final class JarvisWakeListener {
     var onStateChange: ((JarvisWakeListenerSnapshot) -> Void)?
     var onWakeDetected: ((String) -> Void)?
     var onCommandCaptured: ((String, String) -> Void)?
+    var onCommandIgnored: ((String, String, String) -> Void)?
 
     private enum Phase {
         case stopped
@@ -240,11 +241,13 @@ final class JarvisWakeListener {
         let wake = Self.detectWake(transcript)
         if wake.detected {
             guard !wake.command.isEmpty else {
+                onCommandIgnored?("repeated_wake", transcript, "")
                 return
             }
             command = wake.command
         }
         guard !Self.isWakeGreetingEcho(command) else {
+            onCommandIgnored?("wake_greeting_echo", transcript, command)
             return
         }
         guard command.count >= 2 else {
