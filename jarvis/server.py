@@ -88,7 +88,7 @@ class JarvisServer:
             _attach_auto_speech(data, reason="final")
             return data
 
-        planned = self.planner.handle(command, history=history, use_model_router=False)
+        planned = self.planner.handle(command, history=history, use_model_router=True)
         data = planned.to_dict()
         event = self.audit.record(
             command=command,

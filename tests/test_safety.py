@@ -2192,7 +2192,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("max first visible 0.700s", result["reply"])
         self.assertIn("Normal conversation uses this route, not Codex", result["reply"])
 
-    def test_device_status_routes_before_generic_status(self):
+    def test_device_status_uses_first_model_tool_call_before_local_fallback(self):
         fake_status = {
             "tool": "diagnostics.device",
             "status": "checked",
@@ -2201,15 +2201,59 @@ class PlannerTests(unittest.TestCase):
             "changed_system_state": False,
             "reply": "Device status: test Mac.",
         }
-        with patch("jarvis.planner.device_status", return_value=fake_status) as status_mock:
+        tool_request = {
+            "tool": "conversation.fast_local",
+            "status": "tool_requested",
+            "selected_tool": "diagnostics.device",
+            "status_text": "Yes sir, checking this Mac now.",
+            "entities": {},
+            "executed": True,
+        }
+        with patch("jarvis.planner.run_fast_local_chat", return_value=tool_request) as model_mock, \
+             patch("jarvis.planner.device_status", return_value=fake_status) as status_mock:
             result = Planner().handle("what Mac is this?")
 
         self.assertEqual(result.tool, "diagnostics.device")
         self.assertTrue(result.executed)
         self.assertEqual(result.result["reply"], "Device status: test Mac.")
-        self.assertEqual(result.result["routing"]["source"], "deterministic_shortcut")
+        self.assertEqual(result.result["routing"]["source"], "model_tool_call")
+        model_mock.assert_called_once()
         status_mock.assert_called_once_with()
         self.assertEqual(Planner().handle("Jarvis status").tool, "system.status")
+
+    def test_device_status_respects_first_model_conversation_answer(self):
+        fake_result = {
+            "tool": "conversation.fast_local",
+            "status": "completed",
+            "executed": True,
+            "reply": "I can talk about Macs generally, but I will not inspect this machine unless I choose the device tool.",
+        }
+        with patch("jarvis.planner.run_fast_local_chat", return_value=fake_result), \
+             patch("jarvis.planner.device_status") as status_mock:
+            result = Planner().handle("what Mac is this?")
+
+        self.assertEqual(result.tool, "conversation.fast_local")
+        self.assertTrue(result.executed)
+        status_mock.assert_not_called()
+
+    def test_device_status_can_use_local_fallback_when_router_is_disabled(self):
+        fake_status = {
+            "tool": "diagnostics.device",
+            "status": "checked",
+            "executed": True,
+            "read_private_content": False,
+            "changed_system_state": False,
+            "reply": "Device status: fallback Mac.",
+        }
+        with patch("jarvis.planner.run_fast_local_chat") as model_mock, \
+             patch("jarvis.planner.device_status", return_value=fake_status) as status_mock:
+            result = Planner().handle("what Mac is this?", use_model_router=False)
+
+        self.assertEqual(result.tool, "diagnostics.device")
+        self.assertEqual(result.result["reply"], "Device status: fallback Mac.")
+        self.assertEqual(result.result["routing"]["source"], "deterministic_shortcut")
+        model_mock.assert_not_called()
+        status_mock.assert_called_once_with()
 
     def test_model_selected_device_status_executes(self):
         fake_status = {
@@ -7184,7 +7228,16 @@ class RuntimeSurfaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             server = JarvisServer()
             server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
-            with patch("jarvis.planner.device_status", return_value=fake_status), \
+            tool_request = {
+                "tool": "conversation.fast_local",
+                "status": "tool_requested",
+                "selected_tool": "diagnostics.device",
+                "status_text": "Yes sir, checking this Mac now.",
+                "entities": {},
+                "executed": True,
+            }
+            with patch("jarvis.planner.run_fast_local_chat", return_value=tool_request), \
+                 patch("jarvis.planner.device_status", return_value=fake_status), \
                  patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final"}) as speak_mock:
                 result = server.command("what Mac is this?")
 

@@ -35,6 +35,7 @@ SHIPPED_ITEMS = [
     "The Jarvis panel now has a Perms quick action for microphone, speech, screen, accessibility, and notification readiness.",
     "The wake lab now summarizes runs into detected count, best noisy pass, and a suggested next step.",
     "Wake-lab Copy JSON now includes the current transcript, current score, and recommendation even before a run is saved.",
+    "Mac/device-status requests now go through the first model's tool call before reading local device facts.",
     "Final answers with normal reply text now auto-speak by default instead of leaving only the working line audible.",
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
@@ -42,7 +43,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 383/383 passed after the wake, mute, final-speech, report-route, and speech-alignment work.",
+    "Python safety suite: 385/385 passed after the wake, mute, final-speech, report-route, speech-alignment, and model-selected device-routing work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 92/92 after the speech-mute, wake-audition, and report-route endpoints were added.",
@@ -51,6 +52,7 @@ PROOF_ITEMS = [
     "Live UI inspection showed the Jarvis panel with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
     "A muted live TTS probe returned the exact sanitized text_preview that Jarvis was asked to speak.",
     "A muted live hello stream matched visible text, final reply, and TTS text_preview.",
+    "A muted live Mac-status probe returned diagnostics.device with routing.source=model_tool_call.",
 ]
 
 TRY_ITEMS = [
@@ -263,6 +265,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Add menu-bar wake controls", "Start/Stop Hey Jarvis and Open Wake Test are reachable without the panel."),
         ("done", "Add permission quick action", "The panel has a Perms button for the exact macOS readiness check."),
         ("done", "Add wake-lab decision summary", "Runs now summarize detected count, best noisy pass, and next step."),
+        ("done", "Route Mac status through first model", "Device facts are read only after the first model selects diagnostics.device."),
         ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
         ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),

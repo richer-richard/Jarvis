@@ -1,4 +1,4 @@
-"""Heuristic planner for the first Jarvis prototype."""
+"""Planner for the Jarvis prototype with model-selected tools and guarded local fallbacks."""
 
 from __future__ import annotations
 
@@ -566,6 +566,8 @@ class Planner:
         if _looks_like_fast_model_status(lower):
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
         if _looks_like_device_status(lower):
+            if use_model_router:
+                return self._first_model_result(text, assessment, history=history)
             return self._result(
                 text,
                 "diagnostics.device",
@@ -685,6 +687,15 @@ class Planner:
             routed = self._handle_model_intent(text, assessment, _explicit_codex_intent(), execute=True, history=history)
             if routed is not None:
                 return routed
+        return self._first_model_result(text, assessment, history=history)
+
+    def _first_model_result(
+        self,
+        text: str,
+        assessment: Any,
+        *,
+        history: list[dict[str, str]] | None = None,
+    ) -> PlannedResult:
         result = run_fast_local_chat(text, history=history, tool_specs=NATURAL_LANGUAGE_TOOL_SPECS)
         if result.get("status") == "tool_requested":
             routed = self.handle_selected_tool(
