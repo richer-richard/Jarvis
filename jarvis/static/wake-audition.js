@@ -10,7 +10,7 @@
     lastBlobUrl: "",
     lastMimeType: "",
     lastScore: null,
-    selectedCorpusTranscript: "",
+    selectedCorpusCase: null,
     runs: loadRuns(),
     runIndex: 0,
   };
@@ -109,7 +109,11 @@
   }
 
   async function fillCorpusTranscript(item, button) {
-    state.selectedCorpusTranscript = item.transcript;
+    state.selectedCorpusCase = {
+      label: item.label,
+      transcript: item.transcript,
+      expected: item.expected,
+    };
     els.manualTranscript.value = item.transcript;
     for (const candidate of els.corpusList.querySelectorAll(".corpus-button")) {
       candidate.classList.toggle("active", candidate === button);
@@ -458,6 +462,7 @@
         transcript: els.manualTranscript.value.trim(),
         score: state.lastScore,
         result_label: els.wakeResult.textContent,
+        selected_corpus_case: state.selectedCorpusCase,
       },
       summary: {
         detected_runs: els.detectedSummary.textContent,

@@ -274,7 +274,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             if path == "/wake-audition/":
                 return 200, '<!doctype html><div id="corpus-list"></div><span id="corpus-status"></span>', {}
             if path == "/static/wake-audition.js":
-                return 200, "const THRESHOLD_CORPUS = ['hey charvis status']; function fillCorpusTranscript() {}", {}
+                return 200, "const THRESHOLD_CORPUS = ['hey charvis status']; function fillCorpusTranscript() {} const selected_corpus_case = true;", {}
             if path == "/static/wake-audition.css":
                 return 200, ".corpus-list { display: grid; }", {}
             return 404, "", {}
@@ -3046,6 +3046,8 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("THRESHOLD_CORPUS", script)
         self.assertIn("fillCorpusTranscript", script)
         self.assertIn("hey charvis status", script)
+        self.assertIn("selectedCorpusCase", script)
+        self.assertIn("selected_corpus_case", script)
         self.assertIn("current:", script)
         self.assertIn("suggested_next_step", script)
         self.assertIn(".decision-grid", css)

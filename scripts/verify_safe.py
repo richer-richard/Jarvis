@@ -1127,6 +1127,7 @@ def check_endpoint_wake_audition_corpus(base_url: str) -> str:
     require("THRESHOLD_CORPUS" in script_body, "wake script missing threshold corpus")
     require("fillCorpusTranscript" in script_body, "wake script missing corpus click handler")
     require("hey charvis status" in script_body, "wake script missing below-threshold boundary phrase")
+    require("selected_corpus_case" in script_body, "wake script missing selected corpus export")
     require(".corpus-list" in css_body, "wake css missing corpus layout")
     return "wake audition page exposes clickable threshold corpus"
 
