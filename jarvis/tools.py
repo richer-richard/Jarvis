@@ -87,7 +87,13 @@ from .config import (
 )
 from .injection import scan_untrusted_text
 from .safety import classify_command, classify_shell_command, is_shell_allowed
-from .wake import DEFAULT_WAKE_THRESHOLD, WAKE_PHRASES, detect_wake_command, score_wake_transcript
+from .wake import (
+    DEFAULT_WAKE_THRESHOLD,
+    WAKE_PHRASES,
+    detect_wake_command,
+    is_wake_greeting_echo,
+    score_wake_transcript,
+)
 
 
 APP_STARTED_AT = time.time()
@@ -3150,6 +3156,7 @@ def voice_loop_simulation(
     detection = detect_wake_command(clean_transcript)
     command = detection.command
     command_source = "wake_utterance"
+    ignored_echo_indices: list[int] = []
     if utterances:
         for index, utterance in enumerate(utterances):
             candidate = detect_wake_command(utterance)
@@ -3166,6 +3173,9 @@ def voice_loop_simulation(
                 else:
                     followup_command = utterance
                 followup_command = re.sub(r"\s+", " ", followup_command).strip()
+                if is_wake_greeting_echo(followup_command):
+                    ignored_echo_indices.append(index)
+                    continue
                 if followup_command:
                     command = followup_command
                     command_source = "followup_utterance"
@@ -3184,6 +3194,8 @@ def voice_loop_simulation(
             "utterance_index": wake_index if wake_index >= 0 else None,
         },
     ]
+    for index in ignored_echo_indices:
+        stages.append({"id": "command_capture", "status": "ignored_echo", "utterance_index": index})
     spoken_sequence: list[str] = []
     visible_sequence: list[str] = []
     if not detection.woke:
@@ -3226,6 +3238,7 @@ def voice_loop_simulation(
         "transcript": clean_transcript[:500],
         "utterances": utterances[:8],
         "wake_utterance_index": wake_index if wake_index >= 0 else None,
+        "ignored_echo_utterance_indices": ignored_echo_indices,
         "detection": detection.to_dict(),
         "command": command,
         "command_source": command_source if command else None,

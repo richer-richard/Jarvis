@@ -76,6 +76,13 @@ class WakeSession:
             }
         if self.listening:
             command = normalize_transcript(transcript)
+            if is_wake_greeting_echo(command):
+                return {
+                    "event": "ignored_echo",
+                    "listening": True,
+                    "command": "",
+                    "detection": detection.to_dict(),
+                }
             if command:
                 self.listening = False
                 self.last_wake_at = None
@@ -190,6 +197,10 @@ def _best_fuzzy_wake_match(normalized: str, wake_phrases: tuple[str, ...]) -> di
 
 def _clean_command(value: str) -> str:
     return re.sub(r"^(please\s+)+", "", normalize_transcript(value)).strip()
+
+
+def is_wake_greeting_echo(value: str) -> bool:
+    return normalize_transcript(value) in {"yes", "yes sir", "yes sir yes sir"}
 
 
 def _window_similarity(phrase_words: list[str], window_words: list[str]) -> float:

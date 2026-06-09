@@ -3058,6 +3058,22 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result.result["played_audio"])
         self.assertFalse(result.result["called_model"])
 
+    def test_voice_loop_simulation_ignores_wake_greeting_echo(self):
+        result = Planner().handle("voice loop: Hey Jarvis | Yes sir? | status")
+
+        self.assertEqual(result.tool, "voice.loop_simulation")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["status"], "command_previewed")
+        self.assertEqual(result.result["command"], "status")
+        self.assertEqual(result.result["command_source"], "followup_utterance")
+        self.assertEqual(result.result["ignored_echo_utterance_indices"], [1])
+        self.assertIn(
+            {"id": "command_capture", "status": "ignored_echo", "utterance_index": 1},
+            result.result["stages"],
+        )
+        self.assertEqual(result.result["route_preview"]["tool"], "system.status")
+        self.assertFalse(result.result["route_preview"]["executed"])
+
     def test_voice_loop_simulation_finds_later_wake_utterance(self):
         result = voice_loop_simulation("background noise | Hey Jarvis | check status")
 
@@ -8108,6 +8124,19 @@ class RuntimeSurfaceTests(unittest.TestCase):
         session.observe("Hey Jarvis", now=10)
         late = session.observe("check status", now=14)
         self.assertEqual(late["event"], "ignored")
+
+    def test_wake_session_ignores_wake_greeting_echo(self):
+        session = WakeSession(timeout_seconds=3)
+        wake = session.observe("Hey Jarvis", now=10)
+        echo = session.observe("Yes sir?", now=10.2)
+        followup = session.observe("check status", now=11)
+
+        self.assertEqual(wake["event"], "wake_detected")
+        self.assertEqual(echo["event"], "ignored_echo")
+        self.assertTrue(echo["listening"])
+        self.assertEqual(echo["command"], "")
+        self.assertEqual(followup["event"], "command_captured")
+        self.assertEqual(followup["command"], "check status")
 
     def test_pause_mode_blocks_and_resumes_command_execution(self):
         server = JarvisServer()
