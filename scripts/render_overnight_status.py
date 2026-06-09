@@ -30,6 +30,7 @@ SHIPPED_ITEMS = [
     "Menu-bar Shut Up toggle mutes Jarvis, interrupts current speech, and switches to Keep Blabbering for unmute.",
     "Menu-bar Start Hey Jarvis / Stop Hey Jarvis controls make the wake listener reachable without opening the panel.",
     "Menu-bar Open Wake Test jumps straight to the local wake-audition page.",
+    "Menu-bar Open Overnight Report jumps straight to the master report route.",
     "The Jarvis panel now shows speech mute state and uses Wake Lab for the new audition route.",
     "The Jarvis panel now has a Perms quick action for microphone, speech, screen, accessibility, and notification readiness.",
     "The wake lab now summarizes runs into detected count, best noisy pass, and a suggested next step.",
@@ -264,6 +265,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
         ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),
         ("done", "Add report loopback URLs", "The master report and workboard are reachable from the running Jarvis worker."),
+        ("done", "Add menu report shortcut", "The menu bar can open the overnight report route directly."),
         ("working", "Next: real-world Leo testing", "Needs actual microphone, room noise, and false-wake feedback."),
     ]
     items = "\n".join(task_item(*task) for task in tasks)
