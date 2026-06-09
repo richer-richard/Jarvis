@@ -7907,6 +7907,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("GET /api/readiness", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /api/preflight", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /api/codex/activity", readiness["mode"]["allowed_while_paused"])
+        self.assertIn("GET /overnight-report/", readiness["mode"]["allowed_while_paused"])
+        self.assertIn("GET /overnight-workboard/", readiness["mode"]["allowed_while_paused"])
         self.assertTrue(readiness["mode"]["paused"])
         self.assertGreaterEqual(readiness["tools"]["total"], readiness["tools"]["available"])
         self.assertGreater(readiness["self_check"]["total"], 0)

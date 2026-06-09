@@ -358,6 +358,8 @@ class JarvisServer:
                     "GET /api/audit",
                     "GET /api/self-check",
                     "GET /api/speech/mute",
+                    "GET /overnight-report/",
+                    "GET /overnight-workboard/",
                     "POST /api/mode",
                     "POST /api/plan",
                     "POST /api/speech/mute",
