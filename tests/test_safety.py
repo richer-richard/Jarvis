@@ -3663,6 +3663,81 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('return "Jarvis \\(bundleVersion)"', model_source)
         self.assertIn("Text(model.appVersionText)", view_source)
 
+    def test_swift_panel_shows_turn_phase(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        view_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Views"
+            / "JarvisPanelView.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("turnPhaseText", model_source)
+        self.assertIn('"turn_phase": turnPhaseText', model_source)
+        self.assertIn("StatusChip(label: model.turnPhaseText)", view_source)
+        for phase in ("Heard", "Thinking", "Working", "Answering", "Done"):
+            self.assertIn(f'"{phase}"', model_source)
+
+    def test_swift_copy_chat_json_includes_turn_trace_contract(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"schema": "jarvis.turn_trace.v1"', model_source)
+        self.assertIn('"visible_status_lines"', model_source)
+        self.assertIn('"final_visible_text"', model_source)
+        self.assertIn('"final_answer_visible"', model_source)
+        self.assertIn('"final_speech"', model_source)
+        self.assertIn('"route_source"', model_source)
+        self.assertIn("captureResponseDiagnostics(response)", model_source)
+        self.assertIn("recordTurnPhase(\"Answering\"", model_source)
+
+    def test_swift_smoke_tests_cover_current_loop_regressions(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"hello Jarvis"', model_source)
+        self.assertIn('"Give me a one-step algebra problem."', model_source)
+        self.assertIn('"x = 3"', model_source)
+        self.assertIn('"check my second email"', model_source)
+        self.assertIn('"what Mac is this"', model_source)
+        self.assertIn('"stop talking"', model_source)
+
+    def test_native_voice_status_describes_current_speech_contract(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("automatic final spoken replies are enabled", model_source)
+        self.assertIn('"automatic_tts_enabled": true', model_source)
+        self.assertIn('"final_answer_speech_expected": true', model_source)
+        self.assertNotIn("automatic spoken replies are not enabled", model_source)
+
     def test_swift_permission_footer_names_app_scope(self):
         service_source = (
             PROJECT_ROOT

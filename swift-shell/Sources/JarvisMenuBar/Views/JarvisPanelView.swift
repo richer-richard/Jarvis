@@ -39,6 +39,7 @@ struct JarvisPanelView: View {
             HStack(spacing: 7) {
                 StatusChip(label: model.modeText)
                 StatusChip(label: model.state)
+                StatusChip(label: model.turnPhaseText)
                 StatusChip(label: model.connection)
             }
         }

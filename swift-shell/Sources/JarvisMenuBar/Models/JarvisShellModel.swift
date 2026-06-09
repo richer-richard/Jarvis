@@ -7,6 +7,7 @@ final class JarvisShellModel: ObservableObject {
     @Published var command: String = ""
     @Published private(set) var connection: String = "Checking"
     @Published private(set) var state: String = "Idle"
+    @Published private(set) var turnPhaseText: String = "Ready"
     @Published private(set) var tool: String = "No tool"
     @Published private(set) var resultText: String = "{}"
     @Published private(set) var confirmation: Confirmation?
@@ -40,6 +41,8 @@ final class JarvisShellModel: ObservableObject {
     private static let smokeTestPrompts = [
         "hello Jarvis",
         "tell me a short joke",
+        "Give me a one-step algebra problem.",
+        "x = 3",
         "Write five short bullets about making Jarvis feel fast.",
         "latency status",
         "model status",
@@ -79,7 +82,10 @@ final class JarvisShellModel: ObservableObject {
         "Jarvis launch status",
         "email backend status",
         "check my email and summarize the newest email in my inbox",
+        "check my second email",
         "read the visible Outlook screen with OCR",
+        "what Mac is this",
+        "stop talking",
         "Then click Copy Chat JSON and paste it back to Codex if anything looks wrong.",
     ]
 
@@ -180,6 +186,7 @@ final class JarvisShellModel: ObservableObject {
                 "base_url": dashboardURL.absoluteString,
                 "connection": connection,
                 "state": state,
+                "turn_phase": turnPhaseText,
                 "tool": tool,
                 "mode": modeText,
                 "worker": workerText,
@@ -334,44 +341,114 @@ final class JarvisShellModel: ObservableObject {
     private func runCommand(_ commandText: String) async {
         isBusy = true
         state = "Thinking"
+        turnPhaseText = "Thinking"
         confirmation = nil
         tool = "No tool"
+        let turnStartedAt = Date()
+        var turnEvents: [[String: Any]] = []
+        var visibleStatusLines: [String] = []
+        var finalVisibleText = ""
+        var finalSpeechDiagnostics: Any = NSNull()
+        var routeSource: String?
+        var modelBackend: String?
+        var modelName: String?
+        var turnEndedCleanly = false
+
+        func recordTurnPhase(_ phase: String, detail: String? = nil) {
+            turnPhaseText = phase
+            turnEvents.append(Self.turnEvent(phase, startedAt: turnStartedAt, detail: detail))
+        }
+
+        func captureResponseDiagnostics(_ response: CommandResponse) {
+            finalSpeechDiagnostics = response.speech?.anyValue ?? NSNull()
+            routeSource = Self.routeSource(from: response)
+            modelBackend = Self.modelBackend(from: response)
+            modelName = Self.modelName(from: response)
+        }
+
+        recordTurnPhase("Heard", detail: "User command accepted.")
+        recordTurnPhase("Thinking", detail: "Choosing direct answer or tool route.")
         let history = conversationHistoryPayload(currentCommand: commandText)
         var placeholderId: UUID?
         var progressTask: Task<Void, Never>?
         defer {
             progressTask?.cancel()
+            if state == "Error" {
+                recordTurnPhase("Error", detail: "Turn ended with a worker or app error.")
+            } else if !turnEndedCleanly {
+                recordTurnPhase("Done", detail: "Turn lifecycle finished.")
+            }
+            var diagnostics = lastCommandDiagnostics
+            diagnostics["turn_trace"] = Self.turnTrace(
+                command: commandText,
+                startedAt: turnStartedAt,
+                events: turnEvents,
+                visibleStatusLines: visibleStatusLines,
+                finalVisibleText: finalVisibleText,
+                finalSpeech: finalSpeechDiagnostics,
+                routeSource: routeSource,
+                modelBackend: modelBackend,
+                modelName: modelName,
+                state: state,
+                tool: tool
+            )
+            lastCommandDiagnostics = diagnostics
             isBusy = false
         }
 
         do {
             if Self.shouldUseNativeHotKeyStatus(commandText) {
+                recordTurnPhase("Working", detail: "Using native keyboard shortcut status.")
                 let placeholderId = appendJarvisMessage(text: "Checking keyboard shortcut status.", detail: "Working")
+                visibleStatusLines.append("Checking keyboard shortcut status.")
                 runNativeHotKeyStatus(commandText, placeholderId: placeholderId)
+                finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                turnEndedCleanly = true
+                recordTurnPhase("Done", detail: "Native keyboard shortcut status displayed.")
                 return
             }
 
             if Self.shouldUseNativeVoiceStatus(commandText) {
+                recordTurnPhase("Working", detail: "Using native voice status.")
                 let placeholderId = appendJarvisMessage(text: "Checking voice status.", detail: "Working")
+                visibleStatusLines.append("Checking voice status.")
                 await runNativeVoiceStatus(commandText, placeholderId: placeholderId)
+                finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                turnEndedCleanly = true
+                recordTurnPhase("Done", detail: "Native voice status displayed.")
                 return
             }
 
             if Self.shouldUseNativeTestStatus(commandText) {
+                recordTurnPhase("Working", detail: "Using native smoke-test status.")
                 let placeholderId = appendJarvisMessage(text: "Checking test prompts.", detail: "Working")
+                visibleStatusLines.append("Checking test prompts.")
                 runNativeTestStatus(commandText, placeholderId: placeholderId)
+                finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                turnEndedCleanly = true
+                recordTurnPhase("Done", detail: "Native smoke-test status displayed.")
                 return
             }
 
             if Self.shouldUseNativePermissionStatus(commandText) {
+                recordTurnPhase("Working", detail: "Using native permission status.")
                 let placeholderId = appendJarvisMessage(text: "Checking permissions.", detail: "Working")
+                visibleStatusLines.append("Checking permissions.")
                 await runNativePermissionStatus(commandText, placeholderId: placeholderId)
+                finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                turnEndedCleanly = true
+                recordTurnPhase("Done", detail: "Native permission status displayed.")
                 return
             }
 
             if Self.shouldUseNativeScreenStatus(commandText) {
+                recordTurnPhase("Working", detail: "Using native screen status.")
                 let placeholderId = appendJarvisMessage(text: "Checking screen status.", detail: "Working")
+                visibleStatusLines.append("Checking screen status.")
                 await runNativeScreenStatus(commandText, placeholderId: placeholderId)
+                finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                turnEndedCleanly = true
+                recordTurnPhase("Done", detail: "Native screen status displayed.")
                 return
             }
 
@@ -380,11 +457,14 @@ final class JarvisShellModel: ObservableObject {
             guard startup.isReady else {
                 throw ShellModelError.workerUnavailable(startup.description)
             }
+            recordTurnPhase("Working", detail: "Worker is ready.")
             let response: CommandResponse
             if Self.shouldUseNativeOutlookRead(commandText) {
                 let statusText = "Yes sir, checking what Outlook is showing now."
                 _ = appendJarvisMessage(text: statusText, detail: "Working")
+                visibleStatusLines.append(statusText)
                 _ = try? await client.speakStatus(statusText)
+                recordTurnPhase("Working", detail: statusText)
                 response = try await runNativeOutlookRead(commandText)
             } else {
                 var streamedReply = ""
@@ -398,6 +478,8 @@ final class JarvisShellModel: ObservableObject {
                             return
                         }
                         lastStatusText = statusText
+                        visibleStatusLines.append(statusText)
+                        recordTurnPhase("Working", detail: statusText)
                         if let placeholderId, !streamedReply.isEmpty {
                             streamedReply = statusText
                             self.replaceMessage(
@@ -421,6 +503,9 @@ final class JarvisShellModel: ObservableObject {
                     },
                     onDelta: { delta in
                         progressTask?.cancel()
+                        if streamedReply.isEmpty {
+                            recordTurnPhase("Answering", detail: "First visible answer text arrived.")
+                        }
                         streamedReply += delta
                         let id = placeholderId ?? self.appendJarvisMessage(text: streamedReply, detail: "Streaming")
                         placeholderId = id
@@ -441,8 +526,11 @@ final class JarvisShellModel: ObservableObject {
             state = response.confirmation?.required == true ? "Approval" : "Ready"
             resultText = render(response)
             lastCommandDiagnostics = Self.commandDiagnostics(from: response)
+            captureResponseDiagnostics(response)
             let finalText = assistantReply(for: response)
+            finalVisibleText = finalText
             let finalDetail = chatDetail(for: response)
+            recordTurnPhase("Answering", detail: "Final visible answer displayed.")
             if let placeholderId {
                 replaceMessage(
                     id: placeholderId,
@@ -459,9 +547,13 @@ final class JarvisShellModel: ObservableObject {
             }
             startCodexJobMonitorIfNeeded(from: response)
             updateTimerMirrorsIfNeeded(from: response)
+            turnEndedCleanly = true
+            turnPhaseText = response.confirmation?.required == true ? "Approval" : "Done"
+            recordTurnPhase(turnPhaseText, detail: "Turn lifecycle finished.")
             await refreshNow()
         } catch {
             state = "Error"
+            turnPhaseText = "Error"
             tool = "No tool"
             resultText = "Jarvis worker error:\n\(error)"
             lastCommandDiagnostics = [
@@ -474,8 +566,10 @@ final class JarvisShellModel: ObservableObject {
                     id: placeholderId,
                     with: ChatMessage(id: placeholderId, role: .jarvis, text: "I hit a worker error: \(error)")
                 )
+                finalVisibleText = "I hit a worker error: \(error)"
             } else {
                 messages.append(ChatMessage(role: .jarvis, text: "I hit a worker error: \(error)"))
+                finalVisibleText = "I hit a worker error: \(error)"
             }
         }
     }
@@ -618,8 +712,8 @@ final class JarvisShellModel: ObservableObject {
             "- Keyboard wake/focus: \(shortcut).",
             "- Typed wake simulation: available for Hey Jarvis, OK Jarvis, and Okay Jarvis.",
             "- Background Hey Jarvis microphone listener: not active yet.",
-            "- Speech-to-text command transcription: not built yet.",
-            "- TTS: explicit local `speak ...` / `say out loud ...` commands exist; automatic spoken replies are not enabled.",
+            "- Speech-to-text command transcription: planned; typed and pasted dictation are already treated as punctuation-poor input.",
+            "- TTS: automatic final spoken replies are enabled for supported routes, and explicit local `speak ...` / `say out loud ...` commands still exist.",
             "This did not record audio, transcribe audio, or request new permissions.",
         ].joined(separator: "\n")
         resultText = [
@@ -641,7 +735,8 @@ final class JarvisShellModel: ObservableObject {
             "typed_wake_simulation_available": true,
             "microphone_wake_available": false,
             "speech_to_text_available": false,
-            "automatic_tts_enabled": false,
+            "automatic_tts_enabled": true,
+            "final_answer_speech_expected": true,
         ]
         replaceMessage(
             id: placeholderId,
@@ -1448,6 +1543,65 @@ final class JarvisShellModel: ObservableObject {
             ]
         }
         return payload
+    }
+
+    private static func turnEvent(_ phase: String, startedAt: Date, detail: String?) -> [String: Any] {
+        var payload: [String: Any] = [
+            "phase": phase,
+            "elapsed_seconds": max(0, Date().timeIntervalSince(startedAt)),
+        ]
+        if let detail, !detail.isEmpty {
+            payload["detail"] = detail
+        }
+        return payload
+    }
+
+    private static func turnTrace(
+        command: String,
+        startedAt: Date,
+        events: [[String: Any]],
+        visibleStatusLines: [String],
+        finalVisibleText: String,
+        finalSpeech: Any,
+        routeSource: String?,
+        modelBackend: String?,
+        modelName: String?,
+        state: String,
+        tool: String
+    ) -> [String: Any] {
+        [
+            "schema": "jarvis.turn_trace.v1",
+            "command_preview": redactChatExportText(String(command.prefix(240))),
+            "total_elapsed_seconds": max(0, Date().timeIntervalSince(startedAt)),
+            "current_phase": state == "Error" ? "Error" : (state == "Approval" ? "Approval" : "Done"),
+            "events": events,
+            "visible_status_lines": visibleStatusLines.map(redactChatExportText),
+            "final_visible_text": redactChatExportText(finalVisibleText),
+            "final_answer_visible": !finalVisibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "final_speech": finalSpeech,
+            "route_source": jsonOrNull(routeSource),
+            "model_backend": jsonOrNull(modelBackend),
+            "model_name": jsonOrNull(modelName),
+            "final_state": state,
+            "final_tool": tool,
+        ]
+    }
+
+    private static func routeSource(from response: CommandResponse) -> String? {
+        response.result?.objectValue?["routing"]?.objectValue?["source"]?.stringValue
+            ?? response.result?.objectValue?["route_source"]?.stringValue
+            ?? response.result?.objectValue?["selection_source"]?.stringValue
+    }
+
+    private static func modelBackend(from response: CommandResponse) -> String? {
+        response.result?.objectValue?["backend"]?.stringValue
+            ?? response.result?.objectValue?["email_summary_effective_backend"]?.stringValue
+            ?? response.result?.objectValue?["email_summary_backend"]?.stringValue
+    }
+
+    private static func modelName(from response: CommandResponse) -> String? {
+        response.result?.objectValue?["model"]?.stringValue
+            ?? response.result?.objectValue?["email_summary_model"]?.stringValue
     }
 
     private static func runtimeDiagnostics(_ runtime: RuntimeStatus) -> [String: Any] {
