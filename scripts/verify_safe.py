@@ -29,6 +29,11 @@ PYTHON = sys.executable or "python3"
 BASE_URL = os.environ.get("JARVIS_URL") or os.environ.get("JARVIS_BASE_URL") or "http://127.0.0.1:8765"
 REPORT_DIR = PROJECT_ROOT / "runtime" / "verification"
 TEMP_APP_SIGKILL_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0, 8.0)
+USAGE = """Usage: python3 scripts/verify_safe.py [--help]
+
+Run Jarvis checks that should not require user approval, then write a JSON
+report under runtime/verification/.
+"""
 
 
 @dataclass
@@ -1474,7 +1479,16 @@ def run_checks() -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if any(arg in {"-h", "--help"} for arg in args):
+        print(USAGE.strip())
+        return 0
+    if args:
+        print(f"Unknown argument: {args[0]}", file=sys.stderr)
+        print("Use --help for usage.", file=sys.stderr)
+        return 2
+
     report = run_checks()
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = REPORT_DIR / f"verify-safe-{time.strftime('%Y%m%d-%H%M%S')}.json"

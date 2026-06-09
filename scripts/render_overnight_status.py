@@ -54,7 +54,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 396/396 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
+    "Python safety suite: 398/398 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 94/94 after the speech-mute, wake-audition, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -398,7 +398,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 396/396 Python tests, Swift self-tests, and live muted speech probes.",
+            f"{context['verification']['label']} verifier, 398/398 Python tests, Swift self-tests, and live muted speech probes.",
         ),
         (
             "Honest Limit",

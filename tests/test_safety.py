@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import plistlib
@@ -135,6 +136,24 @@ from scripts.morning_status import (
 
 
 class VerifySafeScriptTests(unittest.TestCase):
+    def test_verify_safe_help_does_not_run_checks(self):
+        with patch("scripts.verify_safe.run_checks") as run_checks, \
+             patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            code = verify_safe.main(["--help"])
+
+        self.assertEqual(code, 0)
+        run_checks.assert_not_called()
+        self.assertIn("Usage: python3 scripts/verify_safe.py", stdout.getvalue())
+
+    def test_verify_safe_unknown_argument_does_not_run_checks(self):
+        with patch("scripts.verify_safe.run_checks") as run_checks, \
+             patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            code = verify_safe.main(["--what"])
+
+        self.assertEqual(code, 2)
+        run_checks.assert_not_called()
+        self.assertIn("Unknown argument: --what", stderr.getvalue())
+
     def test_render_overnight_status_outputs_report_and_workboard_contract(self):
         context = {
             "base_url": "http://127.0.0.1:8765",
