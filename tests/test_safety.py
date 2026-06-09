@@ -40,7 +40,7 @@ from jarvis import self_check as jarvis_self_check
 from jarvis.audit import AuditLogger, redact_sensitive_text
 from jarvis.config import PROJECT_ROOT, env_bool, host_allowed
 from jarvis.injection import scan_untrusted_text
-from jarvis.planner import NATURAL_LANGUAGE_TOOL_SPECS, Planner
+from jarvis.planner import NATURAL_LANGUAGE_TOOL_SPECS, PlannedResult, Planner
 from jarvis.safety import classify_command, classify_shell_command, policy_summary
 from jarvis.server import (
     MAX_VERIFICATION_AGE_SECONDS,
@@ -3921,6 +3921,19 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("StatusChip(label: model.speechMuteText)", view_source)
         self.assertIn('QuickActionButton("Wake Lab", command: "Hey Jarvis wake audition status"', view_source)
 
+    def test_swift_streaming_status_does_not_overwrite_answer_text(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("if !streamedReply.isEmpty", model_source)
+        self.assertNotIn("streamedReply = statusText", model_source)
+
     def test_swift_permission_footer_names_app_scope(self):
         service_source = (
             PROJECT_ROOT
@@ -7004,6 +7017,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Overnight report is ready", events[-1]["data"]["result"]["reply"])
         self.assertEqual(speak_mock.call_args_list[0].kwargs["reason"], "status")
         self.assertNotIn("workboard", speak_mock.call_args_list[0].args[0].lower())
+        self.assertEqual(speak_mock.call_args_list[-1].kwargs["reason"], "final")
+        self.assertIn("Overnight report is ready", speak_mock.call_args_list[-1].args[0])
 
     def test_device_status_auto_speaks_final_reply(self):
         fake_status = {
@@ -7035,6 +7050,27 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["tool"], "diagnostics.tts")
         self.assertNotIn("speech", result)
         speak_mock.assert_not_called()
+
+    def test_normal_tool_reply_auto_speaks_final_answer(self):
+        fake_plan = PlannedResult(
+            command="wake status",
+            tool="diagnostics.wake",
+            summary="Wake status checked.",
+            assessment=classify_command("wake status").to_dict(),
+            result={"tool": "diagnostics.wake", "reply": "Wake status: microphone listener is available."},
+            executed=True,
+            confirmation=None,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch.object(server.planner, "handle", return_value=fake_plan), \
+                 patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final"}) as speak_mock:
+                result = server.command("wake status")
+
+        self.assertEqual(result["tool"], "diagnostics.wake")
+        self.assertEqual(result["speech"]["reason"], "final")
+        speak_mock.assert_called_once_with("Wake status: microphone listener is available.", reason="final")
 
     def test_stream_command_respects_pause_mode(self):
         with tempfile.TemporaryDirectory() as temp_dir:

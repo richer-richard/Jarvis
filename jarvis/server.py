@@ -674,15 +674,23 @@ def _attach_auto_speech(data: dict[str, Any], *, reason: str) -> None:
 
 def _should_auto_speak(data: dict[str, Any]) -> bool:
     tool = str(data.get("tool") or "")
-    return tool in {
-        "conversation.local",
-        "conversation.local_exact",
-        "conversation.fast_local",
-        "outlook.visible_summary",
-        "quick.local_control",
-        "system.status",
-        "diagnostics.device",
-    }
+    if tool in {
+        "voice.status_speech",
+        "voice.stop_speaking",
+        "diagnostics.tts",
+        "diagnostics.model_context",
+        "diagnostics.tool_catalog",
+        "tools.deep_catalog",
+    }:
+        return False
+    if data.get("confirmation"):
+        return False
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return False
+    if result.get("action") == "speech.say":
+        return False
+    return bool(_speech_text_from_result(result) or str(data.get("summary") or "").strip())
 
 
 def _speech_text_from_result(result: dict[str, Any]) -> str:

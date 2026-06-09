@@ -30,10 +30,12 @@ SHIPPED_ITEMS = [
     "Menu-bar Open Wake Test jumps straight to the local wake-audition page.",
     "The Jarvis panel now shows speech mute state and uses Wake Lab for the new audition route.",
     "The wake lab now summarizes runs into detected count, best noisy pass, and a suggested next step.",
+    "Final answers with normal reply text now auto-speak by default instead of leaving only the working line audible.",
+    "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 375/375 passed after the wake and mute work.",
+    "Python safety suite: 379/379 passed after the wake, mute, and final-speech work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels and worker checks.",
     "Live safe verifier passed 91/91 after the speech-mute endpoint and wake-audition endpoint were added.",
@@ -44,6 +46,7 @@ TRY_ITEMS = [
     "Open Jarvis from the Dock; it should be a normal app window, not an always-front overlay.",
     "Use the menu-bar item to click Start Hey Jarvis, then say Hey Jarvis followed by a short command.",
     "Use Shut Up if Jarvis is talking too much; use Keep Blabbering to restore speech.",
+    "Ask for wake status or overnight status; Jarvis should speak the final answer, not only the Yes sir working line.",
     "Open the wake lab and record several Hey Jarvis samples in quiet and noisy conditions.",
     "Use the wake lab Copy JSON button if recognition feels wrong, then paste the JSON back to Codex.",
 ]
@@ -53,6 +56,7 @@ RISK_ITEMS = [
     "Browser loopback noise trials are useful but not a perfect model of a real room.",
     "Speech Recognition permission can still block the native listener until macOS grants it to the current Jarvis bundle.",
     "The current wake phrase is experimental; it is not yet personalized to Leo's voice.",
+    "Very technical diagnostics are still intentionally speech-silent so Jarvis does not read backend internals aloud.",
 ]
 
 SUPPORTING_FILES = [
@@ -217,6 +221,8 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Add menu-bar silence control", "Shut Up interrupts and mutes; Keep Blabbering unmutes."),
         ("done", "Add menu-bar wake controls", "Start/Stop Hey Jarvis and Open Wake Test are reachable without the panel."),
         ("done", "Add wake-lab decision summary", "Runs now summarize detected count, best noisy pass, and next step."),
+        ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
+        ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
         ("working", "Next: real-world Leo testing", "Needs actual microphone, room noise, and false-wake feedback."),
     ]
     items = "\n".join(task_item(*task) for task in tasks)
@@ -238,7 +244,7 @@ def render_workboard(context: dict[str, Any]) -> str:
   <main>
     <section>
       <h2>Current Focus</h2>
-      <p>Jarvis {e(context["version"])} is live with experimental Hey Jarvis, menu-bar mute, menu-bar wake controls, and a refreshed wake lab. The remaining work is real-world listening quality.</p>
+      <p>Jarvis {e(context["version"])} is live with experimental Hey Jarvis, menu-bar mute, menu-bar wake controls, a refreshed wake lab, and broader final-answer speech. The remaining work is real-world listening quality.</p>
       <div class="meter"><div style="width: 88%"></div></div>
     </section>
     <section>

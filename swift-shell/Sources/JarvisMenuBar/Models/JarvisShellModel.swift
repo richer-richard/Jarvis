@@ -607,8 +607,13 @@ final class JarvisShellModel: ObservableObject {
                         lastStatusText = statusText
                         visibleStatusLines.append(statusText)
                         recordTurnPhase("Working", detail: statusText)
-                        if let placeholderId, !streamedReply.isEmpty {
-                            streamedReply = statusText
+                        if !streamedReply.isEmpty {
+                            if progressTask == nil {
+                                progressTask = self.startProgressNudges(for: commandText)
+                            }
+                            return
+                        }
+                        if let placeholderId {
                             self.replaceMessage(
                                 id: placeholderId,
                                 with: ChatMessage(
@@ -618,12 +623,9 @@ final class JarvisShellModel: ObservableObject {
                                     detail: "Working"
                                 )
                             )
-                            if progressTask == nil {
-                                progressTask = self.startProgressNudges(for: commandText)
-                            }
-                            return
+                        } else {
+                            _ = self.appendJarvisMessage(text: statusText, detail: "Working")
                         }
-                        _ = self.appendJarvisMessage(text: statusText, detail: "Working")
                         if progressTask == nil {
                             progressTask = self.startProgressNudges(for: commandText)
                         }
