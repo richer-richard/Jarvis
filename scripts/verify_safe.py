@@ -1094,12 +1094,14 @@ def check_endpoint_wake_audition(base_url: str) -> str:
 
 
 def check_endpoint_overnight_report_routes(base_url: str) -> str:
-    report_status, report_body = http_status(base_url, "/overnight-report/")
-    workboard_status, workboard_body = http_status(base_url, "/overnight-workboard/")
+    report_status, report_body, report_headers = http_response(base_url, "/overnight-report/")
+    workboard_status, workboard_body, workboard_headers = http_response(base_url, "/overnight-workboard/")
     require(report_status == 200, f"report status={report_status}")
     require(workboard_status == 200, f"workboard status={workboard_status}")
     require("Jarvis Master Report" in report_body, "report title missing")
     require("Jarvis Overnight Workboard" in workboard_body, "workboard title missing")
+    require("'unsafe-inline'" in report_headers.get("content-security-policy", ""), "report inline styles blocked")
+    require("'unsafe-inline'" in workboard_headers.get("content-security-policy", ""), "workboard inline styles blocked")
     return "report and workboard HTML routes available"
 
 

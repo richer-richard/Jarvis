@@ -173,14 +173,16 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Shut Up", report)
 
     def test_verify_safe_checks_overnight_report_routes(self):
-        def fake_http_status(_base_url, path, **_kwargs):
-            if path == "/overnight-report/":
-                return 200, "<!doctype html><title>Jarvis Master Report</title>"
-            if path == "/overnight-workboard/":
-                return 200, "<!doctype html><title>Jarvis Overnight Workboard</title>"
-            return 404, ""
+        headers = {"content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'"}
 
-        with patch("scripts.verify_safe.http_status", side_effect=fake_http_status):
+        def fake_http_response(_base_url, path, **_kwargs):
+            if path == "/overnight-report/":
+                return 200, "<!doctype html><title>Jarvis Master Report</title>", headers
+            if path == "/overnight-workboard/":
+                return 200, "<!doctype html><title>Jarvis Overnight Workboard</title>", headers
+            return 404, "", {}
+
+        with patch("scripts.verify_safe.http_response", side_effect=fake_http_response):
             detail = verify_safe.check_endpoint_overnight_report_routes("http://127.0.0.1:8765")
 
         self.assertEqual(detail, "report and workboard HTML routes available")

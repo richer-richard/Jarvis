@@ -954,7 +954,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
-        self._send_common_headers()
+        self._send_common_headers(style_src="'self' 'unsafe-inline'")
         self.end_headers()
         self.wfile.write(content)
 
@@ -982,14 +982,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
 
-    def _send_common_headers(self) -> None:
+    def _send_common_headers(self, *, style_src: str = "'self'") -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "no-store")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; "
             "script-src 'self'; "
-            "style-src 'self'; "
+            f"style-src {style_src}; "
             "img-src 'self' data:; "
             "media-src 'self' blob: data:; "
             "connect-src 'self'; "
