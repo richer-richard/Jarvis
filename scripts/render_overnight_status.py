@@ -108,6 +108,7 @@ SUPPORTING_FILES = [
     ("http://127.0.0.1:8765/wake-audition/", "Hey Jarvis wake audition lab"),
     ("runtime/wake_audition/samples/", "Locally saved wake samples"),
     ("runtime/verification/", "Safe verifier reports"),
+    ("runtime/model_benchmarks/", "Fast latency smoke reports"),
     ("output/playwright/", "Visual QA screenshots"),
 ]
 
@@ -132,6 +133,7 @@ def build_context(base_url: str) -> dict[str, Any]:
     runtime = nested(health, "status", "runtime")
     fast_model = nested(health, "status", "fast_model")
     verification = latest_verification()
+    latency = latest_latency_smoke()
     now = datetime.now(BEIJING)
     version = str(app.get("version") or "unknown")
     build = str(app.get("build") or "unknown")
@@ -151,23 +153,32 @@ def build_context(base_url: str) -> dict[str, Any]:
         "upstream": upstream,
         "git_sync": git_sync,
         "verification": verification,
+        "latency": latency,
         "worker_source_kind": app.get("worker_source_kind") or "unknown",
         "launch_mode": app.get("launch_mode") or "unknown",
         "runtime_pid": runtime.get("pid") or "unknown",
         "fast_model": fast_model,
         "shipped": SHIPPED_ITEMS,
-        "proof": proof_items_with_verification(verification),
+        "proof": proof_items_with_verification(verification, latency),
         "try": TRY_ITEMS,
         "risks": RISK_ITEMS,
         "supporting": SUPPORTING_FILES,
     }
 
 
-def proof_items_with_verification(verification: dict[str, Any]) -> list[str]:
+def proof_items_with_verification(verification: dict[str, Any], latency: dict[str, Any] | None = None) -> list[str]:
     items = list(PROOF_ITEMS)
     if verification.get("path"):
         items.append(
             f"Latest verifier artifact: {verification['path']} with {verification['passed']}/{verification['total']} checks."
+        )
+    if latency and latency.get("path"):
+        items.append(
+            "Latest fast-latency smoke: "
+            f"{latency['label']}, max first visible {latency['max_first_visible_seconds']:.3f}s, "
+            f"max total {latency['max_total_seconds']:.3f}s, "
+            f"min after-first {latency['min_after_first_chars_per_second']:.1f} chars/s "
+            f"({latency['path']})."
         )
     return items
 
@@ -200,6 +211,45 @@ def latest_verification() -> dict[str, Any]:
         "passed": passed,
         "total": total,
         "label": f"{passed}/{total} passed" if total else "empty",
+    }
+
+
+def latest_latency_smoke() -> dict[str, Any]:
+    reports = sorted((PROJECT_ROOT / "runtime" / "model_benchmarks").glob("localhost-fast-latency-*.json"))
+    if not reports:
+        return {"ok": False, "path": "", "label": "none"}
+    latest = reports[-1]
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"ok": False, "path": str(latest), "label": "unreadable"}
+    results = [item for item in data.get("results", []) if isinstance(item, dict)]
+    completed = [item for item in results if item.get("status") == "completed"]
+    max_first = max((float(item.get("first_visible_seconds") or 0) for item in completed), default=0.0)
+    max_total = max((float(item.get("total_seconds") or 0) for item in completed), default=0.0)
+    min_rate_chars = int(data.get("min_rate_visible_chars") or 20)
+    rate_candidates = [
+        float(item.get("chars_per_second_after_first_visible") or 0)
+        for item in completed
+        if int(item.get("visible_chars") or 0) >= min_rate_chars
+    ]
+    min_cps = min(rate_candidates, default=0.0)
+    first_limit = float(data.get("max_first_visible_seconds") or 3.0)
+    total_limit = float(data.get("max_total_seconds") or 5.0)
+    cps_limit = float(data.get("min_after_first_chars_per_second") or 20.0)
+    ok = bool(results) and len(completed) == len(results) and max_first <= first_limit and max_total <= total_limit
+    if rate_candidates:
+        ok = ok and min_cps >= cps_limit
+    relative = str(latest.relative_to(PROJECT_ROOT))
+    return {
+        "ok": ok,
+        "path": relative,
+        "completed": len(completed),
+        "total": len(results),
+        "label": f"{'passed' if ok else 'needs attention'} {len(completed)}/{len(results)}",
+        "max_first_visible_seconds": max_first,
+        "max_total_seconds": max_total,
+        "min_after_first_chars_per_second": min_cps,
     }
 
 
@@ -391,6 +441,10 @@ def promise_section(context: dict[str, Any]) -> str:
 
 
 def spotlight_section(context: dict[str, Any]) -> str:
+    latency = context.get("latency") if isinstance(context.get("latency"), dict) else {}
+    latency_text = ""
+    if latency.get("path"):
+        latency_text = f" Current fast smoke max first visible {float(latency.get('max_first_visible_seconds') or 0):.3f}s."
     cards = [
         (
             "Try First",
@@ -398,7 +452,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 398/398 Python tests, Swift self-tests, and live muted speech probes.",
+            f"{context['verification']['label']} verifier, 398/398 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
         ),
         (
             "Honest Limit",

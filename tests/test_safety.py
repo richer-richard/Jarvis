@@ -166,6 +166,13 @@ class VerifySafeScriptTests(unittest.TestCase):
             "upstream": "origin/codex/test",
             "git_sync": "up to date",
             "verification": {"label": "91/91 passed", "path": "runtime/verification/example.json", "passed": 91, "total": 91},
+            "latency": {
+                "label": "passed 3/3",
+                "path": "runtime/model_benchmarks/example.json",
+                "max_first_visible_seconds": 1.234,
+                "max_total_seconds": 1.678,
+                "min_after_first_chars_per_second": 123.4,
+            },
             "worker_source_kind": "bundled app resources",
             "launch_mode": "regular Dock app",
             "runtime_pid": 123,
@@ -191,6 +198,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8765/overnight-workboard/", report)
         self.assertIn("http://127.0.0.1:8765/wake-audition/", report)
         self.assertIn(str(PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"), report)
+        self.assertIn(str(PROJECT_ROOT / "runtime" / "model_benchmarks"), report)
+        self.assertIn("Current fast smoke max first visible 1.234s", report)
         self.assertIn(str(PROJECT_ROOT / "output" / "playwright"), report)
         self.assertIn('href="../../output/playwright/"', report)
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
