@@ -360,6 +360,8 @@ class JarvisServer:
                     "GET /api/speech/mute",
                     "GET /overnight-report/",
                     "GET /overnight-workboard/",
+                    "HEAD /overnight-report/",
+                    "HEAD /overnight-workboard/",
                     "POST /api/mode",
                     "POST /api/plan",
                     "POST /api/speech/mute",
@@ -708,66 +710,72 @@ class RequestHandler(BaseHTTPRequestHandler):
     server_version = "JarvisPrototype/0.1"
 
     def do_GET(self) -> None:  # noqa: N802
+        self._handle_read_request(head_only=False)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self._handle_read_request(head_only=True)
+
+    def _handle_read_request(self, *, head_only: bool) -> None:
         if not self._host_header_allowed():
-            self._send_json({"error": "Host header must be loopback"}, status=HTTPStatus.FORBIDDEN)
+            self._send_json({"error": "Host header must be loopback"}, status=HTTPStatus.FORBIDDEN, head_only=head_only)
             return
         route = urlparse(self.path)
         if route.path == "/":
-            self._send_file(STATIC_DIR / "index.html")
+            self._send_file(STATIC_DIR / "index.html", head_only=head_only)
             return
         if route.path in {"/wake-audition", "/wake-audition/"}:
-            self._send_file(STATIC_DIR / "wake-audition.html")
+            self._send_file(STATIC_DIR / "wake-audition.html", head_only=head_only)
             return
         if route.path in {"/overnight-report", "/overnight-report/"}:
-            self._send_runtime_file(OVERNIGHT_STATUS_DIR / "report.html", root=OVERNIGHT_STATUS_DIR)
+            self._send_runtime_file(OVERNIGHT_STATUS_DIR / "report.html", root=OVERNIGHT_STATUS_DIR, head_only=head_only)
             return
         if route.path in {"/overnight-workboard", "/overnight-workboard/"}:
-            self._send_runtime_file(OVERNIGHT_STATUS_DIR / "index.html", root=OVERNIGHT_STATUS_DIR)
+            self._send_runtime_file(OVERNIGHT_STATUS_DIR / "index.html", root=OVERNIGHT_STATUS_DIR, head_only=head_only)
             return
         if route.path.startswith("/static/"):
-            self._send_file(STATIC_DIR / route.path.removeprefix("/static/"))
+            self._send_file(STATIC_DIR / route.path.removeprefix("/static/"), head_only=head_only)
             return
         if route.path == "/api/health":
-            self._send_json({"ok": True, "status": system_status(), "mode": STATE.mode()})
+            self._send_json({"ok": True, "status": system_status(), "mode": STATE.mode()}, head_only=head_only)
             return
         if route.path == "/api/mode":
-            self._send_json(STATE.mode())
+            self._send_json(STATE.mode(), head_only=head_only)
             return
         if route.path == "/api/policy":
-            self._send_json(policy_summary())
+            self._send_json(policy_summary(), head_only=head_only)
             return
         if route.path == "/api/tools":
-            self._send_json(tool_registry())
+            self._send_json(tool_registry(), head_only=head_only)
             return
         if route.path == "/api/readiness":
-            self._send_json(STATE.readiness())
+            self._send_json(STATE.readiness(), head_only=head_only)
             return
         if route.path == "/api/preflight":
-            self._send_json(STATE.preflight())
+            self._send_json(STATE.preflight(), head_only=head_only)
             return
         if route.path == "/api/codex/activity":
             query = parse_qs(route.query)
             limit = _bounded_int(query.get("limit", ["3"])[0], default=3, minimum=1, maximum=10)
-            self._send_json(codex_activity_snapshot(limit=limit))
+            self._send_json(codex_activity_snapshot(limit=limit), head_only=head_only)
             return
         if route.path == "/api/audit/status":
-            self._send_json(STATE.audit.status())
+            self._send_json(STATE.audit.status(), head_only=head_only)
             return
         if route.path == "/api/audit":
             query = parse_qs(route.query)
             limit = _bounded_int(query.get("limit", ["50"])[0], default=50, minimum=1, maximum=MAX_AUDIT_EVENTS)
-            self._send_json({"events": STATE.audit.recent(limit=limit)})
+            self._send_json({"events": STATE.audit.recent(limit=limit)}, head_only=head_only)
             return
         if route.path == "/api/self-check":
-            self._send_json(run_self_checks())
+            self._send_json(run_self_checks(), head_only=head_only)
             return
         if route.path == "/api/speech/mute":
-            self._send_json(STATE.speech_mute_status())
+            self._send_json(STATE.speech_mute_status(), head_only=head_only)
             return
         if route.path == "/api/wake-audition/status":
-            self._send_json(wake_audition_status())
+            self._send_json(wake_audition_status(), head_only=head_only)
             return
-        self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+        self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND, head_only=head_only)
 
     def do_POST(self) -> None:  # noqa: N802
         if not self._host_header_allowed():
@@ -930,11 +938,11 @@ class RequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
-    def _send_file(self, path: Path) -> None:
+    def _send_file(self, path: Path, *, head_only: bool = False) -> None:
         resolved = path.resolve()
         static_root = STATIC_DIR.resolve()
         if not resolved.is_relative_to(static_root) or not resolved.exists() or not resolved.is_file():
-            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND, head_only=head_only)
             return
         content = resolved.read_bytes()
         content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
@@ -943,13 +951,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(content)))
         self._send_common_headers()
         self.end_headers()
-        self.wfile.write(content)
+        if not head_only:
+            self.wfile.write(content)
 
-    def _send_runtime_file(self, path: Path, *, root: Path) -> None:
+    def _send_runtime_file(self, path: Path, *, root: Path, head_only: bool = False) -> None:
         resolved = path.resolve()
         runtime_root = root.resolve()
         if not resolved.is_relative_to(runtime_root) or not resolved.exists() or not resolved.is_file():
-            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND, head_only=head_only)
             return
         content = resolved.read_bytes()
         content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
@@ -958,16 +967,18 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(content)))
         self._send_common_headers(style_src="'self' 'unsafe-inline'")
         self.end_headers()
-        self.wfile.write(content)
+        if not head_only:
+            self.wfile.write(content)
 
-    def _send_json(self, data: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+    def _send_json(self, data: Any, status: HTTPStatus = HTTPStatus.OK, *, head_only: bool = False) -> None:
         content = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self._send_common_headers()
         self.end_headers()
-        self.wfile.write(content)
+        if not head_only:
+            self.wfile.write(content)
 
     def _send_event_stream(self, events) -> None:
         self.send_response(HTTPStatus.OK)

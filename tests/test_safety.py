@@ -173,9 +173,16 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Shut Up", report)
 
     def test_verify_safe_checks_overnight_report_routes(self):
-        headers = {"content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'"}
+        headers = {
+            "content-length": "48",
+            "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'",
+        }
 
-        def fake_http_response(_base_url, path, **_kwargs):
+        def fake_http_response(_base_url, path, **kwargs):
+            if kwargs.get("method") == "HEAD":
+                if path in {"/overnight-report/", "/overnight-workboard/"}:
+                    return 200, "", headers
+                return 404, "", {}
             if path == "/overnight-report/":
                 return 200, "<!doctype html><title>Jarvis Master Report</title>", headers
             if path == "/overnight-workboard/":
@@ -185,7 +192,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         with patch("scripts.verify_safe.http_response", side_effect=fake_http_response):
             detail = verify_safe.check_endpoint_overnight_report_routes("http://127.0.0.1:8765")
 
-        self.assertEqual(detail, "report and workboard HTML routes available")
+        self.assertEqual(detail, "report and workboard GET/HEAD HTML routes available")
 
     def test_temp_app_command_retries_repeated_empty_sigkill_before_passing(self):
         calls = []
@@ -7909,6 +7916,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("GET /api/codex/activity", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /overnight-report/", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /overnight-workboard/", readiness["mode"]["allowed_while_paused"])
+        self.assertIn("HEAD /overnight-report/", readiness["mode"]["allowed_while_paused"])
+        self.assertIn("HEAD /overnight-workboard/", readiness["mode"]["allowed_while_paused"])
         self.assertTrue(readiness["mode"]["paused"])
         self.assertGreaterEqual(readiness["tools"]["total"], readiness["tools"]["available"])
         self.assertGreater(readiness["self_check"]["total"], 0)
