@@ -236,6 +236,35 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn(("/api/command", {"command": "status"}), posts)
         self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
 
+    def test_verify_safe_checks_voice_loop_echo(self):
+        posts = []
+
+        def fake_post_json(path, payload, **_kwargs):
+            posts.append((path, payload))
+            if path == "/api/speech/mute":
+                return {"tool": "voice.speech_mute", "muted": bool(payload["muted"])}
+            if path == "/api/command":
+                self.assertEqual(payload["command"], "voice loop: Hey Jarvis | Yes sir? | status")
+                return {
+                    "tool": "voice.loop_simulation",
+                    "result": {
+                        "status": "command_previewed",
+                        "command": "status",
+                        "command_source": "followup_utterance",
+                        "ignored_echo_utterance_indices": [1],
+                        "route_preview": {"tool": "system.status", "executed": False},
+                    },
+                }
+            raise AssertionError(f"unexpected POST {path}")
+
+        with patch("scripts.verify_safe.post_json", side_effect=fake_post_json), \
+             patch("scripts.verify_safe.get_json", return_value={"muted": False}):
+            detail = verify_safe.check_endpoint_voice_loop_echo("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "voice loop ignored wake greeting echo and captured follow-up command")
+        self.assertEqual(posts[0], ("/api/speech/mute", {"muted": True}))
+        self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
+
     def test_verify_safe_rejects_tiny_final_speech_preview(self):
         self.assertTrue(
             verify_safe.speech_preview_matches_reply(

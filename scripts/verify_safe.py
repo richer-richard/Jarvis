@@ -1110,6 +1110,29 @@ def check_endpoint_wake_audition(base_url: str) -> str:
     return f"wake score {score.get('score')}"
 
 
+def check_endpoint_voice_loop_echo(base_url: str) -> str:
+    original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
+    post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
+    try:
+        data = post_json(
+            "/api/command",
+            {"command": "voice loop: Hey Jarvis | Yes sir? | status"},
+            base_url=base_url,
+        )
+        result = data.get("result") or {}
+        route_preview = result.get("route_preview") or {}
+        require(data.get("tool") == "voice.loop_simulation", f"tool was {data.get('tool')}")
+        require(result.get("status") == "command_previewed", f"status was {result.get('status')}")
+        require(result.get("command") == "status", f"command was {result.get('command')}")
+        require(result.get("command_source") == "followup_utterance", f"command source was {result.get('command_source')}")
+        require(result.get("ignored_echo_utterance_indices") == [1], f"ignored echoes were {result.get('ignored_echo_utterance_indices')}")
+        require(route_preview.get("tool") == "system.status", f"route tool was {route_preview.get('tool')}")
+        require(route_preview.get("executed") is False, f"route executed was {route_preview.get('executed')}")
+    finally:
+        post_json("/api/speech/mute", {"muted": original_mute}, base_url=base_url)
+    return "voice loop ignored wake greeting echo and captured follow-up command"
+
+
 def check_endpoint_overnight_report_routes(base_url: str) -> str:
     report_status, report_body, report_headers = http_response(base_url, "/overnight-report/")
     workboard_status, workboard_body, workboard_headers = http_response(base_url, "/overnight-workboard/")
@@ -1391,6 +1414,7 @@ def run_checks() -> dict[str, Any]:
         results.append(endpoint_check("endpoint_plan_preview", lambda: check_endpoint_plan_preview(active_base_url)))
         results.append(endpoint_check("endpoint_wake_simulation", lambda: check_endpoint_wake_simulation(active_base_url)))
         results.append(endpoint_check("endpoint_wake_audition", lambda: check_endpoint_wake_audition(active_base_url)))
+        results.append(endpoint_check("endpoint_voice_loop_echo", lambda: check_endpoint_voice_loop_echo(active_base_url)))
         results.append(endpoint_check("endpoint_overnight_report_routes", lambda: check_endpoint_overnight_report_routes(active_base_url)))
         results.append(endpoint_check("endpoint_speech_mute", lambda: check_endpoint_speech_mute(active_base_url)))
         results.append(endpoint_check("endpoint_prompt_injection_scan", lambda: check_endpoint_prompt_injection_scan(active_base_url)))
