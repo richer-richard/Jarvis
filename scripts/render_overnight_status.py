@@ -43,6 +43,7 @@ PROOF_ITEMS = [
     "Swift self-tests passed, including menu-bar routing labels and worker checks.",
     "Live safe verifier passed 91/91 after the speech-mute endpoint and wake-audition endpoint were added.",
     "Live Jarvis health showed the rebuilt app running from bundled app resources.",
+    "Live UI inspection showed Jarvis 0.1.238 with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
 ]
 
 TRY_ITEMS = [
