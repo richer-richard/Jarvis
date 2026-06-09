@@ -166,6 +166,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Source commit: abc1234", report)
         self.assertIn("GitHub: origin/codex/test (up to date)", report)
         self.assertIn("http://127.0.0.1:8765/wake-audition/", report)
+        self.assertIn(str(PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"), report)
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
 

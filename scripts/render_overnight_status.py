@@ -327,8 +327,13 @@ def section(title: str, items: list[str], *, cards: bool = False, risk: bool = F
 def supporting_section(context: dict[str, Any]) -> str:
     rows = []
     for path, label in context["supporting"]:
-        href = path if path.startswith("http") else "../" + path.removeprefix("runtime/")
-        rows.append(f'<li><a href="{e(href)}">{e(path)}</a> - {e(label)}</li>')
+        if path.startswith("http"):
+            href = path
+            display_path = path
+        else:
+            href = "../" + path.removeprefix("runtime/")
+            display_path = str(PROJECT_ROOT / path)
+        rows.append(f'<li><a href="{e(href)}">{e(display_path)}</a> - {e(label)}</li>')
     return "<section><h2>Supporting Files</h2><ul>" + "".join(rows) + "</ul></section>"
 
 
