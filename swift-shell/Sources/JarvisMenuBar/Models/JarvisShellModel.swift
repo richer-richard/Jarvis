@@ -101,6 +101,10 @@ final class JarvisShellModel: ObservableObject {
         client.baseURL
     }
 
+    var wakeAuditionURL: URL {
+        client.baseURL.appendingPathComponent("wake-audition/")
+    }
+
     var appVersionText: String {
         let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         return "Jarvis \(bundleVersion)"

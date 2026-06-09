@@ -39,6 +39,7 @@ struct JarvisPanelView: View {
             HStack(spacing: 7) {
                 StatusChip(label: model.modeText)
                 StatusChip(label: model.wakeModeText)
+                StatusChip(label: model.speechMuteText)
                 StatusChip(label: model.state)
                 StatusChip(label: model.turnPhaseText)
                 StatusChip(label: model.connection)
@@ -100,7 +101,7 @@ struct JarvisPanelView: View {
             QuickActionButton("Email", command: "check my email", model: model)
             QuickActionButton("Status", command: "status", model: model)
             QuickActionButton("Report", command: "overnight status", model: model)
-            QuickActionButton("Wake Test", command: "wake: Hey Jarvis status", model: model)
+            QuickActionButton("Wake Lab", command: "Hey Jarvis wake audition status", model: model)
             WakeToggleButton(model: model)
             QuickActionButton("Screen", command: "screenshot capability", model: model)
             QuickActionButton("Codex", command: "ask Codex to review this project", model: model)

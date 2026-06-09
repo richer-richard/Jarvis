@@ -114,7 +114,7 @@ from jarvis.tools import (
     wake_status,
 )
 from jarvis.wake import WakeSession, detect_wake_command, score_wake_transcript
-from scripts import verify_safe
+from scripts import render_overnight_status, verify_safe
 from scripts.morning_status import (
     MAX_VERIFICATION_AGE_SECONDS as MORNING_MAX_VERIFICATION_AGE_SECONDS,
     base_url_from_environment,
@@ -134,6 +134,38 @@ from scripts.morning_status import (
 
 
 class VerifySafeScriptTests(unittest.TestCase):
+    def test_render_overnight_status_outputs_report_and_workboard_contract(self):
+        context = {
+            "base_url": "http://127.0.0.1:8765",
+            "updated": "2026-06-10 06:30 CST",
+            "version": "0.1.test",
+            "build": "999",
+            "bundle": "Jarvis 0.1.test build 999",
+            "commit": "abc1234",
+            "branch": "codex/test",
+            "verification": {"label": "91/91 passed", "path": "runtime/verification/example.json", "passed": 91, "total": 91},
+            "worker_source_kind": "bundled app resources",
+            "launch_mode": "regular Dock app",
+            "runtime_pid": 123,
+            "fast_model": {},
+            "shipped": render_overnight_status.SHIPPED_ITEMS,
+            "proof": render_overnight_status.PROOF_ITEMS,
+            "try": render_overnight_status.TRY_ITEMS,
+            "risks": render_overnight_status.RISK_ITEMS,
+            "supporting": render_overnight_status.SUPPORTING_FILES,
+        }
+
+        report = render_overnight_status.render_report(context)
+        workboard = render_overnight_status.render_workboard(context)
+
+        self.assertIn("Jarvis Overnight Launch Report", report)
+        self.assertIn("Jarvis Overnight Workboard", workboard)
+        self.assertIn("Jarvis 0.1.test build 999", report)
+        self.assertIn("Source commit: abc1234", report)
+        self.assertIn("http://127.0.0.1:8765/wake-audition/", report)
+        self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
+        self.assertIn("Shut Up", report)
+
     def test_temp_app_command_retries_repeated_empty_sigkill_before_passing(self):
         calls = []
         failures_remaining = 5
@@ -2518,6 +2550,18 @@ class PlannerTests(unittest.TestCase):
         self.assertGreaterEqual(result["score"], result["threshold"])
         self.assertFalse(result["recorded_audio"])
 
+    def test_wake_audition_static_page_has_decision_summary(self):
+        html = (PROJECT_ROOT / "jarvis" / "static" / "wake-audition.html").read_text(encoding="utf-8")
+        script = (PROJECT_ROOT / "jarvis" / "static" / "wake-audition.js").read_text(encoding="utf-8")
+        css = (PROJECT_ROOT / "jarvis" / "static" / "wake-audition.css").read_text(encoding="utf-8")
+
+        for element_id in ("detected-summary", "noise-summary", "next-step-summary"):
+            self.assertIn(f'id="{element_id}"', html)
+            self.assertIn(element_id.replace("-", ""), script.replace("-", ""))
+        self.assertIn("renderDecisionSummary", script)
+        self.assertIn("recommendationForRuns", script)
+        self.assertIn(".decision-grid", css)
+
     def test_wake_score_rejects_unrelated_speech(self):
         result = score_wake_transcript("please check my email later")
 
@@ -3827,6 +3871,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("menuNeedsUpdate", app_source)
         self.assertIn("toggleSpeechMuted()", model_source)
         self.assertIn("isSpeechMuted", model_source)
+        self.assertIn('"Open Wake Test"', app_source)
+        self.assertIn('"Start Hey Jarvis"', app_source)
+        self.assertIn('"Stop Hey Jarvis"', app_source)
+        self.assertIn("toggleWakeListener", app_source)
+        self.assertIn("wakeAuditionURL", model_source)
         self.assertIn("setSpeechMuted", client_source)
         self.assertIn('appendingPathComponent("mute")', client_source)
 
@@ -3869,6 +3918,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("submit(command)", model_source)
         self.assertIn("WakeToggleButton", view_source)
         self.assertIn("model.wakeModeText", view_source)
+        self.assertIn("StatusChip(label: model.speechMuteText)", view_source)
+        self.assertIn('QuickActionButton("Wake Lab", command: "Hey Jarvis wake audition status"', view_source)
 
     def test_swift_permission_footer_names_app_scope(self):
         service_source = (

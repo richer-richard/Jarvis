@@ -157,6 +157,7 @@ struct JarvisMenuBarApp {
 final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var speechMuteItem: NSMenuItem?
+    private var wakeListenerItem: NSMenuItem?
     private var panel: NSWindow?
     private let model = JarvisShellModel()
     private var hotKeyService: JarvisHotKeyService?
@@ -244,7 +245,11 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "Open Panel", action: #selector(openPanel), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "Run Status", action: #selector(runStatus), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "d"))
+        menu.addItem(NSMenuItem(title: "Open Wake Test", action: #selector(openWakeTest), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Shortcut: Command+Option+J", action: #selector(showHotKeyStatus), keyEquivalent: ""))
+        let wakeItem = NSMenuItem(title: Self.wakeListenerMenuTitle(listening: model.isWakeListening), action: #selector(toggleWakeListener), keyEquivalent: "")
+        wakeListenerItem = wakeItem
+        menu.addItem(wakeItem)
         let muteItem = NSMenuItem(title: Self.speechMuteMenuTitle(muted: model.isSpeechMuted), action: #selector(toggleSpeechMute), keyEquivalent: "")
         speechMuteItem = muteItem
         menu.addItem(muteItem)
@@ -274,7 +279,12 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         muted ? "Keep Blabbering" : "Shut Up"
     }
 
+    static func wakeListenerMenuTitle(listening: Bool) -> String {
+        listening ? "Stop Hey Jarvis" : "Start Hey Jarvis"
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        updateWakeListenerMenuItem()
         updateSpeechMuteMenuItem()
     }
 
@@ -334,9 +344,22 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(model.dashboardURL)
     }
 
+    @objc private func openWakeTest() {
+        NSWorkspace.shared.open(model.wakeAuditionURL)
+    }
+
+    @objc private func toggleWakeListener() {
+        model.toggleWakeListener()
+        updateWakeListenerMenuItem()
+    }
+
     @objc private func toggleSpeechMute() {
         model.toggleSpeechMuted()
         updateSpeechMuteMenuItem()
+    }
+
+    private func updateWakeListenerMenuItem() {
+        wakeListenerItem?.title = Self.wakeListenerMenuTitle(listening: model.isWakeListening)
     }
 
     private func updateSpeechMuteMenuItem() {

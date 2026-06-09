@@ -38,6 +38,9 @@
     loopbackTrial: document.getElementById("loopback-trial"),
     downloadSample: document.getElementById("download-sample"),
     trialStatus: document.getElementById("trial-status"),
+    detectedSummary: document.getElementById("detected-summary"),
+    noiseSummary: document.getElementById("noise-summary"),
+    nextStepSummary: document.getElementById("next-step-summary"),
     runTable: document.getElementById("run-table"),
     runCount: document.getElementById("run-count"),
   };
@@ -448,6 +451,43 @@
       els.runTable.appendChild(row);
     });
     els.runCount.textContent = state.runs.length + " saved";
+    renderDecisionSummary();
+  }
+
+  function renderDecisionSummary() {
+    const total = state.runs.length;
+    const detectedRuns = state.runs.filter((run) => run.detected);
+    els.detectedSummary.textContent = detectedRuns.length + " / " + total;
+    const noisyDetected = detectedRuns
+      .filter((run) => typeof run.noise_db === "number")
+      .sort((a, b) => b.noise_db - a.noise_db);
+    if (noisyDetected.length) {
+      const best = noisyDetected[0];
+      const score = best.score && typeof best.score.score === "number" ? " at " + best.score.score.toFixed(3) : "";
+      els.noiseSummary.textContent = best.noise_db + " dB" + score;
+    } else {
+      els.noiseSummary.textContent = "none";
+    }
+    els.nextStepSummary.textContent = recommendationForRuns(total, detectedRuns.length, noisyDetected);
+  }
+
+  function recommendationForRuns(total, detectedCount, noisyDetected) {
+    if (total === 0) {
+      return "record a clean sample";
+    }
+    if (detectedCount === 0) {
+      return "lower threshold or improve mic placement";
+    }
+    if (detectedCount < Math.ceil(total * 0.7)) {
+      return "record more clean samples before raising threshold";
+    }
+    if (!noisyDetected.length) {
+      return "run noise trials";
+    }
+    if (noisyDetected[0].noise_db >= -12) {
+      return "threshold looks usable; test real room noise";
+    }
+    return "try stronger noise trials";
   }
 
   function cell(text) {

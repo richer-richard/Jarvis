@@ -252,6 +252,29 @@ audio {
   padding-bottom: 10px;
 }
 
+.decision-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.decision-grid div {
+  min-height: 74px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.decision-grid strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 15px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--line);
@@ -292,7 +315,8 @@ tbody tr:last-child td {
 @media (max-width: 860px) {
   .topbar,
   .control-band,
-  .live-grid {
+  .live-grid,
+  .decision-grid {
     grid-template-columns: 1fr;
   }
 

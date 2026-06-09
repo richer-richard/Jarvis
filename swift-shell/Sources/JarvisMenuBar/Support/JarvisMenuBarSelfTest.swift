@@ -130,6 +130,12 @@ enum JarvisMenuBarSelfTest {
         guard JarvisAppDelegate.speechMuteMenuTitle(muted: true) == "Keep Blabbering" else {
             throw SelfTestError.failed("Muted menu title should be Keep Blabbering.")
         }
+        guard JarvisAppDelegate.wakeListenerMenuTitle(listening: false) == "Start Hey Jarvis" else {
+            throw SelfTestError.failed("Stopped wake listener menu title should be Start Hey Jarvis.")
+        }
+        guard JarvisAppDelegate.wakeListenerMenuTitle(listening: true) == "Stop Hey Jarvis" else {
+            throw SelfTestError.failed("Running wake listener menu title should be Stop Hey Jarvis.")
+        }
         guard !JarvisShellModel.shouldUseNativeVoiceStatus("tts status") else {
             throw SelfTestError.failed("TTS status should route to backend diagnostics.tts, not the native voice snapshot.")
         }
