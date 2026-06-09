@@ -35,6 +35,7 @@ SHIPPED_ITEMS = [
     "The wake lab now summarizes runs into detected count, best noisy pass, and a suggested next step.",
     "Final answers with normal reply text now auto-speak by default instead of leaving only the working line audible.",
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
+    "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
 ]
 
 PROOF_ITEMS = [
@@ -43,7 +44,8 @@ PROOF_ITEMS = [
     "Swift self-tests passed, including menu-bar routing labels and worker checks.",
     "Live safe verifier passed 91/91 after the speech-mute endpoint and wake-audition endpoint were added.",
     "Live Jarvis health showed the rebuilt app running from bundled app resources.",
-    "Live UI inspection showed Jarvis 0.1.238 with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
+    "Live UI inspection showed the Jarvis panel with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
+    "A muted live TTS probe returned the exact sanitized text_preview that Jarvis was asked to speak.",
 ]
 
 TRY_ITEMS = [
@@ -256,6 +258,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Add wake-lab decision summary", "Runs now summarize detected count, best noisy pass, and next step."),
         ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
+        ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),
         ("working", "Next: real-world Leo testing", "Needs actual microphone, room noise, and false-wake feedback."),
     ]
     items = "\n".join(task_item(*task) for task in tasks)

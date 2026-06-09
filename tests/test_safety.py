@@ -4774,6 +4774,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(second["spoken"])
         self.assertTrue(first_process.terminated)
         self.assertTrue(second["interrupted_previous"])
+        self.assertEqual(second["text_preview"], "second reply")
         self.assertEqual(second["previous_stop_method"], "terminate")
 
     def test_final_speech_queues_behind_active_status(self):
@@ -4819,6 +4820,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(result["spoken"])
         self.assertEqual(result["status"], "queued_after_status")
         self.assertEqual(result["deferred_after"], "status")
+        self.assertEqual(result["text_preview"], "Final email summary.")
         self.assertFalse(result["interrupted_previous"])
         self.assertFalse(status_process.terminated)
         self.assertEqual(len(FakeThread.created), 1)
@@ -4988,6 +4990,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(muted["status"], "muted")
         self.assertFalse(result["spoken"])
         self.assertEqual(result["status"], "muted")
+        self.assertEqual(result["text_preview"], "Jarvis should stay quiet.")
         self.assertTrue(status["muted"])
 
     def test_speech_mute_interrupts_active_audio_when_enabled(self):

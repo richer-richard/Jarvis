@@ -1197,6 +1197,13 @@ def _sanitize_spoken_text(text: str) -> str:
     return spoken.strip(" ,")[:TTS_MAX_CHARS]
 
 
+def _speech_text_diagnostics(spoken: str) -> dict[str, Any]:
+    return {
+        "text_length": len(spoken),
+        "text_preview": spoken[:160],
+    }
+
+
 def _normalize_tts_provider(provider: str) -> str:
     normalized = str(provider or "").strip().lower()
     if normalized in {"piper", "piper-tts", "local-piper"}:
@@ -1590,7 +1597,7 @@ def _queue_final_after_status_locked(
         "reason": reason,
         "interrupted_previous": False,
         "deferred_after": "status",
-        "text_length": len(spoken),
+        **_speech_text_diagnostics(spoken),
         **_duration_fields(started_at),
     }
 
@@ -1658,6 +1665,7 @@ def _start_macos_speech_async(
             "fallback_from": fallback_from,
             "fallback_reason": fallback_reason,
             "error": str(error),
+            **_speech_text_diagnostics(spoken),
             **stop_status,
             **_duration_fields(started_at),
         }
@@ -1668,7 +1676,7 @@ def _start_macos_speech_async(
         "provider": "macos",
         "voice": TTS_VOICE,
         "rate": TTS_RATE,
-        "text_length": len(spoken),
+        **_speech_text_diagnostics(spoken),
         **stop_status,
         **_duration_fields(started_at),
     }
@@ -1695,7 +1703,7 @@ def _start_piper_warm_speech_async(
             "warm_worker": True,
             "voice": TTS_PIPER_LABEL,
             "missing": readiness["missing"],
-            "text_length": len(spoken),
+            **_speech_text_diagnostics(spoken),
             **stop_status,
             **_duration_fields(started_at),
         }
@@ -1710,7 +1718,7 @@ def _start_piper_warm_speech_async(
                 "provider": "piper",
                 "warm_worker": True,
                 "voice": TTS_PIPER_LABEL,
-                "text_length": len(spoken),
+                **_speech_text_diagnostics(spoken),
                 **stop_status,
                 **_duration_fields(started_at),
             }
@@ -1723,7 +1731,7 @@ def _start_piper_warm_speech_async(
                 "provider": "piper",
                 "warm_worker": True,
                 "voice": TTS_PIPER_LABEL,
-                "text_length": len(spoken),
+                **_speech_text_diagnostics(spoken),
                 **stop_status,
                 **_duration_fields(started_at),
             }
@@ -1741,7 +1749,7 @@ def _start_piper_warm_speech_async(
         "warm_worker_load_seconds": worker.get("load_seconds"),
         "speech_id": speech_id,
         "voice": TTS_PIPER_LABEL,
-        "text_length": len(spoken),
+        **_speech_text_diagnostics(spoken),
         **stop_status,
         **_duration_fields(started_at),
     }
@@ -1772,7 +1780,7 @@ def _start_piper_speech_async(
             "provider": "piper",
             "voice": TTS_PIPER_LABEL,
             "missing": readiness["missing"],
-            "text_length": len(spoken),
+            **_speech_text_diagnostics(spoken),
             **stop_status,
             **_duration_fields(started_at),
         }
@@ -1797,6 +1805,7 @@ def _start_piper_speech_async(
             "provider": "piper",
             "voice": TTS_PIPER_LABEL,
             "error": str(error),
+            **_speech_text_diagnostics(spoken),
             **stop_status,
             **_duration_fields(started_at),
         }
@@ -1816,6 +1825,7 @@ def _start_piper_speech_async(
             "provider": "piper",
             "voice": TTS_PIPER_LABEL,
             "error": str(error),
+            **_speech_text_diagnostics(spoken),
             **stop_status,
             **_duration_fields(started_at),
         }
@@ -1827,7 +1837,7 @@ def _start_piper_speech_async(
         "reason": reason,
         "provider": "piper",
         "voice": TTS_PIPER_LABEL,
-        "text_length": len(spoken),
+        **_speech_text_diagnostics(spoken),
         **stop_status,
         **_duration_fields(started_at),
     }
@@ -1845,13 +1855,25 @@ def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -
                 "spoken": False,
                 "status": "muted",
                 "reason": reason,
-                "text_length": len(spoken),
+                **_speech_text_diagnostics(spoken),
                 **_duration_fields(started_at),
             }
         if not force and not TTS_AUTOMATIC_ENABLED:
-            return {"spoken": False, "status": "disabled", "reason": reason, **_duration_fields(started_at)}
+            return {
+                "spoken": False,
+                "status": "disabled",
+                "reason": reason,
+                **_speech_text_diagnostics(spoken),
+                **_duration_fields(started_at),
+            }
         if not force and reason == "status" and not TTS_SPEAK_STATUS:
-            return {"spoken": False, "status": "status_speech_disabled", "reason": reason, **_duration_fields(started_at)}
+            return {
+                "spoken": False,
+                "status": "status_speech_disabled",
+                "reason": reason,
+                **_speech_text_diagnostics(spoken),
+                **_duration_fields(started_at),
+            }
         queued_after_status = _queue_final_after_status_locked(
             spoken,
             reason=reason,
