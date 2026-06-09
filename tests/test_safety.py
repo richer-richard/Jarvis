@@ -3912,6 +3912,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("requiresOnDeviceRecognition", listener_source)
         self.assertIn("onWakeDetected", listener_source)
         self.assertIn("onCommandCaptured", listener_source)
+        self.assertIn(
+            'if !detection.command.isEmpty {\n            status = "Wake detected"\n            onWakeDetected?(transcript)\n            captureCommand',
+            listener_source,
+        )
         self.assertIn("wakeListener.start()", model_source)
         self.assertIn("wakeListener.stop()", model_source)
         self.assertIn('text: "Yes sir?"', model_source)

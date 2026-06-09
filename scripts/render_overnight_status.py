@@ -24,6 +24,7 @@ SHIPPED_ITEMS = [
     "Experimental native Hey Jarvis listener in the macOS app, using Speech and AVAudioEngine.",
     "Wake-audition lab at /wake-audition/ for recording samples, scoring transcripts, running noise trials, and copying JSON.",
     "Wake scoring now accepts close transcripts such as hey jervis while still rejecting unrelated speech.",
+    "One-breath commands like Hey Jarvis check my email now trigger the immediate Yes sir wake acknowledgement before capture.",
     "Normal Dock-app behavior is preserved, with a menu-bar item enabled for quick controls.",
     "Menu-bar Shut Up toggle mutes Jarvis, interrupts current speech, and switches to Keep Blabbering for unmute.",
     "Menu-bar Start Hey Jarvis / Stop Hey Jarvis controls make the wake listener reachable without opening the panel.",
@@ -45,6 +46,7 @@ PROOF_ITEMS = [
 TRY_ITEMS = [
     "Open Jarvis from the Dock; it should be a normal app window, not an always-front overlay.",
     "Use the menu-bar item to click Start Hey Jarvis, then say Hey Jarvis followed by a short command.",
+    "Try a one-breath command such as Hey Jarvis wake status; Jarvis should acknowledge immediately and then answer.",
     "Use Shut Up if Jarvis is talking too much; use Keep Blabbering to restore speech.",
     "Ask for wake status or overnight status; Jarvis should speak the final answer, not only the Yes sir working line.",
     "Open the wake lab and record several Hey Jarvis samples in quiet and noisy conditions.",
@@ -217,6 +219,7 @@ def render_report(context: dict[str, Any]) -> str:
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
         ("done", "Ship Hey Jarvis native listener", "Experimental app toggle and Speech framework pipeline are in place."),
+        ("done", "Acknowledge one-breath wake commands", "Direct Hey Jarvis commands now trigger the wake acknowledgement before capture."),
         ("done", "Ship wake audition lab", "Local page records samples, scores transcripts, and saves samples under runtime."),
         ("done", "Add menu-bar silence control", "Shut Up interrupts and mutes; Keep Blabbering unmutes."),
         ("done", "Add menu-bar wake controls", "Start/Stop Hey Jarvis and Open Wake Test are reachable without the panel."),
