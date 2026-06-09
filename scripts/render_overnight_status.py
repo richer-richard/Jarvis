@@ -63,7 +63,7 @@ PROOF_ITEMS = [
     "Python safety suite: 410/410 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
-    "Live safe verifier passed 96/96 after the speech-mute, wake-audition, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
+    "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
     "Live verifier now checks that muted final speech preserves a substantial prefix of the final visible reply.",
     "Live Jarvis health showed the rebuilt app running from bundled app resources.",
     "Live UI inspection showed the Jarvis panel with Email, Status, Report, Wake Lab, Hey Jarvis, Perms, Screen, and Codex actions visible.",
