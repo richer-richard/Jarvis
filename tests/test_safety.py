@@ -3931,6 +3931,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("model.wakeModeText", view_source)
         self.assertIn("StatusChip(label: model.speechMuteText)", view_source)
         self.assertIn('QuickActionButton("Wake Lab", command: "Hey Jarvis wake audition status"', view_source)
+        self.assertIn('QuickActionButton("Perms", command: "permissions status"', view_source)
 
     def test_swift_streaming_status_does_not_overwrite_answer_text(self):
         model_source = (
