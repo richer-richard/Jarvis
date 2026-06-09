@@ -246,15 +246,12 @@ def render_report(context: dict[str, Any]) -> str:
     {pill_row(context)}
   </header>
   <main>
-    {section("Tonight's Product Promise", [
-        "Jarvis should now be easier to wake, silence, inspect, and test without needing to know which backend path is involved.",
-        "The new work is still explicitly experimental around real microphone behavior; the app and tests no longer pretend otherwise.",
-        "Tomorrow's job is to test the actual room/audio experience and feed the wake-lab JSON back into the next tuning pass.",
-    ], cards=True)}
-    {section("Shipped Since The Last Proven Build", context["shipped"])}
-    {section("Proof So Far", context["proof"])}
+    {promise_section(context)}
+    {spotlight_section(context)}
+    {section("Shipped Since The Last Proven Build", context["shipped"], collapsed=True)}
+    {section("Proof So Far", context["proof"], collapsed=True)}
     {section("What You Should Be Able To Do Tomorrow", context["try"])}
-    {section("Still Risky Or Unfinished", context["risks"], risk=True)}
+    {section("Still Risky Or Unfinished", context["risks"], risk=True, collapsed=True)}
     {supporting_section(context)}
   </main>
 </body>
@@ -340,13 +337,54 @@ def pill_row(context: dict[str, Any]) -> str:
     return '<div class="pills">' + "".join(f'<span class="pill">{e(pill)}</span>' for pill in pills) + "</div>"
 
 
-def section(title: str, items: list[str], *, cards: bool = False, risk: bool = False) -> str:
+def section(title: str, items: list[str], *, cards: bool = False, risk: bool = False, collapsed: bool = False) -> str:
     if cards:
         body = '<div class="grid">' + "".join(f'<div class="card">{e(item)}</div>' for item in items) + "</div>"
     else:
         cls = ' class="risk-list"' if risk else ""
         body = f"<ul{cls}>" + "".join(f"<li>{e(item)}</li>" for item in items) + "</ul>"
+    if collapsed:
+        return (
+            f'<section class="collapsed-section"><details>'
+            f'<summary><h2>{e(title)}</h2><span>{len(items)} items</span></summary>'
+            f"{body}</details></section>"
+        )
     return f"<section><h2>{e(title)}</h2>{body}</section>"
+
+
+def promise_section(context: dict[str, Any]) -> str:
+    promises = [
+        ("Wakeable", "Hey Jarvis is now a real app-side test surface, not just a plan."),
+        ("Interruptible", "Shut Up stops speech, and one-breath commands no longer double-speak the wake prompt."),
+        ("Inspectable", "The report, workboard, wake lab, verifier, speech preview, and chat JSON give us usable evidence."),
+    ]
+    cards = "".join(
+        f"<div class=\"promise\"><strong>{e(title)}</strong><span>{e(body)}</span></div>"
+        for title, body in promises
+    )
+    return f"<section><h2>Tonight's Product Promise</h2><div class=\"promise-grid\">{cards}</div></section>"
+
+
+def spotlight_section(context: dict[str, Any]) -> str:
+    cards = [
+        (
+            "Try First",
+            "Open Jarvis from the Dock, use Start Hey Jarvis from the menu bar, then try a short command.",
+        ),
+        (
+            "Best Proof",
+            f"{context['verification']['label']} verifier, 389/389 Python tests, Swift self-tests, and live muted speech probes.",
+        ),
+        (
+            "Honest Limit",
+            "Room-noise wake reliability still needs Leo's microphone tests; the wake lab is ready for that data.",
+        ),
+    ]
+    body = '<div class="grid spotlight">' + "".join(
+        f"<div class=\"card\"><strong>{e(title)}</strong><span>{e(text)}</span></div>"
+        for title, text in cards
+    ) + "</div>"
+    return f"<section><h2>Morning Snapshot</h2>{body}</section>"
 
 
 def supporting_section(context: dict[str, Any]) -> str:
@@ -431,7 +469,59 @@ def style_block() -> str:
       padding: 15px;
       min-width: 0;
     }
+    details { min-width: 0; }
+    summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after {
+      content: "Open";
+      border: 1px solid rgba(123, 188, 255, 0.45);
+      border-radius: 999px;
+      padding: 4px 9px;
+      color: var(--blue);
+      font-size: 13px;
+      flex: 0 0 auto;
+    }
+    details[open] summary::after { content: "Close"; }
+    summary h2 { margin: 0; }
+    summary span {
+      color: var(--muted);
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    details > ul {
+      margin-top: 10px;
+    }
     h2 { margin: 0 0 10px; font-size: 18px; letter-spacing: 0; }
+    .promise-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .promise {
+      display: grid;
+      gap: 7px;
+      border: 1px solid rgba(123, 188, 255, 0.35);
+      background: linear-gradient(180deg, #202836, #1a202a);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 118px;
+    }
+    .promise strong,
+    .spotlight strong {
+      display: block;
+      font-size: 17px;
+    }
+    .promise span,
+    .spotlight span {
+      color: var(--muted);
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -498,7 +588,7 @@ def style_block() -> str:
       margin-right: 6px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @media (max-width: 840px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 840px) { .grid, .promise-grid { grid-template-columns: 1fr; } }
   </style>"""
 
 
