@@ -588,9 +588,27 @@ class PlannerTests(unittest.TestCase):
             "wake: Hey Jarvis status": "voice.wake_simulation",
             "Hey Jarvis status": "voice.wake_simulation",
         }
+        model_first_live_commands = {
+            "what apps can you open",
+            "show available apps",
+            "is Safari running",
+            "app status Outlook",
+            "what apps are running",
+            "show running apps",
+            "what app am I using",
+            "which app is focused",
+            "focus Safari",
+            "switch to Outlook",
+            "what Mac is this",
+            "device profile",
+        }
         for command, expected_tool in cases.items():
             with self.subTest(command=command):
-                self.assertEqual(Planner().handle(command).tool, expected_tool)
+                if command in model_first_live_commands:
+                    result = Planner().preview(command, use_model_router=False)
+                else:
+                    result = Planner().handle(command)
+                self.assertEqual(result.tool, expected_tool)
 
     def test_capability_status_reports_daily_memory_as_partial(self):
         result = capabilities_status()
@@ -633,7 +651,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result.result["job_id"], "codex-test")
         self.assertEqual(result.result["model"], "gpt-5.4-mini")
 
-    def test_app_open_command_routes_to_open_tool(self):
+    def test_app_open_command_uses_first_model_tool_call_before_local_fallback(self):
         fake_result = {
             "tool": "app.open",
             "status": "opened",
@@ -641,12 +659,54 @@ class PlannerTests(unittest.TestCase):
             "app": "Microsoft Outlook",
             "reply": "Opened Microsoft Outlook.",
         }
-        with patch("jarvis.planner.app_open", return_value=fake_result) as open_mock:
+        tool_request = {
+            "tool": "conversation.fast_local",
+            "status": "tool_requested",
+            "selected_tool": "app.open",
+            "status_text": "Yes sir, opening Outlook now.",
+            "entities": {"app_name": "Microsoft Outlook"},
+            "executed": True,
+        }
+        with patch("jarvis.planner.run_fast_local_chat", return_value=tool_request) as model_mock, \
+             patch("jarvis.planner.app_open", return_value=fake_result) as open_mock:
             result = Planner().handle("Open my Microsoft Outlook app on my screen.")
 
         self.assertEqual(result.tool, "app.open")
         self.assertTrue(result.executed)
         self.assertEqual(result.result["app"], "Microsoft Outlook")
+        self.assertEqual(result.result["routing"]["source"], "model_tool_call")
+        model_mock.assert_called_once()
+        open_mock.assert_called_once_with("Microsoft Outlook")
+
+    def test_app_open_respects_first_model_conversation_answer(self):
+        fake_result = {
+            "tool": "conversation.fast_local",
+            "status": "completed",
+            "executed": True,
+            "reply": "I can discuss Outlook without opening it.",
+        }
+        with patch("jarvis.planner.run_fast_local_chat", return_value=fake_result), \
+             patch("jarvis.planner.app_open") as open_mock:
+            result = Planner().handle("Open my Microsoft Outlook app on my screen.")
+
+        self.assertEqual(result.tool, "conversation.fast_local")
+        open_mock.assert_not_called()
+
+    def test_app_open_can_use_local_fallback_when_router_is_disabled(self):
+        fake_result = {
+            "tool": "app.open",
+            "status": "opened",
+            "executed": True,
+            "app": "Microsoft Outlook",
+            "reply": "Opened Microsoft Outlook.",
+        }
+        with patch("jarvis.planner.run_fast_local_chat") as model_mock, \
+             patch("jarvis.planner.app_open", return_value=fake_result) as open_mock:
+            result = Planner().handle("Open my Microsoft Outlook app on my screen.", use_model_router=False)
+
+        self.assertEqual(result.tool, "app.open")
+        self.assertEqual(result.result["app"], "Microsoft Outlook")
+        model_mock.assert_not_called()
         open_mock.assert_called_once_with("Microsoft Outlook")
 
     def test_app_open_preview_does_not_launch(self):

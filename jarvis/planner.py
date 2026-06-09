@@ -648,6 +648,8 @@ class Planner:
             return self._result(text, "system.status", "Collected local Jarvis status.", assessment, system_status(), True)
         if _looks_like_browser_url_request(text):
             return self._result(text, "browser.open_url", "Prepared browser-open plan.", assessment, browser_open_url_plan(_extract_url(text)), False)
+        if use_model_router and _looks_like_app_control_request(text, lower):
+            return self._first_model_result(text, assessment, history=history)
         if _looks_like_running_apps_request(lower):
             return self._result(text, "app.running", "Checked which known apps are running.", assessment, app_running(), True)
         if _looks_like_app_list_request(lower):
@@ -803,6 +805,8 @@ class Planner:
             return self._preview_result(text, "voice.wake_simulation", assessment, True)
         if _extract_injection_scan_text(text) is not None:
             return self._preview_result(text, "safety.injection_scan", assessment, True)
+        if _looks_like_frontmost_app_request(lower):
+            return self._preview_result(text, "app.frontmost", assessment, True)
         if lower.startswith(("shell:", "$ ")) or _looks_like_shell_command(text):
             return self._preview_result(text, "shell.read_only", assessment, True)
         if _looks_like_latency_status(lower):
@@ -1068,6 +1072,7 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "app.open", assessment, True, plan={"intent": intent, **app_open(app_name, execute=False)})
             result = app_open(app_name)
+            result = _with_route_source(result, "model_tool_call", intent)
             summary = "Opened local app." if result.get("status") == "opened" else "Tried to open local app."
             return self._result(text, "app.open", summary, assessment, result, bool(result.get("executed")))
         if selected_tool == "app.focus":
@@ -1075,6 +1080,7 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "app.focus", assessment, True, plan={"intent": intent, **app_focus(app_name, execute=False)})
             result = app_focus(app_name)
+            result = _with_route_source(result, "model_tool_call", intent)
             summary = "Focused local app." if result.get("status") == "focused" else "Tried to focus local app."
             return self._result(text, "app.focus", summary, assessment, result, bool(result.get("executed")))
         if selected_tool == "app.quit":
@@ -1083,20 +1089,20 @@ class Planner:
         if selected_tool == "app.list":
             if not execute:
                 return self._preview_result(text, "app.list", assessment, True, plan={"intent": intent})
-            return self._result(text, "app.list", "Listed local apps Jarvis can open.", assessment, app_list(), True)
+            return self._result(text, "app.list", "Listed local apps Jarvis can open.", assessment, _with_route_source(app_list(), "model_tool_call", intent), True)
         if selected_tool == "app.status":
             app_name = _clean_optional_entity(entities.get("app_name")) or _extract_app_status_name(text) or _extract_app_name(text) or _extract_app_open_name(text) or ""
             if not execute:
                 return self._preview_result(text, "app.status", assessment, True, plan={"intent": intent, "app_name": app_name})
-            return self._result(text, "app.status", "Checked local app status.", assessment, app_status(app_name), True)
+            return self._result(text, "app.status", "Checked local app status.", assessment, _with_route_source(app_status(app_name), "model_tool_call", intent), True)
         if selected_tool == "app.running":
             if not execute:
                 return self._preview_result(text, "app.running", assessment, True, plan={"intent": intent})
-            return self._result(text, "app.running", "Checked which known apps are running.", assessment, app_running(), True)
+            return self._result(text, "app.running", "Checked which known apps are running.", assessment, _with_route_source(app_running(), "model_tool_call", intent), True)
         if selected_tool == "app.frontmost":
             if not execute:
                 return self._preview_result(text, "app.frontmost", assessment, True, plan={"intent": intent})
-            return self._result(text, "app.frontmost", "Checked the current frontmost app.", assessment, app_frontmost(), True)
+            return self._result(text, "app.frontmost", "Checked the current frontmost app.", assessment, _with_route_source(app_frontmost(), "model_tool_call", intent), True)
         if selected_tool == "terminal.plan":
             command = _clean_optional_entity(entities.get("command")) or _extract_terminal_command_text(text)
             plan = terminal_command_plan(command)
@@ -2064,6 +2070,17 @@ def _extract_app_name(text: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip()
+
+
+def _looks_like_app_control_request(text: str, lower: str) -> bool:
+    return (
+        _looks_like_frontmost_app_request(lower)
+        or _looks_like_running_apps_request(lower)
+        or _looks_like_app_list_request(lower)
+        or _extract_app_status_name(text) is not None
+        or _extract_app_focus_name(text) is not None
+        or _extract_app_open_name(text) is not None
+    )
 
 
 def _looks_like_app_list_request(lower: str) -> bool:
