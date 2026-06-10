@@ -4259,10 +4259,13 @@ class PlannerTests(unittest.TestCase):
                   <h2>Shipped Since The Last Proven Build</h2>
                   <ul><li>Fixed final speech.</li><li>Added device status.</li></ul>
                 </section>
-                <section>
-                  <h2>Proof So Far</h2>
-                  <ul><li>350/350 Python tests passed.</li></ul>
-                </section>
+	                <section>
+	                  <h2>Proof So Far</h2>
+	                  <ul>
+	                    <li>350/350 Python tests passed.</li>
+	                    <li>Newest local crash report is from older build 0.1.200 build 200 at 2026-06-10 21:57:13.00 +0800; no current-build crash report is present.</li>
+	                  </ul>
+	                </section>
                 <section>
                   <h2>What You Should Be Able To Do Tomorrow</h2>
                   <ul><li>Ask status.</li></ul>
@@ -4299,9 +4302,10 @@ class PlannerTests(unittest.TestCase):
         snapshot = result["master_report_snapshot"]
         self.assertEqual(snapshot["headline"], "Jarvis Overnight Launch Report")
         self.assertEqual(snapshot["shipped_count"], 2)
-        self.assertEqual(snapshot["proof_count"], 1)
+        self.assertEqual(snapshot["proof_count"], 2)
         self.assertEqual(snapshot["tomorrow_count"], 1)
         self.assertEqual(snapshot["risk_count"], 1)
+        self.assertIn("older build 0.1.200 build 200", snapshot["crash_status"])
         self.assertIn("Live bundle: Jarvis 0.1.214 build 214", snapshot["launch_pills"])
         self.assertIn("Jarvis should sound alive.", snapshot["product_promises"])
         audit_ids = {item["id"] for item in result["requirement_audit"]}
@@ -4313,6 +4317,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("master report", result["reply"])
         self.assertIn("2 shipped changes", result["reply"])
         self.assertIn("Verification: 89/89 passed", result["reply"])
+        self.assertIn("no current-build crash report is present", result["reply"])
         self.assertIn("workboard URLs and paths are included", result["reply"])
         self.assertNotIn(str(root), result["reply"])
         self.assertEqual(result["workboard_path"], str(workboard))

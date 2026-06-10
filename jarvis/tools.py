@@ -5427,6 +5427,8 @@ def _master_report_snapshot(path: Path) -> dict[str, Any]:
     tomorrow_count = section_counts.get("What You Should Be Able To Do Tomorrow", 0)
     risk_count = section_counts.get("Still Risky Or Unfinished", 0)
     support_count = section_counts.get("Supporting Files", 0)
+    proof_items = parser.sections.get("Proof So Far", [])
+    crash_items = [item for item in proof_items if item.lower().startswith("newest local crash report")]
     headline = parser.h1 or parser.title or "Jarvis Master Report"
     summary = (
         f"{headline}: {shipped_count} shipped changes, {proof_count} proof checks, "
@@ -5440,7 +5442,8 @@ def _master_report_snapshot(path: Path) -> dict[str, Any]:
         "headline": headline,
         "launch_pills": launch_pills,
         "product_promises": parser.product_promises[:6],
-        "proof_items": parser.sections.get("Proof So Far", [])[:80],
+        "proof_items": proof_items[:80],
+        "crash_status": crash_items[-1] if crash_items else "",
         "section_counts": section_counts,
         "shipped_count": shipped_count,
         "proof_count": proof_count,
@@ -5628,6 +5631,8 @@ def overnight_work_status() -> dict[str, Any]:
             reply += " Report integrity is current."
         elif report_integrity["status"] == "stale":
             reply += " Report integrity warning: the report does not match the current source or live bundle."
+        if report_snapshot.get("crash_status"):
+            reply += f" {report_snapshot['crash_status']}"
     else:
         reply = (
             "Overnight status: the workboard is "
