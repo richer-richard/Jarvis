@@ -15,6 +15,8 @@ struct JarvisWakeListenerSnapshot: Equatable {
 @MainActor
 final class JarvisWakeListener {
     private static let wakeSimilarityThreshold = 0.86
+    private static let restartStormLimit = 4
+    private static let restartStormWindowSeconds: TimeInterval = 18
 
     var onStateChange: ((JarvisWakeListenerSnapshot) -> Void)?
     var onWakeDetected: ((String) -> Void)?
@@ -50,6 +52,7 @@ final class JarvisWakeListener {
     private var captureTask: Task<Void, Never>?
     private var pendingCommand: String = ""
     private var recognitionGeneration = 0
+    private var recentRestartTimes: [Date] = []
 
     #if canImport(Speech)
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
@@ -78,6 +81,7 @@ final class JarvisWakeListener {
             return
         }
         shouldKeepRunning = true
+        recentRestartTimes = []
         status = "Requesting microphone and speech access"
         phase = .restarting
         publish()
@@ -110,6 +114,7 @@ final class JarvisWakeListener {
         captureTask?.cancel()
         captureTask = nil
         pendingCommand = ""
+        recentRestartTimes = []
         stopRecognitionSession()
         phase = .stopped
         status = "Wake listener off"
@@ -304,16 +309,23 @@ final class JarvisWakeListener {
         onCommandCaptured?(cleanedCommand, transcript)
         if shouldKeepRunning {
             phase = .waitingForWake
-            scheduleRestart(after: 3.0)
+            scheduleRestart(after: 3.0, countsTowardStability: false)
         }
     }
 
-    private func scheduleRestart(after seconds: TimeInterval, generation: Int? = nil) {
+    private func scheduleRestart(
+        after seconds: TimeInterval,
+        generation: Int? = nil,
+        countsTowardStability: Bool = true
+    ) {
         restartTask?.cancel()
         guard shouldKeepRunning else {
             return
         }
         if let generation, generation != recognitionGeneration {
+            return
+        }
+        if countsTowardStability, pauseIfRestartStorm() {
             return
         }
         phase = phase == .awaitingCommand ? .awaitingCommand : .restarting
@@ -332,6 +344,25 @@ final class JarvisWakeListener {
             }
             self.startRecognitionSession()
         }
+    }
+
+    private func pauseIfRestartStorm(now: Date = Date()) -> Bool {
+        let decision = Self.restartStormDecision(priorRestartTimes: recentRestartTimes, now: now)
+        recentRestartTimes = decision.restartTimes
+        guard decision.shouldPause else {
+            return false
+        }
+        shouldKeepRunning = false
+        restartTask?.cancel()
+        restartTask = nil
+        captureTask?.cancel()
+        captureTask = nil
+        pendingCommand = ""
+        stopRecognitionSession()
+        phase = .stopped
+        status = "Wake listener paused after repeated microphone restarts"
+        publish()
+        return true
     }
     #else
     private func stopRecognitionSession() {}
@@ -381,6 +412,12 @@ final class JarvisWakeListener {
         detectWake(transcript).diagnostics
     }
 
+    static func testRestartStormDecision(priorRestartAges: [TimeInterval], now: Date) -> (count: Int, shouldPause: Bool) {
+        let priorRestartTimes = priorRestartAges.map { now.addingTimeInterval(-$0) }
+        let decision = restartStormDecision(priorRestartTimes: priorRestartTimes, now: now)
+        return (decision.restartTimes.count, decision.shouldPause)
+    }
+
     #if canImport(Speech)
     static func testPermissionCallbackPath() async -> Bool {
         await requestPermissions()
@@ -390,6 +427,16 @@ final class JarvisWakeListener {
         false
     }
     #endif
+
+    private static func restartStormDecision(
+        priorRestartTimes: [Date],
+        now: Date
+    ) -> (restartTimes: [Date], shouldPause: Bool) {
+        let recent = (priorRestartTimes + [now]).filter {
+            now.timeIntervalSince($0) <= restartStormWindowSeconds
+        }
+        return (recent, recent.count > restartStormLimit)
+    }
 
     private static func detectWake(_ transcript: String) -> Detection {
         let normalizedText = normalized(transcript)

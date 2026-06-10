@@ -158,6 +158,15 @@ enum JarvisMenuBarSelfTest {
         guard score["detected"] == "true", score["phrase"] == "okay jarvis", score["command"] == "check status" else {
             throw SelfTestError.failed("Wake score diagnostics should explain fuzzy okay jarvis detection.")
         }
+        let now = Date()
+        let quietRestart = JarvisWakeListener.testRestartStormDecision(priorRestartAges: [1, 4, 20], now: now)
+        guard quietRestart.count == 3, !quietRestart.shouldPause else {
+            throw SelfTestError.failed("Wake restart guard should tolerate sparse restarts.")
+        }
+        let restartStorm = JarvisWakeListener.testRestartStormDecision(priorRestartAges: [1, 2, 3, 4], now: now)
+        guard restartStorm.count == 5, restartStorm.shouldPause else {
+            throw SelfTestError.failed("Wake restart guard should pause rapid microphone restart storms.")
+        }
         guard !JarvisShellModel.shouldUseNativeVoiceStatus("tts status") else {
             throw SelfTestError.failed("TTS status should route to backend diagnostics.tts, not the native voice snapshot.")
         }

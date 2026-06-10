@@ -97,7 +97,7 @@ PROOF_ITEMS = [
     "Closed-loop voice QA now synthesizes a command with Piper, transcribes it, routes it through Jarvis while muted, synthesizes the visible reply, and compares the spoken transcript back to the screen text.",
     "Latest voice-loop QA passed with Hey Jarvis status routed to status and 0.94 reply similarity.",
     "A 35-second app-bundle Hey Jarvis soak on Jarvis 0.1.279 returned successfully without a new crash report.",
-    "Jarvis 0.1.280 launched cleanly after the stale-progress-row cleanup.",
+    "The current live build launched cleanly after the stale-progress-row cleanup.",
 ]
 
 TRY_ITEMS = [
