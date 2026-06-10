@@ -103,6 +103,20 @@ enum JarvisMenuBarSelfTest {
         guard !JarvisShellModel.shouldUseNativePermissionStatus("grant microphone permission") else {
             throw SelfTestError.failed("Permission-granting requests must not be treated as a read-only status command.")
         }
+        let goodSpeechAlignment = JarvisShellModel.testSpeechAlignmentDiagnostics(
+            finalVisibleText: "Hello, sir. What can I help with today?",
+            textPreview: "Hello, sir. What can I help with today?"
+        )
+        guard goodSpeechAlignment["preview_matches_visible_prefix"] as? Bool == true else {
+            throw SelfTestError.failed("Full TTS preview should match the visible final answer.")
+        }
+        let shortSpeechAlignment = JarvisShellModel.testSpeechAlignmentDiagnostics(
+            finalVisibleText: "Hello, sir. What can I help with today?",
+            textPreview: "Hello"
+        )
+        guard shortSpeechAlignment["preview_matches_visible_prefix"] as? Bool == false else {
+            throw SelfTestError.failed("Tiny TTS preview should not match a longer visible final answer.")
+        }
         guard JarvisShellModel.shouldUseNativeHotKeyStatus("hotkey status") else {
             throw SelfTestError.failed("Hotkey status should use the native Swift hotkey snapshot.")
         }

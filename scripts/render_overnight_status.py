@@ -58,6 +58,7 @@ SHIPPED_ITEMS = [
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
     "Synthetic Still working progress rows are removed when the task finishes, so they do not remain below a completed answer.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
+    "Copy Chat JSON turn traces now include speech-alignment diagnostics that flag tiny TTS previews such as Hello against longer visible answers.",
     "Hey Jarvis now pauses after immediate silent Apple Speech endings instead of repeatedly flashing the menu bar while it restarts.",
     "The master report and workboard now have read-only loopback URLs at /overnight-report/ and /overnight-workboard/.",
 ]
@@ -101,6 +102,7 @@ PROOF_ITEMS = [
     "Native Hey Jarvis now pauses itself if Apple Speech enters a rapid microphone restart loop, preventing the menu-bar flicker from becoming a crash spiral.",
     "Native Hey Jarvis also pauses if Apple Speech ends immediately without hearing speech, so a broken listener fails quiet instead of flickering.",
     "Local-only voice QA now fails closed: if STT returns an empty transcript, it does not route a fake status command.",
+    "Swift self-tests now reject a tiny Hello TTS preview when the visible final answer is longer.",
     "The current live build launched cleanly after the anti-flicker cleanup.",
 ]
 
@@ -567,6 +569,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
         ("done", "Remove stale progress rows", "Synthetic Still working rows are removed as soon as the final answer is displayed."),
         ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),
+        ("done", "Add speech-alignment trace", "Copy Chat JSON now flags when TTS preview text is too short to match the visible answer."),
         ("done", "Add closed-loop voice QA", "The harness compares Piper audio, STT transcript, Jarvis reply text, and spoken reply transcript."),
         ("done", "Add local STT fallback hook", "faster-whisper is installed; the tiny model-weight fetch still hits a connection reset."),
         ("done", "Fail closed on empty local STT", "If local STT returns no transcript, the QA harness stops instead of routing a fake status command."),

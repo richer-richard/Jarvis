@@ -1804,12 +1804,80 @@ final class JarvisShellModel: ObservableObject {
             "final_visible_text": redactChatExportText(finalVisibleText),
             "final_answer_visible": !finalVisibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             "final_speech": finalSpeech,
+            "speech_alignment": speechAlignmentDiagnostics(finalVisibleText: finalVisibleText, finalSpeech: finalSpeech),
             "route_source": jsonOrNull(routeSource),
             "model_backend": jsonOrNull(modelBackend),
             "model_name": jsonOrNull(modelName),
             "final_state": state,
             "final_tool": tool,
         ]
+    }
+
+    private static func speechAlignmentDiagnostics(finalVisibleText: String, finalSpeech: Any) -> [String: Any] {
+        let preview = speechTextPreview(from: finalSpeech)
+        let visibleNormalized = normalizeSpeechCheckText(finalVisibleText)
+        let previewNormalized = normalizeSpeechCheckText(preview)
+        return [
+            "schema": "jarvis.speech_alignment.v1",
+            "speech_status": speechStatus(from: finalSpeech),
+            "tts_text_preview": redactChatExportText(preview),
+            "visible_normalized_length": visibleNormalized.count,
+            "preview_normalized_length": previewNormalized.count,
+            "preview_matches_visible_prefix": speechPreviewMatchesVisibleText(
+                visibleNormalized: visibleNormalized,
+                previewNormalized: previewNormalized
+            ),
+        ]
+    }
+
+    static func testSpeechAlignmentDiagnostics(finalVisibleText: String, textPreview: String) -> [String: Any] {
+        speechAlignmentDiagnostics(
+            finalVisibleText: finalVisibleText,
+            finalSpeech: [
+                "status": "muted",
+                "text_preview": textPreview,
+            ]
+        )
+    }
+
+    private static func speechTextPreview(from finalSpeech: Any) -> String {
+        guard let payload = finalSpeech as? [String: Any] else {
+            return ""
+        }
+        return payload["text_preview"] as? String ?? ""
+    }
+
+    private static func speechStatus(from finalSpeech: Any) -> String {
+        guard let payload = finalSpeech as? [String: Any] else {
+            return "missing"
+        }
+        return payload["status"] as? String ?? "unknown"
+    }
+
+    private static func normalizeSpeechCheckText(_ value: String) -> String {
+        value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private static func speechPreviewMatchesVisibleText(
+        visibleNormalized: String,
+        previewNormalized: String
+    ) -> Bool {
+        guard !visibleNormalized.isEmpty else {
+            return previewNormalized.isEmpty
+        }
+        guard !previewNormalized.isEmpty else {
+            return false
+        }
+        if visibleNormalized == previewNormalized {
+            return true
+        }
+        let minimumUsefulPrefixLength = min(12, visibleNormalized.count)
+        return visibleNormalized.hasPrefix(previewNormalized)
+            && previewNormalized.count >= minimumUsefulPrefixLength
     }
 
     private static func routeSource(from response: CommandResponse) -> String? {

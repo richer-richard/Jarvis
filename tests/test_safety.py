@@ -4445,12 +4445,26 @@ class RuntimeSurfaceTests(unittest.TestCase):
             / "Models"
             / "JarvisShellModel.swift"
         ).read_text(encoding="utf-8")
+        self_test_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Support"
+            / "JarvisMenuBarSelfTest.swift"
+        ).read_text(encoding="utf-8")
 
         self.assertIn('"schema": "jarvis.turn_trace.v1"', model_source)
         self.assertIn('"visible_status_lines"', model_source)
         self.assertIn('"final_visible_text"', model_source)
         self.assertIn('"final_answer_visible"', model_source)
         self.assertIn('"final_speech"', model_source)
+        self.assertIn('"speech_alignment"', model_source)
+        self.assertIn('"schema": "jarvis.speech_alignment.v1"', model_source)
+        self.assertIn('"preview_matches_visible_prefix"', model_source)
+        self.assertIn("speechPreviewMatchesVisibleText", model_source)
+        self.assertIn("testSpeechAlignmentDiagnostics", model_source)
+        self.assertIn('textPreview: "Hello"', self_test_source)
         self.assertIn('"route_source"', model_source)
         self.assertIn("captureResponseDiagnostics(response)", model_source)
         self.assertIn("recordTurnPhase(\"Answering\"", model_source)
