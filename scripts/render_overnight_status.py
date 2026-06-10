@@ -56,12 +56,13 @@ SHIPPED_ITEMS = [
     "Streaming app working lines now include the app name when Jarvis already knows it, such as Yes sir, checking Safari now.",
     "Final answers with normal reply text now auto-speak by default instead of leaving only the working line audible.",
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
+    "Synthetic Still working progress rows are removed when the task finishes, so they do not remain below a completed answer.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
     "The master report and workboard now have read-only loopback URLs at /overnight-report/ and /overnight-workboard/.",
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 418/418 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, and voice-QA work.",
+    "Python safety suite: 419/419 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -96,6 +97,7 @@ PROOF_ITEMS = [
     "Closed-loop voice QA now synthesizes a command with Piper, transcribes it, routes it through Jarvis while muted, synthesizes the visible reply, and compares the spoken transcript back to the screen text.",
     "Latest voice-loop QA passed with Hey Jarvis status routed to status and 0.94 reply similarity.",
     "A 35-second app-bundle Hey Jarvis soak on Jarvis 0.1.279 returned successfully without a new crash report.",
+    "Jarvis 0.1.280 launched cleanly after the stale-progress-row cleanup.",
 ]
 
 TRY_ITEMS = [
@@ -521,6 +523,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Make app working lines specific", "Streaming app status says the app name when preview already has it."),
         ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
+        ("done", "Remove stale progress rows", "Synthetic Still working rows are removed as soon as the final answer is displayed."),
         ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),
         ("done", "Add closed-loop voice QA", "The harness compares Piper audio, STT transcript, Jarvis reply text, and spoken reply transcript."),
         ("done", "Add local STT fallback hook", "faster-whisper is installed; the first no-permission model cache needs a stable network retry."),
@@ -627,7 +630,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 418/418 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 419/419 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",
