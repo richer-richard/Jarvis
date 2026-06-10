@@ -209,6 +209,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(policy["requests_speech_recognition"])
         self.assertFalse(policy["uses_screen_capture"])
         self.assertFalse(policy["uses_accessibility"])
+        self.assertFalse(policy["pushes_to_network_repo"])
 
     def test_fast_latency_smoke_mutes_speech_during_run(self):
         mute_calls = []
