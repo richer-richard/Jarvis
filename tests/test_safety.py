@@ -596,13 +596,49 @@ class VerifySafeScriptTests(unittest.TestCase):
                 }
             raise AssertionError(f"unexpected POST {path}")
 
+        get_statuses = iter([
+            {"muted": False},
+            {"muted": True},
+        ])
         with patch("scripts.verify_safe.post_json", side_effect=fake_post_json), \
-             patch("scripts.verify_safe.get_json", return_value={"muted": True}):
+             patch("scripts.verify_safe.get_json", side_effect=lambda *_args, **_kwargs: next(get_statuses)):
             detail = verify_safe.check_endpoint_speech_mute("http://127.0.0.1:8765")
 
         self.assertEqual(detail, "speech mute blocked audio and preserved final reply text")
         self.assertIn(("/api/command", {"command": "status"}), posts)
         self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
+
+    def test_verify_safe_restores_original_muted_state(self):
+        posts = []
+
+        def fake_post_json(path, payload, **_kwargs):
+            posts.append((path, payload))
+            if path == "/api/speech/mute":
+                return {
+                    "tool": "voice.speech_mute",
+                    "muted": bool(payload["muted"]),
+                    "status": "muted" if payload["muted"] else "unmuted",
+                }
+            if path == "/api/speech/status":
+                return {"executed": False, "speech": {"status": "muted"}}
+            if path == "/api/command":
+                return {
+                    "tool": "system.status",
+                    "result": {"reply": "Jarvis status."},
+                    "speech": {
+                        "status": "muted",
+                        "reason": "final",
+                        "text_preview": "Jarvis status.",
+                    },
+                }
+            raise AssertionError(f"unexpected POST {path}")
+
+        with patch("scripts.verify_safe.post_json", side_effect=fake_post_json), \
+             patch("scripts.verify_safe.get_json", return_value={"muted": True}):
+            detail = verify_safe.check_endpoint_speech_mute("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "speech mute blocked audio and preserved final reply text")
+        self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": True}))
 
     def test_verify_safe_checks_quiet_command_suppresses_speech_without_muting(self):
         posts = []

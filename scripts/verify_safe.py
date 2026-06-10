@@ -1280,6 +1280,8 @@ def check_endpoint_overnight_report_routes(base_url: str) -> str:
 
 
 def check_endpoint_speech_mute(base_url: str) -> str:
+    original_status = get_json("/api/speech/mute", base_url=base_url)
+    original_muted = bool(original_status.get("muted", False))
     muted = post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
     try:
         require(muted.get("tool") == "voice.speech_mute", f"mute tool was {muted.get('tool')}")
@@ -1300,7 +1302,7 @@ def check_endpoint_speech_mute(base_url: str) -> str:
             "final speech preview was not a substantial prefix of the final visible reply",
         )
     finally:
-        post_json("/api/speech/mute", {"muted": False}, base_url=base_url)
+        post_json("/api/speech/mute", {"muted": original_muted}, base_url=base_url)
     return "speech mute blocked audio and preserved final reply text"
 
 
