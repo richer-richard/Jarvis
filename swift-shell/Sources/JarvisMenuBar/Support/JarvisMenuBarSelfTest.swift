@@ -181,6 +181,14 @@ enum JarvisMenuBarSelfTest {
         guard restartStorm.count == 3, restartStorm.shouldPause else {
             throw SelfTestError.failed("Wake restart guard should pause rapid microphone restart storms.")
         }
+        let thirdActivationRestart = JarvisWakeListener.testActivationRestartLimit(priorAttempts: 2)
+        guard thirdActivationRestart.attempts == 3, !thirdActivationRestart.shouldPause else {
+            throw SelfTestError.failed("Wake listener should tolerate three restarts during one activation.")
+        }
+        let fourthActivationRestart = JarvisWakeListener.testActivationRestartLimit(priorAttempts: 3)
+        guard fourthActivationRestart.attempts == 4, fourthActivationRestart.shouldPause else {
+            throw SelfTestError.failed("Wake listener should pause after the fourth restart during one activation.")
+        }
         guard JarvisWakeListener.testRestartDelaySeconds(awaitingCommand: false) >= 2.5 else {
             throw SelfTestError.failed("Wake listener restart delay should avoid rapid menu-bar microphone flicker.")
         }

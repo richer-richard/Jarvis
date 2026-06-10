@@ -41,6 +41,7 @@ struct JarvisWakeListenerSnapshot: Equatable {
 final class JarvisWakeListener {
     private static let wakeSimilarityThreshold = 0.86
     private static let restartStormLimit = 2
+    private static let maxRestartAttemptsPerActivation = 3
     private static let restartStormWindowSeconds: TimeInterval = 24
     private static let minimumStableRecognitionSeconds: TimeInterval = 8
     private static let wakeRestartDelaySeconds: TimeInterval = 2.5
@@ -82,6 +83,7 @@ final class JarvisWakeListener {
     private var pendingCommand: String = ""
     private var recognitionGeneration = 0
     private var recentRestartTimes: [Date] = []
+    private var restartAttemptsSinceActivation = 0
     private var currentRecognitionStartedAt: Date?
     private var currentSessionHeardTranscript = false
     private var lastPublishedSnapshot: JarvisWakeListenerSnapshot?
@@ -114,6 +116,7 @@ final class JarvisWakeListener {
         }
         shouldKeepRunning = true
         recentRestartTimes = []
+        restartAttemptsSinceActivation = 0
         status = "Requesting microphone and speech access"
         phase = .restarting
         publish()
@@ -147,6 +150,7 @@ final class JarvisWakeListener {
         captureTask = nil
         pendingCommand = ""
         recentRestartTimes = []
+        restartAttemptsSinceActivation = 0
         stopRecognitionSession()
         phase = .stopped
         status = "Wake listener off"
@@ -363,8 +367,15 @@ final class JarvisWakeListener {
         if let generation, generation != recognitionGeneration {
             return
         }
-        if countsTowardStability, pauseIfRestartStorm() {
-            return
+        if countsTowardStability {
+            restartAttemptsSinceActivation += 1
+            if Self.shouldPauseAfterActivationRestartLimit(restartAttempts: restartAttemptsSinceActivation) {
+                pauseAfterUnstableRecognition(status: "Wake listener paused after repeated Speech restarts")
+                return
+            }
+            if pauseIfRestartStorm() {
+                return
+            }
         }
         phase = phase == .awaitingCommand ? .awaitingCommand : .restarting
         publish()
@@ -481,6 +492,11 @@ final class JarvisWakeListener {
         return awaitingCommand ? commandRestartDelaySeconds : wakeRestartDelaySeconds
     }
 
+    static func testActivationRestartLimit(priorAttempts: Int) -> (attempts: Int, shouldPause: Bool) {
+        let attempts = max(0, priorAttempts) + 1
+        return (attempts, shouldPauseAfterActivationRestartLimit(restartAttempts: attempts))
+    }
+
     func testDuplicatePublishCount() -> Int {
         var count = 0
         let previousHandler = onStateChange
@@ -533,6 +549,10 @@ final class JarvisWakeListener {
         (phase == .waitingForWake || phase == .awaitingCommand)
             && !heardTranscript
             && sessionAge < minimumStableRecognitionSeconds
+    }
+
+    private static func shouldPauseAfterActivationRestartLimit(restartAttempts: Int) -> Bool {
+        restartAttempts > maxRestartAttemptsPerActivation
     }
 
     private static func detectWake(_ transcript: String) -> Detection {

@@ -65,6 +65,7 @@ SHIPPED_ITEMS = [
     "Copy Chat JSON turn traces now include speech-alignment diagnostics that flag tiny TTS previews such as Hello against longer visible answers.",
     "Live command endpoints now accept suppress_speech=true or speak=false for quiet verification without muting the whole app.",
     "Hey Jarvis now spaces out Apple Speech restarts and stops after the third close restart, reducing the menu-bar dictation flicker loop.",
+    "Hey Jarvis now also stops after the fourth restart in one activation, catching slower flicker loops that are not rapid enough for the storm guard.",
     "Hey Jarvis now de-duplicates identical listener snapshots before publishing them to the SwiftUI panel.",
     "The native audio tap now uses a non-actor sink so Core Audio's realtime callback does not inherit MainActor isolation.",
     "Hey Jarvis now pauses after immediate silent Apple Speech endings instead of repeatedly flashing the menu bar while it restarts.",
@@ -121,7 +122,7 @@ PROOF_ITEMS = [
     "Swift self-tests now reject a tiny Hello TTS preview when the visible final answer is longer.",
     "Voice-loop QA tests now prove no-permission mode does not call the Apple Speech app path.",
     "Local-only voice QA now passes end to end with faster-whisper tiny.en: Hey Jarvis status routed to status and reply similarity cleared 0.90.",
-    "Swift self-tests now require less frantic wake restart timing, third-close-restart pause behavior, and duplicate wake snapshot suppression.",
+    "Swift self-tests now require less frantic wake restart timing, fourth-activation-restart pause behavior, third-close-restart pause behavior, and duplicate wake snapshot suppression.",
     "Static safety tests and the no-prompt verifier now require the wake audio tap to capture a non-actor sink instead of appending to Speech from a MainActor-inherited closure.",
     "The current live build launched cleanly after the anti-flicker cleanup.",
 ]
