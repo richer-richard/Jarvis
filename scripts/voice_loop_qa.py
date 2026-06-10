@@ -446,6 +446,7 @@ def transcribe_audio(
 
 
 def transcribe_with_local_stt(audio_path: Path, output_json: Path, *, timeout: float) -> dict[str, Any]:
+    cache_status = local_stt_cache_status()
     if not LOCAL_STT_PYTHON.exists():
         data = {
             "status": "local_stt_unavailable",
@@ -454,6 +455,7 @@ def transcribe_with_local_stt(audio_path: Path, output_json: Path, *, timeout: f
             "audio_path": str(audio_path),
             "transcript": "",
             "missing": str(LOCAL_STT_PYTHON),
+            "cache_status": cache_status,
         }
         output_json.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return data
@@ -498,6 +500,7 @@ def transcribe_with_local_stt(audio_path: Path, output_json: Path, *, timeout: f
             "audio_path": str(audio_path),
             "transcript": "",
             "error": f"Timed out after {error.timeout}s.",
+            "cache_status": local_stt_cache_status(),
         }
         output_json.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return data
@@ -512,6 +515,7 @@ def transcribe_with_local_stt(audio_path: Path, output_json: Path, *, timeout: f
             "transcript": "",
             "error": "Local STT did not write JSON.",
         }
+    data["cache_status"] = local_stt_cache_status()
     data["returncode"] = completed.returncode
     if completed.stdout.strip():
         data["stdout_tail"] = completed.stdout.strip()[-500:]
@@ -519,6 +523,25 @@ def transcribe_with_local_stt(audio_path: Path, output_json: Path, *, timeout: f
         data["stderr_tail"] = completed.stderr.strip()[-500:]
     output_json.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return data
+
+
+def local_stt_cache_status() -> dict[str, Any]:
+    snapshot_dir = LOCAL_STT_ROOT / "models" / "models--Systran--faster-whisper-tiny.en" / "snapshots"
+    snapshots = sorted(snapshot_dir.glob("*"))
+    active_snapshot = snapshots[-1] if snapshots else snapshot_dir
+    model_path = active_snapshot / "model.bin"
+    blob_dir = LOCAL_STT_ROOT / "models" / "models--Systran--faster-whisper-tiny.en" / "blobs"
+    incomplete = sorted(blob_dir.glob("*.incomplete"))
+    return {
+        "snapshot": str(active_snapshot),
+        "model_bin": str(model_path),
+        "model_bin_exists": model_path.exists(),
+        "model_bin_size": model_path.stat().st_size if model_path.exists() else 0,
+        "incomplete_blobs": [
+            {"path": str(path), "size": path.stat().st_size}
+            for path in incomplete
+        ],
+    }
 
 
 def first_existing_path(paths: list[Path]) -> Path:
