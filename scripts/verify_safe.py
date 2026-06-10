@@ -1126,6 +1126,7 @@ def check_endpoint_wake_audition_corpus(base_url: str) -> str:
     require('id="corpus-status"' in page_body, "wake page missing corpus status")
     require('id="guide-message"' in page_body, "wake page missing guide message")
     require("Record Sample" in page_body and "Finish Recording" in page_body, "wake page missing clear recording labels")
+    require("Live Transcript Only" in page_body and "Copy Codex JSON" in page_body, "wake page missing self-explanatory helper labels")
     require("THRESHOLD_CORPUS" in script_body, "wake script missing threshold corpus")
     require("fillCorpusTranscript" in script_body, "wake script missing corpus click handler")
     require("setGuide" in script_body, "wake script missing live guide updates")

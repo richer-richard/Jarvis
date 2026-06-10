@@ -324,7 +324,7 @@ class VerifySafeScriptTests(unittest.TestCase):
     def test_verify_safe_checks_wake_audition_corpus_route(self):
         def fake_http_response(_base_url, path, **_kwargs):
             if path == "/wake-audition/":
-                return 200, '<!doctype html><button>Record Sample</button><button>Finish Recording</button><div id="corpus-list"></div><span id="corpus-status"></span><p id="guide-message"></p>', {}
+                return 200, '<!doctype html><button>Record Sample</button><button>Finish Recording</button><button>Live Transcript Only</button><button>Copy Codex JSON</button><div id="corpus-list"></div><span id="corpus-status"></span><p id="guide-message"></p>', {}
             if path == "/static/wake-audition.js":
                 return 200, "const THRESHOLD_CORPUS = ['hey charvis status']; function fillCorpusTranscript() {} function setGuide() {} const selected_corpus_case = true;", {}
             if path == "/static/wake-audition.css":
@@ -3105,7 +3105,8 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Record Sample", html)
         self.assertIn("Finish Recording", html)
         self.assertIn("Save Run", html)
-        self.assertIn("Start Live Test", html)
+        self.assertIn("Live Transcript Only", html)
+        self.assertIn("Copy Codex JSON", html)
         self.assertIn("Run Noise Trial", html)
         self.assertIn("setGuide", script)
         self.assertIn(".step-grid", css)

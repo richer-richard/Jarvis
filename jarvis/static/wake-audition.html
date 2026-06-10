@@ -13,7 +13,7 @@
         <div>
           <p class="eyebrow">Jarvis Voice Lab</p>
           <h1>Hey Jarvis Wake Audition</h1>
-          <p class="header-note">Use Record Sample when you want a saveable audio test. Use Start Live Test only for a quick transcript check.</p>
+          <p class="header-note">For a saved test, use the numbered buttons from left to right. Live Transcript Only is a disposable check and does not save audio.</p>
         </div>
         <div class="status-row">
           <span id="api-status" class="pill">API</span>
@@ -27,15 +27,15 @@
           <h2>Current Step</h2>
           <span id="guide-state" class="score-chip">Ready</span>
         </div>
-        <p id="guide-message" class="guide-message">Click Record Sample, say "Hey Jarvis, status", then click Finish Recording.</p>
+        <p id="guide-message" class="guide-message">Click 1 Record Sample, say "Hey Jarvis, status", then click 2 Finish Recording.</p>
         <div class="step-grid" aria-label="Suggested wake audition flow">
           <div class="step-card active" data-step="record">
             <strong>1. Record Sample</strong>
-            <span>Capture your real voice saying the wake phrase and a short command.</span>
+            <span>Starts the microphone and captures saveable audio of your wake phrase.</span>
           </div>
           <div class="step-card" data-step="finish">
             <strong>2. Finish Recording</strong>
-            <span>Stop the mic and let the page score the transcript.</span>
+            <span>Stops recording, fills the transcript, and scores what Jarvis heard.</span>
           </div>
           <div class="step-card" data-step="save">
             <strong>3. Save Run</strong>
@@ -55,12 +55,12 @@
           <output id="threshold-output" for="threshold-slider">0.860</output>
         </div>
         <div class="button-row">
-          <button id="record-sample" type="button">Record Sample</button>
-          <button id="stop-recording" type="button" disabled>Finish Recording</button>
-          <button id="save-sample" type="button" disabled>Save Run</button>
-          <button id="start-listener" type="button" title="Quick transcript check only; it does not save audio.">Start Live Test</button>
-          <button id="stop-listener" type="button" title="Stop the quick transcript check." disabled>Stop Live Test</button>
-          <button id="copy-export" type="button">Copy Results JSON</button>
+          <button id="record-sample" type="button" title="Start a saved audio sample.">1 Record Sample</button>
+          <button id="stop-recording" type="button" title="Stop the saved audio sample and score the transcript." disabled>2 Finish Recording</button>
+          <button id="save-sample" type="button" title="Save the audio, transcript, score, and metadata locally." disabled>3 Save Run</button>
+          <button id="start-listener" type="button" title="Quick transcript check only; it does not save audio.">Live Transcript Only</button>
+          <button id="stop-listener" type="button" title="Stop the disposable live transcript check." disabled>Stop Live Transcript</button>
+          <button id="copy-export" type="button" title="Copy wake-lab results for Codex debugging.">Copy Codex JSON</button>
         </div>
       </section>
 

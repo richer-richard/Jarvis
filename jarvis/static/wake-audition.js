@@ -69,7 +69,7 @@
     setPill(els.recognizerStatus, SpeechRecognition ? "Ready" : "No Web Speech", SpeechRecognition ? "ok" : "fail");
     updateThreshold();
     updateNoise();
-    setGuide("record", "Ready", "Click Record Sample, say \"Hey Jarvis, status\", then click Finish Recording.");
+    setGuide("record", "Ready", "Click 1 Record Sample, say \"Hey Jarvis, status\", then click 2 Finish Recording.");
     renderCorpus();
     renderRuns();
     bindEvents();
@@ -122,7 +122,7 @@
       candidate.classList.toggle("active", candidate === button);
     }
     setPill(els.corpusStatus, item.expected, item.expected === "reject" ? "warn" : "ok");
-    setGuide("record", "Corpus", "This only tests scoring. To test your real voice, click Record Sample and say the phrase out loud.");
+    setGuide("record", "Corpus", "This only tests scoring. To test your real voice, click 1 Record Sample and say the phrase out loud.");
     await scoreCurrentTranscript();
   }
 
@@ -158,11 +158,11 @@
       setPill(els.recognizerStatus, "Listening", "ok");
       els.startListener.disabled = true;
       els.stopListener.disabled = false;
-      setGuide("record", "Listening", "Live Test is only checking the transcript box. Use Record Sample when you want to save audio.");
+      setGuide("record", "Live Transcript", "This is only filling the transcript box. Use 1 Record Sample when you want saveable audio.");
     };
     recognition.onerror = (event) => {
       setPill(els.recognizerStatus, event.error || "Error", "fail");
-      setGuide("record", "Recognizer Error", "Speech recognition hit an error. You can type a transcript manually or try Start Live Test again.");
+      setGuide("record", "Recognizer Error", "Speech recognition hit an error. You can type a transcript manually or try Live Transcript Only again.");
     };
     recognition.onend = () => {
       if (state.recognition === recognition) {
@@ -170,7 +170,7 @@
         els.stopListener.disabled = true;
         setPill(els.recognizerStatus, "Stopped", "warn");
         if (!state.mediaRecorder || state.mediaRecorder.state === "inactive") {
-          setGuide("record", "Ready", "Click Record Sample, say \"Hey Jarvis, status\", then click Finish Recording.");
+          setGuide("record", "Ready", "Click 1 Record Sample, say \"Hey Jarvis, status\", then click 2 Finish Recording.");
         }
       }
     };
@@ -221,14 +221,14 @@
       els.recordSample.disabled = true;
       els.stopRecording.disabled = false;
       els.saveSample.disabled = true;
-      setGuide("finish", "Recording", "Say \"Hey Jarvis, status\" once. Then click Finish Recording.");
+      setGuide("finish", "Recording", "Say \"Hey Jarvis, status\" once. Then click 2 Finish Recording.");
       if (SpeechRecognition && !state.recognition) {
         startLiveListener();
       }
     } catch (error) {
       setPill(els.micStatus, "Denied", "fail");
       els.trialStatus.textContent = "Microphone recording failed: " + error;
-      setGuide("record", "Mic Blocked", "The browser could not use the microphone. Check microphone permission, then try Record Sample again.");
+      setGuide("record", "Mic Blocked", "The browser could not use the microphone. Check microphone permission, then try 1 Record Sample again.");
     }
   }
 
@@ -244,7 +244,7 @@
     }
     els.recordSample.disabled = false;
     els.stopRecording.disabled = true;
-    setGuide("save", "Scoring", "Review the transcript and score. If it looks right, click Save Run.");
+    setGuide("save", "Scoring", "Review the transcript and score. If it looks right, click 3 Save Run.");
   }
 
   function finishRecording() {
@@ -264,7 +264,7 @@
     els.downloadSample.disabled = false;
     setPill(els.sampleStatus, Math.round(state.lastBlob.size / 1024) + " KB", "ok");
     setPill(els.micStatus, "Ready", "ok");
-    setGuide("save", "Ready to Save", "Play the sample if you want, then click Save Run so Codex can inspect it later.");
+    setGuide("save", "Ready to Save", "Play the sample if you want, then click 3 Save Run so Codex can inspect it later.");
     scoreCurrentTranscript();
   }
 
@@ -304,11 +304,11 @@
         metadata_path: data.metadata_path,
       });
       setPill(els.sampleStatus, "Saved", "ok");
-      setGuide("noise", "Saved", "Now run a Noise Trial, record another sample, or click Copy Results JSON if something looks wrong.");
+      setGuide("noise", "Saved", "Now run a Noise Trial, record another sample, or click Copy Codex JSON if something looks wrong.");
     } catch (error) {
       setPill(els.sampleStatus, "Save failed", "fail");
       els.trialStatus.textContent = "Save failed: " + error;
-      setGuide("save", "Save Failed", "The run did not save. Copy Results JSON or try Save Run again after checking the API.");
+      setGuide("save", "Save Failed", "The run did not save. Copy Codex JSON or try 3 Save Run again after checking the API.");
     }
   }
 
