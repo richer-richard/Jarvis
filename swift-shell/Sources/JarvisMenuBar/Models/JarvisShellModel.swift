@@ -46,6 +46,7 @@ final class JarvisShellModel: ObservableObject {
     private var codexActivityTask: Task<Void, Never>?
     private var activeTimerTasks: [String: Task<Void, Never>] = [:]
     private var wakeEventLog: [[String: String]] = []
+    private var lastWakePauseStatus: String = ""
     private var activeTurnID: UUID?
     private var activeProgressNudgeIDs: Set<UUID> = []
     var onSpeechMuteStateChanged: (() -> Void)?
@@ -246,6 +247,21 @@ final class JarvisShellModel: ObservableObject {
             wakeModeText = "Wake \(snapshot.phase)"
             wakeDetailText = "\(snapshot.status) via \(snapshot.engine)"
             wakeTranscriptText = snapshot.transcript
+            if Self.isWakePausedStatus(snapshot.status) {
+                if lastWakePauseStatus != snapshot.status {
+                    lastWakePauseStatus = snapshot.status
+                    recordWakeEvent("listener_paused", detail: snapshot.status, transcript: snapshot.transcript)
+                    messages.append(
+                        ChatMessage(
+                            role: .jarvis,
+                            text: Self.wakePauseMessage(snapshot.status),
+                            detail: "Wake paused"
+                        )
+                    )
+                }
+            } else if snapshot.running {
+                lastWakePauseStatus = ""
+            }
         }
         wakeListener.onWakeDetected = { [weak self] transcript in
             guard let self else {
@@ -329,6 +345,20 @@ final class JarvisShellModel: ObservableObject {
         if wakeEventLog.count > 20 {
             wakeEventLog.removeFirst(wakeEventLog.count - 20)
         }
+    }
+
+    private static func isWakePausedStatus(_ status: String) -> Bool {
+        status.lowercased().contains("wake listener paused")
+    }
+
+    private static func wakePauseMessage(_ status: String) -> String {
+        if status.lowercased().contains("ended before hearing speech") {
+            return "Hey Jarvis paused because speech recognition reset before hearing you. Try Start Hey Jarvis again when you are ready."
+        }
+        if status.lowercased().contains("not available") {
+            return "Hey Jarvis paused because Speech Recognition is not available right now."
+        }
+        return "Hey Jarvis paused to avoid an unstable listening loop."
     }
 
     func submitCurrentCommand() {
