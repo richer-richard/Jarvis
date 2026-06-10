@@ -52,6 +52,7 @@ def run_no_prompt_checks(base_url: str = DEFAULT_BASE_URL) -> dict[str, object]:
         ("wake_audition_corpus", lambda: verify_safe.check_endpoint_wake_audition_corpus(base_url)),
         ("wake_simulation", lambda: verify_safe.check_endpoint_wake_simulation(base_url)),
         ("speech_mute", lambda: verify_safe.check_endpoint_speech_mute(base_url)),
+        ("quiet_command", lambda: verify_safe.check_endpoint_quiet_command(base_url)),
         ("model_context", lambda: verify_safe.check_endpoint_model_context(base_url)),
         ("voice_loop_echo", lambda: verify_safe.check_endpoint_voice_loop_echo(base_url)),
         ("voice_loop_repeated_wake", lambda: verify_safe.check_endpoint_voice_loop_repeated_wake(base_url)),

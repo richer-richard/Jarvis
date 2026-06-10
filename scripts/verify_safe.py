@@ -1304,6 +1304,26 @@ def check_endpoint_speech_mute(base_url: str) -> str:
     return "speech mute blocked audio and preserved final reply text"
 
 
+def check_endpoint_quiet_command(base_url: str) -> str:
+    original_status = get_json("/api/speech/mute", base_url=base_url)
+    original_muted = bool(original_status.get("muted", False))
+    data = post_json(
+        "/api/command",
+        {"command": "status", "suppress_speech": True},
+        base_url=base_url,
+    )
+    speech = data.get("speech") or {}
+    status = get_json("/api/speech/mute", base_url=base_url)
+    require(data.get("tool") == "system.status", f"quiet command tool was {data.get('tool')}")
+    require(data.get("executed") is True, f"quiet command executed was {data.get('executed')}")
+    require(speech.get("status") == "suppressed_by_request", f"quiet speech status was {speech}")
+    require(speech.get("spoken") is False, f"quiet speech spoken was {speech}")
+    require(speech.get("reason") == "final", f"quiet speech reason was {speech}")
+    require(status.get("muted") is original_muted, "quiet command should not change global mute state")
+    require(status.get("active_speech") is False, f"quiet command left active speech: {status}")
+    return "quiet command returned visible status without speaking or changing mute state"
+
+
 def check_endpoint_prompt_injection_scan(base_url: str) -> str:
     data = post_json(
         "/api/command",

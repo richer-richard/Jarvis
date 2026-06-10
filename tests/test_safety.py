@@ -180,6 +180,7 @@ class VerifySafeScriptTests(unittest.TestCase):
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_wake_audition_corpus", side_effect=fake_check("wake_lab")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_wake_simulation", side_effect=fake_check("wake_sim")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_speech_mute", side_effect=fake_check("speech_mute")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_quiet_command", side_effect=fake_check("quiet_command")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_model_context", side_effect=fake_check("model_context")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_voice_loop_echo", side_effect=fake_check("voice_echo")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_voice_loop_repeated_wake", side_effect=fake_check("repeated_wake")), \
@@ -197,6 +198,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "wake_lab",
                 "wake_sim",
                 "speech_mute",
+                "quiet_command",
                 "model_context",
                 "voice_echo",
                 "repeated_wake",
@@ -601,6 +603,31 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(detail, "speech mute blocked audio and preserved final reply text")
         self.assertIn(("/api/command", {"command": "status"}), posts)
         self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
+
+    def test_verify_safe_checks_quiet_command_suppresses_speech_without_muting(self):
+        posts = []
+
+        def fake_post_json(path, payload, **_kwargs):
+            posts.append((path, payload))
+            if path == "/api/command":
+                return {
+                    "tool": "system.status",
+                    "executed": True,
+                    "result": {"reply": "Jarvis status."},
+                    "speech": {
+                        "status": "suppressed_by_request",
+                        "spoken": False,
+                        "reason": "final",
+                    },
+                }
+            raise AssertionError(f"unexpected POST {path}")
+
+        with patch("scripts.verify_safe.post_json", side_effect=fake_post_json), \
+             patch("scripts.verify_safe.get_json", return_value={"muted": False, "active_speech": False}):
+            detail = verify_safe.check_endpoint_quiet_command("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "quiet command returned visible status without speaking or changing mute state")
+        self.assertEqual(posts, [("/api/command", {"command": "status", "suppress_speech": True})])
 
     def test_verify_safe_checks_voice_loop_echo(self):
         posts = []
