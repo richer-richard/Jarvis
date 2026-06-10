@@ -176,6 +176,15 @@ final class JarvisShellModel: ObservableObject {
             recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
             wakeListener.stop()
         } else {
+            let preflight = JarvisPermissionService.wakeStartPreflight()
+            guard preflight.allowed else {
+                isWakeListening = false
+                wakeModeText = "Wake Off"
+                wakeDetailText = preflight.detail
+                recordWakeEvent("listener_start_blocked", detail: preflight.detail)
+                messages.append(ChatMessage(role: .jarvis, text: preflight.message, detail: "Wake not started"))
+                return
+            }
             recordWakeEvent("listener_start_requested", detail: wakeDetailText)
             wakeListener.start()
         }

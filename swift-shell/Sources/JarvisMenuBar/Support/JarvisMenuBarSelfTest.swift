@@ -293,6 +293,40 @@ enum JarvisMenuBarSelfTest {
         guard summary.contains("/\(expectedIds.count) ready") else {
             throw SelfTestError.failed("Permission summary did not include all readiness rows: \(summary)")
         }
+        let readyMicrophone = PermissionReadiness(
+            id: "microphone",
+            label: "Microphone",
+            state: "Ready",
+            detail: "Ready",
+            isReady: true
+        )
+        let readySpeech = PermissionReadiness(
+            id: "speech-recognition",
+            label: "Speech Recognition",
+            state: "Ready",
+            detail: "Ready",
+            isReady: true
+        )
+        let missingSpeech = PermissionReadiness(
+            id: "speech-recognition",
+            label: "Speech Recognition",
+            state: "Not requested",
+            detail: "Missing",
+            isReady: false
+        )
+        guard JarvisPermissionService.wakeStartPreflight(
+            microphone: readyMicrophone,
+            speechRecognition: readySpeech
+        ).allowed else {
+            throw SelfTestError.failed("Wake preflight should allow already-granted voice permissions.")
+        }
+        let blockedWake = JarvisPermissionService.wakeStartPreflight(
+            microphone: readyMicrophone,
+            speechRecognition: missingSpeech
+        )
+        guard !blockedWake.allowed, blockedWake.message.contains("I cannot start Hey Jarvis yet") else {
+            throw SelfTestError.failed("Wake preflight should block without prompting when speech permission is missing.")
+        }
 
         print("Jarvis permission self-test passed")
         print(summary)

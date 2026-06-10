@@ -72,6 +72,7 @@ SHIPPED_ITEMS = [
     "The native audio tap now uses a non-actor sink so Core Audio's realtime callback does not inherit MainActor isolation.",
     "Hey Jarvis now pauses after immediate silent Apple Speech endings instead of repeatedly flashing the menu bar while it restarts.",
     "When Hey Jarvis pauses itself for stability, the app now adds a visible chat line explaining what happened.",
+    "Start Hey Jarvis now preflights Microphone and Speech Recognition readiness and refuses with a visible Jarvis message instead of triggering permission prompts when either is missing.",
     "The master report and workboard now have read-only loopback URLs at /overnight-report/ and /overnight-workboard/.",
 ]
 
@@ -79,6 +80,7 @@ PROOF_ITEMS = [
     "Python safety suite: 444/444 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
+    "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
     "After Leo asked for no more permission prompts, the overnight checks stayed to no-prompt paths: Python suite, Swift self-test, live report route, wake lab route, speech mute alignment, model-context diagnostic, and voice-loop echo.",
     "Live verifier now checks that muted final speech preserves a substantial prefix of the final visible reply.",

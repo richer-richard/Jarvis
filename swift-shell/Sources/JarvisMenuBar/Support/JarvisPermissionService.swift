@@ -24,6 +24,30 @@ enum JarvisPermissionService {
         return "App perms: \(readyCount)/\(permissions.count) ready"
     }
 
+    static func wakeStartPreflight() -> WakeStartPreflight {
+        wakeStartPreflight(microphone: microphoneStatus(), speechRecognition: speechRecognitionStatus())
+    }
+
+    static func wakeStartPreflight(
+        microphone: PermissionReadiness,
+        speechRecognition: PermissionReadiness
+    ) -> WakeStartPreflight {
+        let blockers = [microphone, speechRecognition].filter { !$0.isReady }
+        guard !blockers.isEmpty else {
+            return WakeStartPreflight(
+                allowed: true,
+                message: "Hey Jarvis can start.",
+                detail: "Microphone and Speech Recognition are ready."
+            )
+        }
+        let labels = blockers.map { "\($0.label) is \($0.state.lowercased())" }.joined(separator: "; ")
+        return WakeStartPreflight(
+            allowed: false,
+            message: "I cannot start Hey Jarvis yet. \(labels). Open Permissions and grant them first.",
+            detail: labels
+        )
+    }
+
     private static func microphoneStatus() -> PermissionReadiness {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -214,4 +238,10 @@ struct PermissionReadiness: Identifiable, Equatable {
     let state: String
     let detail: String
     let isReady: Bool
+}
+
+struct WakeStartPreflight: Equatable {
+    let allowed: Bool
+    let message: String
+    let detail: String
 }
