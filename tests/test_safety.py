@@ -246,6 +246,42 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn('href="../../output/playwright/"', report)
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
+        self.assertIn("closed-loop voice QA", report)
+
+    def test_render_overnight_status_reads_latest_voice_loop_qa(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            voice_dir = root / "runtime" / "voice_loop_qa"
+            passed_dir = voice_dir / "20260610-225124"
+            failed_dir = voice_dir / "20260610-230440"
+            passed_dir.mkdir(parents=True)
+            failed_dir.mkdir(parents=True)
+            (passed_dir / "report.json").write_text(
+                json.dumps(
+                    {
+                        "result": {
+                            "status": "passed",
+                            "command_transcript": "Hey Jarvis status",
+                            "routed_command": "status",
+                            "reply_similarity": 0.94,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (failed_dir / "report.json").write_text(
+                json.dumps({"result": {"status": "failed", "reply_similarity": 0.0}}),
+                encoding="utf-8",
+            )
+            with patch("scripts.render_overnight_status.PROJECT_ROOT", root):
+                result = render_overnight_status.latest_voice_loop_qa()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["label"], "passed")
+        self.assertEqual(result["path"], "runtime/voice_loop_qa/20260610-225124/report.json")
+        self.assertEqual(result["command_transcript"], "Hey Jarvis status")
+        self.assertEqual(result["routed_command"], "status")
+        self.assertEqual(result["reply_similarity"], 0.94)
 
     def test_verify_safe_checks_overnight_report_routes(self):
         headers = {
@@ -4538,6 +4574,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("detect_wake_command", script_source)
         self.assertIn("faster_whisper", script_source)
         self.assertIn("LOCAL_STT_PYTHON", script_source)
+        self.assertIn("--stt-provider", script_source)
+        self.assertIn('choices=("auto", "apple", "local")', script_source)
+        self.assertIn('if provider == "local"', script_source)
         self.assertIn("open\",", script_source)
         self.assertIn("01-command.wav", script_source)
         self.assertIn("02-command-local-stt.json", script_source)

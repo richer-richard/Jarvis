@@ -133,6 +133,12 @@ def main() -> int:
     parser.add_argument("--output-dir", default=str(REPORT_DIR))
     parser.add_argument("--length-scale", type=float, default=0.85)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--stt-provider",
+        choices=("auto", "apple", "local"),
+        default="auto",
+        help="auto tries Apple Speech first, apple uses only the app-bundle Speech path, local uses faster-whisper only.",
+    )
     args = parser.parse_args()
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -145,6 +151,7 @@ def main() -> int:
         run_dir=run_dir,
         length_scale=args.length_scale,
         timeout=args.timeout,
+        stt_provider=args.stt_provider,
     )
 
     report_path = run_dir / "report.json"
@@ -169,6 +176,7 @@ def run_voice_loop(
     run_dir: Path,
     length_scale: float,
     timeout: float,
+    stt_provider: str,
 ) -> dict[str, Any]:
     started = time.monotonic()
     command_audio = run_dir / "01-command.wav"
@@ -182,7 +190,7 @@ def run_voice_loop(
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "base_url": base_url,
         "run_dir": str(run_dir),
-        "input": {"command_text": command_text, "length_scale": length_scale},
+        "input": {"command_text": command_text, "length_scale": length_scale, "stt_provider": stt_provider},
         "artifacts": {
             "command_audio": str(command_audio),
             "command_stt": str(command_stt),
@@ -200,6 +208,7 @@ def run_voice_loop(
             apple_output_json=command_stt,
             local_output_json=command_local_stt,
             timeout=timeout,
+            provider=stt_provider,
         )
         command_transcript = str(command_transcription.get("transcript") or "").strip()
         route = route_transcript(command_transcript)
@@ -222,6 +231,7 @@ def run_voice_loop(
             apple_output_json=reply_stt,
             local_output_json=reply_local_stt,
             timeout=timeout,
+            provider=stt_provider,
         )
         reply_transcript = str(reply_transcription.get("transcript") or "").strip()
         similarity = text_similarity(visible_reply, reply_transcript)
@@ -390,7 +400,11 @@ def transcribe_audio(
     apple_output_json: Path,
     local_output_json: Path,
     timeout: float,
+    provider: str,
 ) -> dict[str, Any]:
+    if provider == "local":
+        return transcribe_with_local_stt(audio_path, local_output_json, timeout=timeout)
+
     try:
         apple = transcribe_with_jarvis_app(audio_path, apple_output_json, timeout=timeout)
     except Exception as error:
@@ -404,6 +418,8 @@ def transcribe_audio(
         apple_output_json.write_text(json.dumps(apple, indent=2, ensure_ascii=False), encoding="utf-8")
     apple["provider"] = "apple_speech"
     if apple.get("status") == "completed" and str(apple.get("transcript") or "").strip():
+        return apple
+    if provider == "apple":
         return apple
 
     local = transcribe_with_local_stt(audio_path, local_output_json, timeout=timeout)

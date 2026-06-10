@@ -61,7 +61,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 410/410 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, and fuzzy-wake work.",
+    "Python safety suite: 418/418 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -93,6 +93,9 @@ PROOF_ITEMS = [
     "Swift source contract now requires ignored repeated-wake and wake-greeting-echo events to be present in Copy Chat JSON.",
     "Swift self-tests now require fuzzy matching for okay jervis as well as hey jervis, with detector diagnostics exposed for pasted JSON.",
     "Live verifier now probes voice.wake_debug with pasted Copy Chat JSON and requires no audio recording.",
+    "Closed-loop voice QA now synthesizes a command with Piper, transcribes it, routes it through Jarvis while muted, synthesizes the visible reply, and compares the spoken transcript back to the screen text.",
+    "Latest voice-loop QA passed with Hey Jarvis status routed to status and 0.94 reply similarity.",
+    "A 35-second app-bundle Hey Jarvis soak on Jarvis 0.1.279 returned successfully without a new crash report.",
 ]
 
 TRY_ITEMS = [
@@ -111,6 +114,7 @@ RISK_ITEMS = [
     "Real microphone pickup, false wakes, and room-noise reliability still need Leo testing.",
     "Browser loopback noise trials are useful but not a perfect model of a real room.",
     "Speech Recognition permission can still block the native listener until macOS grants it to the current Jarvis bundle.",
+    "Local-only faster-whisper STT is installed as a no-permission fallback path, but its first model cache hit a network reset and needs a stable retry before it can replace Apple Speech in overnight QA.",
     "The current wake phrase is experimental; it is not yet personalized to Leo's voice.",
     "Very technical diagnostics are still intentionally speech-silent so Jarvis does not read backend internals aloud.",
     "GitHub main still preserves the older small-tree history; the full Jarvis folder is published on the overnight branch and should be promoted deliberately.",
@@ -127,6 +131,8 @@ SUPPORTING_FILES = [
     ("runtime/model_benchmarks/", "Fast latency smoke reports"),
     ("runtime/conversation_context/", "Conversation-context smoke reports"),
     ("runtime/wake_threshold/", "Wake-threshold smoke reports"),
+    ("runtime/voice_loop_qa/latest.json", "Latest closed-loop voice QA report"),
+    ("runtime/voice_loop_qa/", "Closed-loop voice QA artifacts"),
     ("output/playwright/", "Visual QA screenshots"),
 ]
 
@@ -154,6 +160,7 @@ def build_context(base_url: str) -> dict[str, Any]:
     latency = latest_latency_smoke()
     context_smoke = latest_context_smoke()
     wake_threshold = latest_wake_threshold_smoke()
+    voice_loop = latest_voice_loop_qa()
     now = datetime.now(BEIJING)
     version = str(app.get("version") or "unknown")
     build = str(app.get("build") or "unknown")
@@ -176,12 +183,13 @@ def build_context(base_url: str) -> dict[str, Any]:
         "latency": latency,
         "context_smoke": context_smoke,
         "wake_threshold": wake_threshold,
+        "voice_loop": voice_loop,
         "worker_source_kind": app.get("worker_source_kind") or "unknown",
         "launch_mode": app.get("launch_mode") or "unknown",
         "runtime_pid": runtime.get("pid") or "unknown",
         "fast_model": fast_model,
         "shipped": SHIPPED_ITEMS,
-        "proof": proof_items_with_verification(verification, latency, context_smoke, wake_threshold),
+        "proof": proof_items_with_verification(verification, latency, context_smoke, wake_threshold, voice_loop),
         "try": TRY_ITEMS,
         "risks": RISK_ITEMS,
         "supporting": SUPPORTING_FILES,
@@ -193,6 +201,7 @@ def proof_items_with_verification(
     latency: dict[str, Any] | None = None,
     context_smoke: dict[str, Any] | None = None,
     wake_threshold: dict[str, Any] | None = None,
+    voice_loop: dict[str, Any] | None = None,
 ) -> list[str]:
     items = list(PROOF_ITEMS)
     if verification.get("path"):
@@ -219,6 +228,13 @@ def proof_items_with_verification(
             f"{wake_threshold['label']}, {wake_threshold['passed']}/{wake_threshold['total']} cases, "
             f"closest reject {wake_threshold['closest_reject_label']} at {wake_threshold['closest_reject_score']:.6f} "
             f"({wake_threshold['path']})."
+        )
+    if voice_loop and voice_loop.get("path"):
+        items.append(
+            "Latest closed-loop voice QA: "
+            f"{voice_loop['label']}, command transcript {voice_loop['command_transcript']!r}, "
+            f"routed command {voice_loop['routed_command']!r}, reply similarity {voice_loop['reply_similarity']:.3f} "
+            f"({voice_loop['path']})."
         )
     return items
 
@@ -354,6 +370,56 @@ def latest_wake_threshold_smoke() -> dict[str, Any]:
     }
 
 
+def latest_voice_loop_qa() -> dict[str, Any]:
+    report_root = PROJECT_ROOT / "runtime" / "voice_loop_qa"
+    reports = sorted(report_root.glob("*/report.json"))
+    if not reports:
+        return {
+            "ok": False,
+            "path": "",
+            "label": "none",
+            "command_transcript": "",
+            "routed_command": "",
+            "reply_similarity": 0.0,
+        }
+    latest = reports[-1]
+    latest_data: dict[str, Any] | None = None
+    for candidate in reversed(reports):
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        if latest_data is None:
+            latest = candidate
+            latest_data = data
+        if result.get("status") == "passed":
+            latest = candidate
+            latest_data = data
+            break
+    if latest_data is None:
+        return {
+            "ok": False,
+            "path": str(reports[-1]),
+            "label": "unreadable",
+            "command_transcript": "",
+            "routed_command": "",
+            "reply_similarity": 0.0,
+        }
+    data = latest_data
+    result = data.get("result") if isinstance(data.get("result"), dict) else {}
+    ok = result.get("status") == "passed"
+    relative = str(latest.relative_to(PROJECT_ROOT))
+    return {
+        "ok": ok,
+        "path": relative,
+        "label": "passed" if ok else "needs attention",
+        "command_transcript": str(result.get("command_transcript") or ""),
+        "routed_command": str(result.get("routed_command") or ""),
+        "reply_similarity": float(result.get("reply_similarity") or 0.0),
+    }
+
+
 def nested(data: dict[str, Any], *keys: str) -> dict[str, Any]:
     current: Any = data
     for key in keys:
@@ -456,6 +522,9 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Fix final-answer speech coverage", "Normal final replies speak after the working line instead of staying silent."),
         ("done", "Protect streaming answer text", "Late status events can no longer replace visible answer text."),
         ("done", "Add speech preview diagnostics", "Speech JSON now records the sanitized text_preview requested from TTS."),
+        ("done", "Add closed-loop voice QA", "The harness compares Piper audio, STT transcript, Jarvis reply text, and spoken reply transcript."),
+        ("done", "Add local STT fallback hook", "faster-whisper is installed; the first no-permission model cache needs a stable network retry."),
+        ("done", "Soak-test wake listener", "Jarvis 0.1.279 completed a 35-second app-bundle wake soak without a new crash report."),
         ("done", "Add report loopback URLs", "The master report and workboard are reachable from the running Jarvis worker."),
         ("done", "Add menu report shortcut", "The menu bar can open the overnight report route directly."),
         ("working", "Next: real-world Leo testing", "Needs actual microphone, room noise, and false-wake feedback."),
@@ -479,8 +548,8 @@ def render_workboard(context: dict[str, Any]) -> str:
   <main>
     <section>
       <h2>Current Focus</h2>
-      <p>Jarvis {e(context["version"])} is live with experimental Hey Jarvis, menu-bar mute, menu-bar wake controls, a refreshed wake lab, and broader final-answer speech. The remaining work is real-world listening quality.</p>
-      <div class="meter"><div style="width: 88%"></div></div>
+      <p>Jarvis {e(context["version"])} is live with experimental Hey Jarvis, menu-bar mute, menu-bar wake controls, a refreshed wake lab, broader final-answer speech, and closed-loop voice QA. The remaining work is real-world listening quality.</p>
+      <div class="meter"><div style="width: 91%"></div></div>
     </section>
     <section>
       <h2>Checklist</h2>
@@ -537,7 +606,7 @@ def promise_section(context: dict[str, Any]) -> str:
     promises = [
         ("Wakeable", "Hey Jarvis is now a real app-side test surface, not just a plan."),
         ("Interruptible", "Shut Up stops speech, and one-breath commands no longer double-speak the wake prompt."),
-        ("Inspectable", "The report, workboard, wake lab, verifier, speech preview, and chat JSON give us usable evidence."),
+        ("Inspectable", "The report, workboard, wake lab, verifier, closed-loop voice QA, and chat JSON give us usable evidence."),
     ]
     cards = "".join(
         f"<div class=\"promise\"><strong>{e(title)}</strong><span>{e(body)}</span></div>"
@@ -558,7 +627,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 410/410 Python tests, Swift self-tests, and live muted speech probes.{latency_text}",
+            f"{context['verification']['label']} verifier, 418/418 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",
