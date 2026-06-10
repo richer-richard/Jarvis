@@ -4944,6 +4944,23 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("self.activeTurnID == turnID", model_source)
         self.assertIn("self.activeProgressNudgeIDs.insert(message.id)", model_source)
 
+    def test_swift_submit_rejects_overlapping_typed_commands(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("private static let busyReplyText", model_source)
+        self.assertIn("guard !isBusy else", model_source)
+        self.assertIn('chatExportText = "Busy"', model_source)
+        self.assertIn('detail: "Busy"', model_source)
+        self.assertIn("isBusy = true", model_source)
+        self.assertLess(model_source.index("guard !isBusy else"), model_source.index("messages.append(ChatMessage(role: .user"))
+
     def test_swift_permission_footer_names_app_scope(self):
         service_source = (
             PROJECT_ROOT

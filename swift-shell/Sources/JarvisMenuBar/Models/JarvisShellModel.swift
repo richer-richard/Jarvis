@@ -50,6 +50,7 @@ final class JarvisShellModel: ObservableObject {
     private var activeTurnID: UUID?
     private var activeProgressNudgeIDs: Set<UUID> = []
     var onSpeechMuteStateChanged: (() -> Void)?
+    private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
     private static let smokeTestPrompts = [
         "hello Jarvis",
         "tell me a short joke",
@@ -380,6 +381,13 @@ final class JarvisShellModel: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
+        guard !isBusy else {
+            state = "Working"
+            chatExportText = "Busy"
+            messages.append(ChatMessage(role: .jarvis, text: Self.busyReplyText, detail: "Busy"))
+            return
+        }
+        isBusy = true
         messages.append(ChatMessage(role: .user, text: trimmed))
         command = ""
 
