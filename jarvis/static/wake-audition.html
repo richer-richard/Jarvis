@@ -13,7 +13,7 @@
         <div>
           <p class="eyebrow">Jarvis Voice Lab</p>
           <h1>Hey Jarvis Wake Audition</h1>
-          <p class="header-note">Record your wake phrase, check whether Jarvis detects it, then save the run or test it with noise.</p>
+          <p class="header-note">Use Record Sample when you want a saveable audio test. Use Start Live Test only for a quick transcript check.</p>
         </div>
         <div class="status-row">
           <span id="api-status" class="pill">API</span>
@@ -58,8 +58,8 @@
           <button id="record-sample" type="button">Record Sample</button>
           <button id="stop-recording" type="button" disabled>Finish Recording</button>
           <button id="save-sample" type="button" disabled>Save Run</button>
-          <button id="start-listener" type="button">Start Live Test</button>
-          <button id="stop-listener" type="button" disabled>Stop Live Test</button>
+          <button id="start-listener" type="button" title="Quick transcript check only; it does not save audio.">Start Live Test</button>
+          <button id="stop-listener" type="button" title="Stop the quick transcript check." disabled>Stop Live Test</button>
           <button id="copy-export" type="button">Copy Results JSON</button>
         </div>
       </section>
