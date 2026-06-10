@@ -67,7 +67,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 421/421 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, and voice-QA work.",
+    "Python safety suite: 423/423 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -146,6 +146,7 @@ SUPPORTING_FILES = [
     ("http://127.0.0.1:8765/wake-audition/", "Hey Jarvis wake audition lab"),
     ("runtime/wake_audition/samples/", "Locally saved wake samples"),
     ("runtime/verification/", "Safe verifier reports"),
+    ("runtime/verification_no_prompt/", "No-prompt live verifier reports"),
     ("runtime/model_benchmarks/", "Fast latency smoke reports"),
     ("runtime/conversation_context/", "Conversation-context smoke reports"),
     ("runtime/wake_threshold/", "Wake-threshold smoke reports"),
@@ -175,6 +176,7 @@ def build_context(base_url: str) -> dict[str, Any]:
     runtime = nested(health, "status", "runtime")
     fast_model = nested(health, "status", "fast_model")
     verification = latest_verification()
+    no_prompt_verification = latest_no_prompt_verification()
     latency = latest_latency_smoke()
     context_smoke = latest_context_smoke()
     wake_threshold = latest_wake_threshold_smoke()
@@ -198,6 +200,7 @@ def build_context(base_url: str) -> dict[str, Any]:
         "upstream": upstream,
         "git_sync": git_sync,
         "verification": verification,
+        "no_prompt_verification": no_prompt_verification,
         "latency": latency,
         "context_smoke": context_smoke,
         "wake_threshold": wake_threshold,
@@ -207,7 +210,14 @@ def build_context(base_url: str) -> dict[str, Any]:
         "runtime_pid": runtime.get("pid") or "unknown",
         "fast_model": fast_model,
         "shipped": SHIPPED_ITEMS,
-        "proof": proof_items_with_verification(verification, latency, context_smoke, wake_threshold, voice_loop),
+        "proof": proof_items_with_verification(
+            verification,
+            no_prompt_verification,
+            latency,
+            context_smoke,
+            wake_threshold,
+            voice_loop,
+        ),
         "try": TRY_ITEMS,
         "risks": RISK_ITEMS,
         "supporting": SUPPORTING_FILES,
@@ -216,6 +226,7 @@ def build_context(base_url: str) -> dict[str, Any]:
 
 def proof_items_with_verification(
     verification: dict[str, Any],
+    no_prompt_verification: dict[str, Any] | None = None,
     latency: dict[str, Any] | None = None,
     context_smoke: dict[str, Any] | None = None,
     wake_threshold: dict[str, Any] | None = None,
@@ -225,6 +236,12 @@ def proof_items_with_verification(
     if verification.get("path"):
         items.append(
             f"Latest verifier artifact: {verification['path']} with {verification['passed']}/{verification['total']} checks."
+        )
+    if no_prompt_verification and no_prompt_verification.get("path"):
+        items.append(
+            "Latest no-prompt live verifier: "
+            f"{no_prompt_verification['path']} with {no_prompt_verification['passed']}/{no_prompt_verification['total']} checks, "
+            "covering only routes that do not request microphone, Speech Recognition, Screen Recording, Accessibility, app launch, or GitHub push."
         )
     if latency and latency.get("path"):
         items.append(
@@ -296,6 +313,41 @@ def latest_verification() -> dict[str, Any]:
         "path": relative,
         "passed": passed,
         "total": total,
+        "label": f"{passed}/{total} passed" if total else "empty",
+    }
+
+
+def latest_no_prompt_verification() -> dict[str, Any]:
+    reports = sorted((PROJECT_ROOT / "runtime" / "verification_no_prompt").glob("verify-no-prompt-*.json"))
+    if not reports:
+        return {"ok": False, "path": "", "passed": 0, "total": 0, "label": "none"}
+    latest = reports[-1]
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"ok": False, "path": str(latest), "passed": 0, "total": 0, "label": "unreadable"}
+    results = data.get("results") if isinstance(data.get("results"), list) else []
+    passed = sum(1 for item in results if isinstance(item, dict) and item.get("passed"))
+    total = len(results)
+    policy = data.get("policy") if isinstance(data.get("policy"), dict) else {}
+    policy_safe = not any(
+        bool(policy.get(key))
+        for key in (
+            "opens_apps",
+            "requests_microphone",
+            "requests_speech_recognition",
+            "uses_screen_capture",
+            "uses_accessibility",
+            "pushes_to_network_repo",
+        )
+    )
+    relative = str(latest.relative_to(PROJECT_ROOT))
+    return {
+        "ok": bool(data.get("ok")) and policy_safe and total > 0 and passed == total,
+        "path": relative,
+        "passed": passed,
+        "total": total,
+        "policy_safe": policy_safe,
         "label": f"{passed}/{total} passed" if total else "empty",
     }
 
@@ -692,7 +744,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 421/421 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 423/423 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

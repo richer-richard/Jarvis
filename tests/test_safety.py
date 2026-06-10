@@ -117,7 +117,7 @@ from jarvis.tools import (
     wake_status,
 )
 from jarvis.wake import WakeSession, detect_wake_command, score_wake_transcript
-from scripts import render_overnight_status, smoke_conversation_context, smoke_wake_threshold, verify_safe, voice_loop_qa
+from scripts import render_overnight_status, smoke_conversation_context, smoke_wake_threshold, verify_no_prompt, verify_safe, voice_loop_qa
 from scripts.morning_status import (
     MAX_VERIFICATION_AGE_SECONDS as MORNING_MAX_VERIFICATION_AGE_SECONDS,
     base_url_from_environment,
@@ -156,6 +156,40 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(code, 2)
         run_checks.assert_not_called()
         self.assertIn("Unknown argument: --what", stderr.getvalue())
+
+    def test_no_prompt_verifier_runs_only_safe_live_checks(self):
+        calls = []
+
+        def fake_check(name):
+            def inner(_base_url):
+                calls.append(name)
+                return f"{name} ok"
+            return inner
+
+        with patch("scripts.verify_no_prompt.check_worker_health", return_value="worker ok"), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_overnight_report_routes", side_effect=fake_check("overnight")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_wake_audition_corpus", side_effect=fake_check("wake_lab")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_wake_simulation", side_effect=fake_check("wake_sim")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_speech_mute", side_effect=fake_check("speech_mute")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_model_context", side_effect=fake_check("model_context")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_voice_loop_echo", side_effect=fake_check("voice_echo")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_voice_loop_repeated_wake", side_effect=fake_check("repeated_wake")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_wake_debug", side_effect=fake_check("wake_debug")):
+            report = verify_no_prompt.run_no_prompt_checks("http://127.0.0.1:8765")
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["passed"], report["total"])
+        self.assertEqual(report["schema"], "jarvis.no_prompt_verification.v1")
+        self.assertEqual(
+            calls,
+            ["overnight", "wake_lab", "wake_sim", "speech_mute", "model_context", "voice_echo", "repeated_wake", "wake_debug"],
+        )
+        policy = report["policy"]
+        self.assertFalse(policy["opens_apps"])
+        self.assertFalse(policy["requests_microphone"])
+        self.assertFalse(policy["requests_speech_recognition"])
+        self.assertFalse(policy["uses_screen_capture"])
+        self.assertFalse(policy["uses_accessibility"])
 
     def test_conversation_context_smoke_detects_history_use(self):
         self.assertTrue(smoke_conversation_context.context_reply_uses_history("Correct, x is 3."))
@@ -238,6 +272,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             "upstream": "origin/codex/test",
             "git_sync": "up to date",
             "verification": {"label": "91/91 passed", "path": "runtime/verification/example.json", "passed": 91, "total": 91},
+            "no_prompt_verification": {"label": "9/9 passed", "path": "runtime/verification_no_prompt/example.json", "passed": 9, "total": 9},
             "latency": {
                 "label": "passed 3/3",
                 "path": "runtime/model_benchmarks/example.json",
@@ -270,6 +305,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8765/overnight-workboard/", report)
         self.assertIn("http://127.0.0.1:8765/wake-audition/", report)
         self.assertIn(str(PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"), report)
+        self.assertIn(str(PROJECT_ROOT / "runtime" / "verification_no_prompt"), report)
         self.assertIn(str(PROJECT_ROOT / "runtime" / "model_benchmarks"), report)
         self.assertIn("Current fast smoke max first visible 1.234s", report)
         self.assertIn(str(PROJECT_ROOT / "output" / "playwright"), report)
@@ -277,6 +313,40 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
         self.assertIn("closed-loop voice QA", report)
+
+    def test_render_overnight_status_reads_latest_no_prompt_verification(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            verify_dir = root / "runtime" / "verification_no_prompt"
+            verify_dir.mkdir(parents=True)
+            (verify_dir / "verify-no-prompt-20260611-012345.json").write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "policy": {
+                            "opens_apps": False,
+                            "requests_microphone": False,
+                            "requests_speech_recognition": False,
+                            "uses_screen_capture": False,
+                            "uses_accessibility": False,
+                            "pushes_to_network_repo": False,
+                        },
+                        "results": [
+                            {"name": "worker_health", "passed": True},
+                            {"name": "speech_mute", "passed": True},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("scripts.render_overnight_status.PROJECT_ROOT", root):
+                result = render_overnight_status.latest_no_prompt_verification()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["path"], "runtime/verification_no_prompt/verify-no-prompt-20260611-012345.json")
+        self.assertEqual(result["passed"], 2)
+        self.assertEqual(result["total"], 2)
+        self.assertTrue(result["policy_safe"])
 
     def test_render_overnight_status_reads_latest_voice_loop_qa(self):
         with tempfile.TemporaryDirectory() as temp_dir:
