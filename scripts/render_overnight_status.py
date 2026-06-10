@@ -779,6 +779,7 @@ def pill_row(context: dict[str, Any], *, refresh_seconds: int) -> str:
         f"Branch: {context['branch']}",
         f"GitHub: {context['upstream'] or 'not published'} ({context['git_sync']})",
         f"Verification: {context['verification']['label']}",
+        f"No-prompt: {context['no_prompt_verification']['label']}",
         f"Launch: {context['launch_mode']}",
     ]
     return '<div class="pills">' + "".join(f'<span class="pill">{e(pill)}</span>' for pill in pills) + "</div>"

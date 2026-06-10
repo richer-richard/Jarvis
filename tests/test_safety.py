@@ -410,6 +410,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Jarvis 0.1.test build 999", report)
         self.assertIn("Source commit: abc1234", report)
         self.assertIn("GitHub: origin/codex/test (up to date)", report)
+        self.assertIn("No-prompt: 9/9 passed", report)
         self.assertIn("http://127.0.0.1:8765/overnight-report/", report)
         self.assertIn("http://127.0.0.1:8765/overnight-workboard/", report)
         self.assertIn("http://127.0.0.1:8765/wake-audition/", report)
