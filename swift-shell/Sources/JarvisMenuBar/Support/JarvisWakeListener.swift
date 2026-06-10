@@ -15,9 +15,12 @@ struct JarvisWakeListenerSnapshot: Equatable {
 @MainActor
 final class JarvisWakeListener {
     private static let wakeSimilarityThreshold = 0.86
-    private static let restartStormLimit = 4
-    private static let restartStormWindowSeconds: TimeInterval = 18
+    private static let restartStormLimit = 2
+    private static let restartStormWindowSeconds: TimeInterval = 24
     private static let minimumStableRecognitionSeconds: TimeInterval = 8
+    private static let wakeRestartDelaySeconds: TimeInterval = 2.5
+    private static let commandRestartDelaySeconds: TimeInterval = 1.2
+    private static let postCommandRestartDelaySeconds: TimeInterval = 4.0
 
     var onStateChange: ((JarvisWakeListenerSnapshot) -> Void)?
     var onWakeDetected: ((String) -> Void)?
@@ -56,6 +59,7 @@ final class JarvisWakeListener {
     private var recentRestartTimes: [Date] = []
     private var currentRecognitionStartedAt: Date?
     private var currentSessionHeardTranscript = false
+    private var lastPublishedSnapshot: JarvisWakeListenerSnapshot?
 
     #if canImport(Speech)
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
@@ -259,7 +263,10 @@ final class JarvisWakeListener {
                 )
                 return
             }
-            scheduleRestart(after: phase == .awaitingCommand ? 0.8 : 1.2, generation: generation)
+            scheduleRestart(
+                after: phase == .awaitingCommand ? Self.commandRestartDelaySeconds : Self.wakeRestartDelaySeconds,
+                generation: generation
+            )
         }
     }
 
@@ -325,7 +332,7 @@ final class JarvisWakeListener {
         onCommandCaptured?(cleanedCommand, transcript)
         if shouldKeepRunning {
             phase = .waitingForWake
-            scheduleRestart(after: 3.0, countsTowardStability: false)
+            scheduleRestart(after: Self.postCommandRestartDelaySeconds, countsTowardStability: false)
         }
     }
 
@@ -398,7 +405,12 @@ final class JarvisWakeListener {
     #endif
 
     private func publish() {
-        onStateChange?(snapshot)
+        let currentSnapshot = snapshot
+        guard currentSnapshot != lastPublishedSnapshot else {
+            return
+        }
+        lastPublishedSnapshot = currentSnapshot
+        onStateChange?(currentSnapshot)
     }
 
     private struct Detection {
@@ -445,6 +457,25 @@ final class JarvisWakeListener {
         let priorRestartTimes = priorRestartAges.map { now.addingTimeInterval(-$0) }
         let decision = restartStormDecision(priorRestartTimes: priorRestartTimes, now: now)
         return (decision.restartTimes.count, decision.shouldPause)
+    }
+
+    static func testRestartDelaySeconds(awaitingCommand: Bool, afterCommandCapture: Bool = false) -> TimeInterval {
+        if afterCommandCapture {
+            return postCommandRestartDelaySeconds
+        }
+        return awaitingCommand ? commandRestartDelaySeconds : wakeRestartDelaySeconds
+    }
+
+    func testDuplicatePublishCount() -> Int {
+        var count = 0
+        let previousHandler = onStateChange
+        onStateChange = { _ in
+            count += 1
+        }
+        publish()
+        publish()
+        onStateChange = previousHandler
+        return count
     }
 
     static func testSilentEndDecision(

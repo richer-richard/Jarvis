@@ -63,6 +63,8 @@ SHIPPED_ITEMS = [
     "Typed submissions now refuse overlapping turns while Jarvis is busy, which prevents orphaned progress nudges from a second command race.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
     "Copy Chat JSON turn traces now include speech-alignment diagnostics that flag tiny TTS previews such as Hello against longer visible answers.",
+    "Hey Jarvis now spaces out Apple Speech restarts and stops after the third close restart, reducing the menu-bar dictation flicker loop.",
+    "Hey Jarvis now de-duplicates identical listener snapshots before publishing them to the SwiftUI panel.",
     "Hey Jarvis now pauses after immediate silent Apple Speech endings instead of repeatedly flashing the menu bar while it restarts.",
     "When Hey Jarvis pauses itself for stability, the app now adds a visible chat line explaining what happened.",
     "The master report and workboard now have read-only loopback URLs at /overnight-report/ and /overnight-workboard/.",
@@ -117,6 +119,7 @@ PROOF_ITEMS = [
     "Swift self-tests now reject a tiny Hello TTS preview when the visible final answer is longer.",
     "Voice-loop QA tests now prove no-permission mode does not call the Apple Speech app path.",
     "Local-only voice QA now passes end to end with faster-whisper tiny.en: Hey Jarvis status routed to status and reply similarity cleared 0.90.",
+    "Swift self-tests now require less frantic wake restart timing, third-close-restart pause behavior, and duplicate wake snapshot suppression.",
     "The current live build launched cleanly after the anti-flicker cleanup.",
 ]
 
@@ -647,6 +650,8 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Complete local STT model cache", "faster-whisper tiny.en now has model.bin and passes no-permission voice QA."),
         ("done", "Fail closed on empty local STT", "If local STT returns no transcript, the QA harness stops instead of routing a fake status command."),
         ("done", "Soak-test wake listener", "Jarvis 0.1.279 completed a 35-second app-bundle wake soak without a new crash report."),
+        ("done", "Slow wake restart flicker", "Apple Speech restarts are spaced out and the third close restart pauses Hey Jarvis."),
+        ("done", "De-duplicate wake UI snapshots", "Identical listener states no longer republish to the SwiftUI panel."),
         ("done", "Pause wake restart storms", "If Apple Speech rapidly restarts the microphone engine, Jarvis pauses Hey Jarvis instead of flickering until it crashes."),
         ("done", "Pause silent Speech endings", "If Apple Speech ends immediately without hearing speech, Jarvis stops wake listening instead of restarting in the menu bar."),
         ("done", "Explain wake pauses visibly", "The chat now shows why Hey Jarvis paused instead of silently stopping."),
