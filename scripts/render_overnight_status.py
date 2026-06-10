@@ -58,11 +58,12 @@ SHIPPED_ITEMS = [
     "Streaming status updates can no longer overwrite an answer that has already started appearing on screen.",
     "Synthetic Still working progress rows are removed when the task finishes, so they do not remain below a completed answer.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
+    "Hey Jarvis now pauses after immediate silent Apple Speech endings instead of repeatedly flashing the menu bar while it restarts.",
     "The master report and workboard now have read-only loopback URLs at /overnight-report/ and /overnight-workboard/.",
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 419/419 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, and voice-QA work.",
+    "Python safety suite: 420/420 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -98,8 +99,9 @@ PROOF_ITEMS = [
     "Latest voice-loop QA passed with Hey Jarvis status routed to status and 0.94 reply similarity.",
     "A 35-second app-bundle Hey Jarvis soak on Jarvis 0.1.279 returned successfully without a new crash report.",
     "Native Hey Jarvis now pauses itself if Apple Speech enters a rapid microphone restart loop, preventing the menu-bar flicker from becoming a crash spiral.",
+    "Native Hey Jarvis also pauses if Apple Speech ends immediately without hearing speech, so a broken listener fails quiet instead of flickering.",
     "Local-only voice QA now fails closed: if STT returns an empty transcript, it does not route a fake status command.",
-    "The current live build launched cleanly after the stale-progress-row cleanup.",
+    "The current live build launched cleanly after the anti-flicker cleanup.",
 ]
 
 TRY_ITEMS = [
@@ -570,6 +572,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Fail closed on empty local STT", "If local STT returns no transcript, the QA harness stops instead of routing a fake status command."),
         ("done", "Soak-test wake listener", "Jarvis 0.1.279 completed a 35-second app-bundle wake soak without a new crash report."),
         ("done", "Pause wake restart storms", "If Apple Speech rapidly restarts the microphone engine, Jarvis pauses Hey Jarvis instead of flickering until it crashes."),
+        ("done", "Pause silent Speech endings", "If Apple Speech ends immediately without hearing speech, Jarvis stops wake listening instead of restarting in the menu bar."),
         ("done", "Add report loopback URLs", "The master report and workboard are reachable from the running Jarvis worker."),
         ("done", "Add menu report shortcut", "The menu bar can open the overnight report route directly."),
         ("working", "Next: real-world Leo testing", "Needs actual microphone, room noise, and false-wake feedback."),
@@ -672,7 +675,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 419/419 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 420/420 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

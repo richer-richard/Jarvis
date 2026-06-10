@@ -167,6 +167,18 @@ enum JarvisMenuBarSelfTest {
         guard restartStorm.count == 5, restartStorm.shouldPause else {
             throw SelfTestError.failed("Wake restart guard should pause rapid microphone restart storms.")
         }
+        guard JarvisWakeListener.testSilentEndDecision(sessionAgeSeconds: 1, heardTranscript: false) else {
+            throw SelfTestError.failed("Wake listener should pause after immediate silent recognition endings.")
+        }
+        guard !JarvisWakeListener.testSilentEndDecision(sessionAgeSeconds: 12, heardTranscript: false) else {
+            throw SelfTestError.failed("Wake listener should tolerate long stable silent recognition sessions.")
+        }
+        guard !JarvisWakeListener.testSilentEndDecision(sessionAgeSeconds: 1, heardTranscript: true) else {
+            throw SelfTestError.failed("Wake listener should not pause a session that already heard speech.")
+        }
+        guard JarvisWakeListener.testSilentEndDecision(sessionAgeSeconds: 1, heardTranscript: false, awaitingCommand: true) else {
+            throw SelfTestError.failed("Wake listener should pause immediate silent endings while waiting for a command.")
+        }
         guard !JarvisShellModel.shouldUseNativeVoiceStatus("tts status") else {
             throw SelfTestError.failed("TTS status should route to backend diagnostics.tts, not the native voice snapshot.")
         }

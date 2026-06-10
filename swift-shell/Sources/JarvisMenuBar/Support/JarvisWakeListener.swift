@@ -17,6 +17,7 @@ final class JarvisWakeListener {
     private static let wakeSimilarityThreshold = 0.86
     private static let restartStormLimit = 4
     private static let restartStormWindowSeconds: TimeInterval = 18
+    private static let minimumStableRecognitionSeconds: TimeInterval = 8
 
     var onStateChange: ((JarvisWakeListenerSnapshot) -> Void)?
     var onWakeDetected: ((String) -> Void)?
@@ -53,6 +54,8 @@ final class JarvisWakeListener {
     private var pendingCommand: String = ""
     private var recognitionGeneration = 0
     private var recentRestartTimes: [Date] = []
+    private var currentRecognitionStartedAt: Date?
+    private var currentSessionHeardTranscript = false
 
     #if canImport(Speech)
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
@@ -147,9 +150,7 @@ final class JarvisWakeListener {
         recognitionGeneration += 1
         let generation = recognitionGeneration
         guard recognizer.isAvailable else {
-            status = "Speech recognizer is not available"
-            publish()
-            scheduleRestart(after: 2.0, generation: generation)
+            pauseAfterUnstableRecognition(status: "Wake listener paused because Speech Recognition is not available")
             return
         }
 
@@ -169,12 +170,12 @@ final class JarvisWakeListener {
 
         recognitionRequest = request
         audioEngine = engine
+        currentRecognitionStartedAt = Date()
+        currentSessionHeardTranscript = false
         do {
             try engine.start()
         } catch {
-            status = "Microphone engine failed: \(error.localizedDescription)"
-            publish()
-            scheduleRestart(after: 2.0, generation: generation)
+            pauseAfterUnstableRecognition(status: "Wake listener paused because the microphone engine failed: \(error.localizedDescription)")
             return
         }
 
@@ -222,6 +223,8 @@ final class JarvisWakeListener {
             audioEngine.stop()
         }
         audioEngine = nil
+        currentRecognitionStartedAt = nil
+        currentSessionHeardTranscript = false
     }
 
     private func handleRecognition(transcript: String?, isFinal: Bool, hasError: Bool, generation: Int) {
@@ -229,6 +232,7 @@ final class JarvisWakeListener {
             return
         }
         if let transcript, !transcript.isEmpty {
+            currentSessionHeardTranscript = true
             lastTranscript = transcript
             switch phase {
             case .waitingForWake:
@@ -242,6 +246,17 @@ final class JarvisWakeListener {
         }
         if hasError || isFinal {
             guard shouldKeepRunning else {
+                return
+            }
+            let sessionAge = Date().timeIntervalSince(currentRecognitionStartedAt ?? Date())
+            if Self.shouldPauseAfterSilentRecognitionEnd(
+                heardTranscript: currentSessionHeardTranscript,
+                sessionAge: sessionAge,
+                phase: phase
+            ) {
+                pauseAfterUnstableRecognition(
+                    status: "Wake listener paused because Speech Recognition ended before hearing speech"
+                )
                 return
             }
             scheduleRestart(after: phase == .awaitingCommand ? 0.8 : 1.2, generation: generation)
@@ -304,6 +319,7 @@ final class JarvisWakeListener {
         pendingCommand = ""
         status = "Command captured"
         phase = .restarting
+        currentSessionHeardTranscript = true
         stopRecognitionSession()
         publish()
         onCommandCaptured?(cleanedCommand, transcript)
@@ -364,6 +380,19 @@ final class JarvisWakeListener {
         publish()
         return true
     }
+
+    private func pauseAfterUnstableRecognition(status: String) {
+        shouldKeepRunning = false
+        restartTask?.cancel()
+        restartTask = nil
+        captureTask?.cancel()
+        captureTask = nil
+        pendingCommand = ""
+        stopRecognitionSession()
+        phase = .stopped
+        self.status = status
+        publish()
+    }
     #else
     private func stopRecognitionSession() {}
     #endif
@@ -418,6 +447,18 @@ final class JarvisWakeListener {
         return (decision.restartTimes.count, decision.shouldPause)
     }
 
+    static func testSilentEndDecision(
+        sessionAgeSeconds: TimeInterval,
+        heardTranscript: Bool,
+        awaitingCommand: Bool = false
+    ) -> Bool {
+        shouldPauseAfterSilentRecognitionEnd(
+            heardTranscript: heardTranscript,
+            sessionAge: sessionAgeSeconds,
+            phase: awaitingCommand ? .awaitingCommand : .waitingForWake
+        )
+    }
+
     #if canImport(Speech)
     static func testPermissionCallbackPath() async -> Bool {
         await requestPermissions()
@@ -436,6 +477,16 @@ final class JarvisWakeListener {
             now.timeIntervalSince($0) <= restartStormWindowSeconds
         }
         return (recent, recent.count > restartStormLimit)
+    }
+
+    private static func shouldPauseAfterSilentRecognitionEnd(
+        heardTranscript: Bool,
+        sessionAge: TimeInterval,
+        phase: Phase
+    ) -> Bool {
+        (phase == .waitingForWake || phase == .awaitingCommand)
+            && !heardTranscript
+            && sessionAge < minimumStableRecognitionSeconds
     }
 
     private static func detectWake(_ transcript: String) -> Detection {
