@@ -63,7 +63,13 @@ class JarvisServer:
         self._mode_lock = threading.RLock()
         self.tts_prewarm = prewarm_tts_async(reason="server_startup")
 
-    def command(self, command: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    def command(
+        self,
+        command: str,
+        history: list[dict[str, str]] | None = None,
+        *,
+        suppress_speech: bool = False,
+    ) -> dict[str, Any]:
         with self._mode_lock:
             is_paused = self.paused
         if is_paused:
@@ -85,7 +91,7 @@ class JarvisServer:
                 },
             )
             data["audit_event_id"] = event.id
-            _attach_auto_speech(data, reason="final")
+            _attach_auto_speech(data, reason="final", suppress=suppress_speech)
             return data
 
         planned = self.planner.handle(command, history=history, use_model_router=True)
@@ -104,14 +110,20 @@ class JarvisServer:
             },
         )
         data["audit_event_id"] = event.id
-        _attach_auto_speech(data, reason="final")
+        _attach_auto_speech(data, reason="final", suppress=suppress_speech)
         return data
 
-    def stream_command(self, command: str, history: list[dict[str, str]] | None = None):
+    def stream_command(
+        self,
+        command: str,
+        history: list[dict[str, str]] | None = None,
+        *,
+        suppress_speech: bool = False,
+    ):
         with self._mode_lock:
             is_paused = self.paused
         if is_paused:
-            yield {"event": "final", "data": self.command(command)}
+            yield {"event": "final", "data": self.command(command, suppress_speech=suppress_speech)}
             return
 
         preview = self.planner.preview(command, use_model_router=False, history=history).to_dict()
@@ -121,6 +133,8 @@ class JarvisServer:
                 preview_tool = str(preview.get("tool") or "")
                 if preview_tool == "voice.stop_speaking":
                     speech = {"spoken": False, "status": "suppressed_for_stop_speaking", "reason": "status"}
+                elif suppress_speech:
+                    speech = _suppressed_speech_result(reason="status")
                 else:
                     speech = speak_text_async(status_text, reason="status")
                 yield {
@@ -131,7 +145,7 @@ class JarvisServer:
                         "speech": speech,
                     },
                 }
-            yield {"event": "final", "data": self.command(command)}
+            yield {"event": "final", "data": self.command(command, history=history, suppress_speech=suppress_speech)}
             return
 
         assessment = classify_command(command).to_dict()
@@ -193,13 +207,13 @@ class JarvisServer:
                     "confirmation": None,
                 }
                 data["audit_event_id"] = self._record_command_result(data).id
-                _attach_auto_speech(data, reason="final")
+                _attach_auto_speech(data, reason="final", suppress=suppress_speech)
                 yield {"event": "final", "data": data}
                 return
             data = planned.to_dict()
             event = self._record_command_result(data)
             data["audit_event_id"] = event.id
-            _attach_auto_speech(data, reason="final")
+            _attach_auto_speech(data, reason="final", suppress=suppress_speech)
             yield {"event": "final", "data": data}
             return
 
@@ -224,7 +238,7 @@ class JarvisServer:
         }
         event = self._record_command_result(data)
         data["audit_event_id"] = event.id
-        _attach_auto_speech(data, reason="final")
+        _attach_auto_speech(data, reason="final", suppress=suppress_speech)
         yield {"event": "final", "data": data}
 
     def _record_command_result(self, data: dict[str, Any]):
@@ -316,7 +330,7 @@ class JarvisServer:
             },
         )
         data["audit_event_id"] = event.id
-        _attach_auto_speech(data, reason="final")
+        _attach_auto_speech(data, reason="final", suppress=False)
         return data
 
     def speak_status(self, text: str) -> dict[str, Any]:
@@ -689,7 +703,7 @@ def _preview_app_name(preview: dict[str, Any]) -> str:
     return ""
 
 
-def _attach_auto_speech(data: dict[str, Any], *, reason: str) -> None:
+def _attach_auto_speech(data: dict[str, Any], *, reason: str, suppress: bool = False) -> None:
     result = data.get("result")
     if not isinstance(result, dict):
         return
@@ -698,9 +712,21 @@ def _attach_auto_speech(data: dict[str, Any], *, reason: str) -> None:
     if result.get("action") == "speech.say":
         return
     text = _speech_text_from_result(result) or str(data.get("summary") or "").strip()
+    if suppress:
+        if text.strip():
+            data["speech"] = _suppressed_speech_result(reason=reason)
+        return
     speech = speak_text_async(text, reason=reason)
     if speech.get("spoken") or speech.get("status") not in {"disabled", "empty"}:
         data["speech"] = speech
+
+
+def _suppressed_speech_result(*, reason: str) -> dict[str, Any]:
+    return {
+        "spoken": False,
+        "status": "suppressed_by_request",
+        "reason": reason,
+    }
 
 
 def _should_auto_speak(data: dict[str, Any]) -> bool:
@@ -932,6 +958,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 payload = self._read_json_payload()
                 command = str(payload.get("command", ""))
                 history = _conversation_history_from_payload(payload, current_command=command)
+                suppress_speech = _payload_suppresses_speech(payload)
             except RequestBodyTooLarge:
                 self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
                 return
@@ -941,7 +968,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             except (TypeError, ValueError, UnicodeDecodeError) as exc:
                 self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            self._send_event_stream(STATE.stream_command(command, history=history))
+            self._send_event_stream(STATE.stream_command(command, history=history, suppress_speech=suppress_speech))
             return
         if route.path != "/api/command":
             self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
@@ -950,6 +977,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json_payload()
             command = str(payload.get("command", ""))
             history = _conversation_history_from_payload(payload, current_command=command)
+            suppress_speech = _payload_suppresses_speech(payload)
         except RequestBodyTooLarge:
             self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
@@ -959,7 +987,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError, UnicodeDecodeError) as exc:
             self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
             return
-        self._send_json(STATE.command(command, history=history))
+        self._send_json(STATE.command(command, history=history, suppress_speech=suppress_speech))
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -1092,6 +1120,10 @@ def _bounded_int(raw: str, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, value))
+
+
+def _payload_suppresses_speech(payload: dict[str, Any]) -> bool:
+    return payload.get("suppress_speech") is True or payload.get("speak") is False
 
 
 def _optional_float(raw: Any) -> float | None:

@@ -63,6 +63,7 @@ SHIPPED_ITEMS = [
     "Typed submissions now refuse overlapping turns while Jarvis is busy, which prevents orphaned progress nudges from a second command race.",
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
     "Copy Chat JSON turn traces now include speech-alignment diagnostics that flag tiny TTS previews such as Hello against longer visible answers.",
+    "Live command endpoints now accept suppress_speech=true or speak=false for quiet verification without muting the whole app.",
     "Hey Jarvis now spaces out Apple Speech restarts and stops after the third close restart, reducing the menu-bar dictation flicker loop.",
     "Hey Jarvis now de-duplicates identical listener snapshots before publishing them to the SwiftUI panel.",
     "The native audio tap now uses a non-actor sink so Core Audio's realtime callback does not inherit MainActor isolation.",
@@ -72,7 +73,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 431/431 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, and voice-QA work.",
+    "Python safety suite: 433/433 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -816,7 +817,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 431/431 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 433/433 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

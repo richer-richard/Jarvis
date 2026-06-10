@@ -8370,6 +8370,18 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Jarvis", speak_mock.call_args.args[0])
         self.assertIn("build", speak_mock.call_args.args[0])
 
+    def test_command_can_suppress_final_speech_per_request(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async") as speak_mock:
+                result = server.command("status", suppress_speech=True)
+
+        self.assertEqual(result["tool"], "system.status")
+        self.assertEqual(result["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(result["speech"]["reason"], "final")
+        speak_mock.assert_not_called()
+
     def test_streamed_status_speaks_status_then_final_reply(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             server = JarvisServer()
@@ -8383,6 +8395,21 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(speak_mock.call_args_list[0].kwargs["reason"], "status")
         self.assertEqual(speak_mock.call_args_list[1].kwargs["reason"], "final")
         self.assertIn("Jarvis", speak_mock.call_args_list[1].args[0])
+
+    def test_stream_command_can_suppress_status_and_final_speech_per_request(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async") as speak_mock:
+                events = list(server.stream_command("status", suppress_speech=True))
+
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(events[0]["data"]["speech"]["reason"], "status")
+        self.assertEqual(events[-1]["data"]["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(events[-1]["data"]["speech"]["reason"], "final")
+        self.assertIn("Jarvis", events[-1]["data"]["result"]["reply"])
+        speak_mock.assert_not_called()
 
     def test_stream_status_text_uses_app_name_when_preview_has_one(self):
         self.assertEqual(
