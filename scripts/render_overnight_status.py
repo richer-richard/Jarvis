@@ -69,7 +69,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 425/425 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, overlapping-turn, and voice-QA work.",
+    "Python safety suite: 427/427 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -157,6 +157,7 @@ SUPPORTING_FILES = [
     ("runtime/wake_threshold/", "Wake-threshold smoke reports"),
     ("runtime/voice_loop_qa/latest.json", "Latest closed-loop voice QA report"),
     ("runtime/voice_loop_qa/", "Closed-loop voice QA artifacts"),
+    ("scripts/repair_local_stt_model.py", "Local faster-whisper model repair helper"),
     ("output/playwright/", "Visual QA screenshots"),
 ]
 
@@ -751,7 +752,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 425/425 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 427/427 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

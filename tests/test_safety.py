@@ -119,6 +119,7 @@ from jarvis.tools import (
 from jarvis.wake import WakeSession, detect_wake_command, score_wake_transcript
 from scripts import (
     render_overnight_status,
+    repair_local_stt_model,
     smoke_conversation_context,
     smoke_fast_latency,
     smoke_wake_threshold,
@@ -232,6 +233,35 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(mute_calls, [True, False])
+
+    def test_repair_local_stt_model_detects_valid_cache(self):
+        payload = b"fake model payload"
+        digest = __import__("hashlib").sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.repair_local_stt_model.MODEL_BLOB_ID", digest), \
+             patch("scripts.repair_local_stt_model.MODEL_SIZE", len(payload)), \
+             patch("scripts.repair_local_stt_model.SNAPSHOT_ID", "snapshot-test"):
+            root = Path(temp_dir)
+            paths = repair_local_stt_model.model_cache_paths(root)
+            paths["blob_dir"].mkdir(parents=True)
+            paths["snapshot_dir"].mkdir(parents=True)
+            paths["blob"].write_bytes(payload)
+            paths["model_bin"].symlink_to(f"../../blobs/{digest}")
+
+            status = repair_local_stt_model.model_cache_status(root)
+
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["blob_sha256"], digest)
+
+    def test_repair_local_stt_model_dry_run_does_not_download(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.repair_local_stt_model.download_file") as download_file:
+            status = repair_local_stt_model.repair_model_cache(Path(temp_dir), dry_run=True)
+
+        self.assertFalse(status["ok"])
+        self.assertTrue(status["dry_run"])
+        self.assertFalse(status["repaired"])
+        download_file.assert_not_called()
 
     def test_conversation_context_smoke_detects_history_use(self):
         self.assertTrue(smoke_conversation_context.context_reply_uses_history("Correct, x is 3."))
