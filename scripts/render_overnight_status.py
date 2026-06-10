@@ -72,7 +72,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 427/427 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, and voice-QA work.",
+    "Python safety suite: 429/429 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -192,6 +192,7 @@ def build_context(base_url: str) -> dict[str, Any]:
     context_smoke = latest_context_smoke()
     wake_threshold = latest_wake_threshold_smoke()
     voice_loop = latest_voice_loop_qa()
+    crash = latest_jarvis_crash_report()
     now = datetime.now(BEIJING)
     version = str(app.get("version") or "unknown")
     build = str(app.get("build") or "unknown")
@@ -228,10 +229,14 @@ def build_context(base_url: str) -> dict[str, Any]:
             context_smoke,
             wake_threshold,
             voice_loop,
+            crash,
+            version,
+            build,
         ),
         "try": TRY_ITEMS,
         "risks": RISK_ITEMS,
         "supporting": SUPPORTING_FILES,
+        "crash": crash,
     }
 
 
@@ -242,6 +247,9 @@ def proof_items_with_verification(
     context_smoke: dict[str, Any] | None = None,
     wake_threshold: dict[str, Any] | None = None,
     voice_loop: dict[str, Any] | None = None,
+    crash: dict[str, Any] | None = None,
+    current_version: str = "",
+    current_build: str = "",
 ) -> list[str]:
     items = list(PROOF_ITEMS)
     if verification.get("path"):
@@ -294,6 +302,20 @@ def proof_items_with_verification(
                 f"routed command {voice_loop['latest_routed_command']!r}{latest_error} "
                 f"({latest_path})."
             )
+    if crash and crash.get("path"):
+        crash_version = str(crash.get("version") or "unknown")
+        crash_build = str(crash.get("build") or "unknown")
+        crash_time = str(crash.get("timestamp") or "unknown time")
+        if crash_version == current_version and crash_build == current_build:
+            items.append(
+                "Newest local crash report is from the current live build "
+                f"{crash_version} build {crash_build} at {crash_time}: {crash['path']}."
+            )
+        else:
+            items.append(
+                "Newest local crash report is from older build "
+                f"{crash_version} build {crash_build} at {crash_time}; no current-build crash report is present."
+            )
     return items
 
 
@@ -304,6 +326,40 @@ def get_json(url: str) -> dict[str, Any]:
             return data if isinstance(data, dict) else {}
     except (OSError, urllib.error.URLError, json.JSONDecodeError):
         return {}
+
+
+def latest_jarvis_crash_report(log_dir: Path | None = None) -> dict[str, Any]:
+    directory = log_dir or (Path.home() / "Library" / "Logs" / "DiagnosticReports")
+    try:
+        reports = sorted(
+            directory.glob("jarvis-menu-bar-*.ips"),
+            key=lambda path: path.stat().st_mtime,
+        )
+    except OSError:
+        return {"path": "", "label": "unavailable", "version": "", "build": "", "timestamp": ""}
+    if not reports:
+        return {"path": "", "label": "none", "version": "", "build": "", "timestamp": ""}
+    latest = reports[-1]
+    try:
+        first_line = latest.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+        metadata = json.loads(first_line)
+    except (OSError, IndexError, json.JSONDecodeError):
+        return {
+            "path": str(latest),
+            "label": "unreadable",
+            "version": "",
+            "build": "",
+            "timestamp": "",
+        }
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "path": str(latest),
+        "label": "readable",
+        "version": str(metadata.get("app_version") or ""),
+        "build": str(metadata.get("build_version") or ""),
+        "timestamp": str(metadata.get("timestamp") or ""),
+    }
 
 
 def latest_verification() -> dict[str, Any]:
@@ -760,7 +816,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 427/427 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 429/429 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

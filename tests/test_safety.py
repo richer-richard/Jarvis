@@ -420,6 +420,59 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["total"], 2)
         self.assertTrue(result["policy_safe"])
 
+    def test_render_overnight_status_reads_latest_jarvis_crash_report(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_dir = Path(temp_dir)
+            old = log_dir / "jarvis-menu-bar-2026-06-10-210000.ips"
+            new = log_dir / "jarvis-menu-bar-2026-06-10-215713.ips"
+            old.write_text(
+                json.dumps(
+                    {
+                        "app_name": "jarvis-menu-bar",
+                        "timestamp": "2026-06-10 21:00:00.00 +0800",
+                        "app_version": "0.1.270",
+                        "build_version": "270",
+                    }
+                )
+                + "\n{}",
+                encoding="utf-8",
+            )
+            new.write_text(
+                json.dumps(
+                    {
+                        "app_name": "jarvis-menu-bar",
+                        "timestamp": "2026-06-10 21:57:13.00 +0800",
+                        "app_version": "0.1.274",
+                        "build_version": "274",
+                    }
+                )
+                + "\n{}",
+                encoding="utf-8",
+            )
+
+            result = render_overnight_status.latest_jarvis_crash_report(log_dir)
+
+        self.assertEqual(result["label"], "readable")
+        self.assertEqual(result["version"], "0.1.274")
+        self.assertEqual(result["build"], "274")
+        self.assertIn("jarvis-menu-bar-2026-06-10-215713.ips", result["path"])
+
+    def test_render_overnight_status_proof_mentions_old_crash_build(self):
+        items = render_overnight_status.proof_items_with_verification(
+            {"path": "", "passed": 0, "total": 0},
+            crash={
+                "path": "/tmp/jarvis-menu-bar-2026-06-10-215713.ips",
+                "version": "0.1.274",
+                "build": "274",
+                "timestamp": "2026-06-10 21:57:13.00 +0800",
+            },
+            current_version="0.1.293",
+            current_build="293",
+        )
+
+        self.assertIn("older build 0.1.274 build 274", items[-1])
+        self.assertIn("no current-build crash report", items[-1])
+
     def test_render_overnight_status_reads_latest_voice_loop_qa(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
