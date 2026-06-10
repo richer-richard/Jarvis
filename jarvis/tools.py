@@ -5440,6 +5440,7 @@ def _master_report_snapshot(path: Path) -> dict[str, Any]:
         "headline": headline,
         "launch_pills": launch_pills,
         "product_promises": parser.product_promises[:6],
+        "proof_items": parser.sections.get("Proof So Far", [])[:80],
         "section_counts": section_counts,
         "shipped_count": shipped_count,
         "proof_count": proof_count,
@@ -5463,6 +5464,19 @@ def _report_bundle_from_pill(value: str) -> dict[str, str]:
     if not match:
         return {"version": "", "build": ""}
     return {"version": match.group("version"), "build": match.group("build")}
+
+
+def _latest_runtime_artifact(pattern: str) -> str:
+    try:
+        matches = sorted(PROJECT_ROOT.glob(pattern))
+    except OSError:
+        return ""
+    if not matches:
+        return ""
+    try:
+        return str(matches[-1].relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(matches[-1])
 
 
 def _git_head_short() -> dict[str, Any]:
@@ -5493,12 +5507,22 @@ def _report_integrity(
         "build": str((bundle_metadata or {}).get("build") or ""),
     }
     git_head = _git_head_short()
+    proof_text = "\n".join(str(item) for item in (report_snapshot.get("proof_items") or []))
+    latest_verification = _latest_runtime_artifact("runtime/verification/verify-safe-*.json")
+    latest_voice_qa = _latest_runtime_artifact("runtime/voice_loop_qa/*/report.json")
     commit_known = bool(report_commit and git_head.get("ok"))
     bundle_known = bool(report_bundle["version"] and report_bundle["build"] and live_bundle["version"] and live_bundle["build"])
     commit_matches = bool(commit_known and report_commit == str(git_head.get("head") or ""))
     bundle_matches = bool(bundle_known and report_bundle == live_bundle)
+    verification_matches = bool(latest_verification and latest_verification in proof_text)
+    voice_qa_matches = bool(latest_voice_qa and latest_voice_qa in proof_text)
+    artifact_known = bool(latest_verification or latest_voice_qa)
+    artifact_matches = (
+        (not latest_verification or verification_matches)
+        and (not latest_voice_qa or voice_qa_matches)
+    )
     if commit_known and bundle_known:
-        status = "current" if commit_matches and bundle_matches else "stale"
+        status = "current" if commit_matches and bundle_matches and artifact_matches else "stale"
     else:
         status = "unknown"
     mismatches: list[str] = []
@@ -5506,6 +5530,10 @@ def _report_integrity(
         mismatches.append("source_commit")
     if bundle_known and not bundle_matches:
         mismatches.append("live_bundle")
+    if latest_verification and not verification_matches:
+        mismatches.append("latest_verification")
+    if latest_voice_qa and not voice_qa_matches:
+        mismatches.append("latest_voice_qa")
     return {
         "status": status,
         "current": status == "current",
@@ -5515,6 +5543,11 @@ def _report_integrity(
         "report_bundle": report_bundle,
         "live_bundle": live_bundle,
         "bundle_matches_live": bundle_matches,
+        "latest_verification": latest_verification,
+        "verification_matches_latest": verification_matches,
+        "latest_voice_qa": latest_voice_qa,
+        "voice_qa_matches_latest": voice_qa_matches,
+        "artifact_integrity_checked": artifact_known,
         "mismatches": mismatches,
     }
 
