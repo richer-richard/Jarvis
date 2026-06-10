@@ -65,6 +65,7 @@ SHIPPED_ITEMS = [
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
     "Copy Chat JSON turn traces now include speech-alignment diagnostics that flag tiny TTS previews such as Hello against longer visible answers.",
     "Live command endpoints now accept suppress_speech=true or speak=false for quiet verification without muting the whole app.",
+    "Groq 429 rate-limit responses now skip non-tiny retry waits and stream GPT-OSS 120B Cloud through Ollama, with a natural busy reply only if that middle fallback also fails.",
     "Hey Jarvis now spaces out Apple Speech restarts and stops after the third close restart, reducing the menu-bar dictation flicker loop.",
     "Hey Jarvis now also stops after the fourth restart in one activation, catching slower flicker loops that are not rapid enough for the storm guard.",
     "Hey Jarvis now de-duplicates identical listener snapshots before publishing them to the SwiftUI panel.",
@@ -75,7 +76,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 435/435 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, and voice-QA work.",
+    "Python safety suite: 444/444 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Live safe verifier passed 97/97 after the speech-mute, wake-audition, wake-lab corpus, model-context, wake-debug, repeated-wake, voice-loop echo, and report-route endpoints were added.",
@@ -90,8 +91,9 @@ PROOF_ITEMS = [
     "Model-context tests now require the diagnostic to show that first and middle models treat Leo's latest message as possibly dictated speech.",
     "Live verifier now probes diagnostics.model_context and requires the speech-dictation input policy without calling models.",
     "Swift source-contract tests now require Copy Chat JSON to expose the filtered conversation-history payload preview.",
-    "Conversation-context smoke tests now verify the script mutes speech, restores the previous mute state, and detects whether a follow-up used prior history.",
-    "Fast-latency smoke tests now verify the script mutes speech and restores the previous mute state before timing live prompts.",
+    "Conversation-context smoke tests now suppress speech per request and detect whether a follow-up used prior history without changing global mute state.",
+    "Fast-latency smoke tests now suppress speech per request before timing live prompts, and they read the model-result status so a busy placeholder cannot masquerade as a completed answer.",
+    "Live latency smoke passed on the warmed GPT-OSS fallback path with first visible text between roughly 2.1s and 2.4s.",
     "Wake-threshold smoke tests now verify hey jervis passes while hey jars and hey charvis reject at the 0.86 threshold.",
     "Static wake-lab tests now require the threshold corpus panel, corpus buttons, and below-threshold charvis case.",
     "Static and verifier wake-lab tests now require the self-explanatory Live Transcript Only and Copy Codex JSON labels.",
@@ -820,7 +822,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 435/435 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 444/444 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

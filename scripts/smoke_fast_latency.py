@@ -37,15 +37,10 @@ def main() -> int:
 
     base_url = args.base_url.rstrip("/")
     prompts = args.prompts or DEFAULT_PROMPTS
-    original_mute = speech_mute_status(base_url)
-    set_speech_mute(base_url, True)
-    try:
-        results = [
-            smoke_prompt(prompt, base_url=base_url, timeout=args.timeout)
-            for prompt in prompts
-        ]
-    finally:
-        set_speech_mute(base_url, original_mute)
+    results = [
+        smoke_prompt(prompt, base_url=base_url, timeout=args.timeout)
+        for prompt in prompts
+    ]
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "base_url": base_url,
@@ -53,8 +48,9 @@ def main() -> int:
         "max_total_seconds": args.max_total,
         "min_after_first_chars_per_second": args.min_after_first_cps,
         "min_rate_visible_chars": args.min_rate_visible_chars,
-        "speech_was_muted": True,
-        "speech_mute_restored_to": original_mute,
+        "speech_suppressed_per_request": True,
+        "speech_was_muted": False,
+        "speech_mute_restored_to": None,
         "results": results,
     }
 
@@ -96,7 +92,7 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
     first_visible_at: float | None = None
     deltas: list[str] = []
     final: dict[str, Any] | None = None
-    payload = json.dumps({"command": prompt}).encode("utf-8")
+    payload = json.dumps({"command": prompt, "suppress_speech": True}).encode("utf-8")
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/api/command/stream",
         data=payload,
@@ -165,7 +161,9 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
         chars_per_second = None
     return {
         "prompt": prompt,
-        "status": "completed" if final else "missing_final",
+        "status": effective_result_status(final, result_payload),
+        "stream_status": final.get("status") if isinstance(final, dict) else None,
+        "result_status": result_payload.get("status") if isinstance(result_payload, dict) else None,
         "first_visible_seconds": first_visible_seconds,
         "total_seconds": round(total, 3),
         "after_first_visible_seconds": round(after_first_seconds, 3) if after_first_seconds is not None else None,
@@ -178,6 +176,17 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
         "model": result_payload.get("model") if isinstance(result_payload, dict) else None,
         "reply_preview": reply[:240],
     }
+
+
+def effective_result_status(final: dict[str, Any] | None, result_payload: Any) -> str:
+    if not isinstance(final, dict):
+        return "missing_final"
+    if isinstance(result_payload, dict):
+        result_status = str(result_payload.get("status") or "").strip()
+        if result_status:
+            return result_status
+    stream_status = str(final.get("status") or "").strip()
+    return stream_status or "completed"
 
 
 def process_event(

@@ -214,9 +214,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(policy["uses_accessibility"])
         self.assertFalse(policy["pushes_to_network_repo"])
 
-    def test_fast_latency_smoke_mutes_speech_during_run(self):
-        mute_calls = []
-
+    def test_fast_latency_smoke_suppresses_speech_per_request(self):
         def fake_smoke_prompt(prompt, *, base_url, timeout):
             return {
                 "prompt": prompt,
@@ -227,14 +225,29 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "chars_per_second_after_first_visible": 40.0,
             }
 
-        with patch("scripts.smoke_fast_latency.speech_mute_status", return_value=False), \
-             patch("scripts.smoke_fast_latency.set_speech_mute", side_effect=lambda _base_url, muted: mute_calls.append(muted)), \
+        with patch("scripts.smoke_fast_latency.speech_mute_status") as status_mock, \
+             patch("scripts.smoke_fast_latency.set_speech_mute") as mute_mock, \
              patch("scripts.smoke_fast_latency.smoke_prompt", side_effect=fake_smoke_prompt), \
              patch("sys.argv", ["smoke_fast_latency.py", "--no-report", "--prompt", "hello"]):
             code = smoke_fast_latency.main()
 
         self.assertEqual(code, 0)
-        self.assertEqual(mute_calls, [True, False])
+        status_mock.assert_not_called()
+        mute_mock.assert_not_called()
+
+    def test_fast_latency_smoke_uses_model_result_status(self):
+        self.assertEqual(
+            smoke_fast_latency.effective_result_status(
+                {"status": "completed"},
+                {"status": "temporarily_busy"},
+            ),
+            "temporarily_busy",
+        )
+        self.assertEqual(
+            smoke_fast_latency.effective_result_status({"status": "completed"}, {}),
+            "completed",
+        )
+        self.assertEqual(smoke_fast_latency.effective_result_status(None, {}), "missing_final")
 
     def test_repair_local_stt_model_detects_valid_cache(self):
         payload = b"fake model payload"
@@ -272,8 +285,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(smoke_conversation_context.context_reply_uses_history("Which problem do you mean?"))
         self.assertFalse(smoke_conversation_context.context_reply_uses_history("I do not know the previous problem."))
 
-    def test_conversation_context_smoke_mutes_and_restores_speech(self):
-        mute_calls = []
+    def test_conversation_context_smoke_suppresses_speech_per_request(self):
         final = {
             "tool": "conversation.fast_local",
             "result": {
@@ -283,15 +295,36 @@ class VerifySafeScriptTests(unittest.TestCase):
             },
         }
 
-        with patch("scripts.smoke_conversation_context.speech_mute_status", return_value=True), \
-             patch("scripts.smoke_conversation_context.set_speech_mute", side_effect=lambda _base, muted: mute_calls.append(muted)), \
-             patch("scripts.smoke_conversation_context.stream_command", return_value=(final, ["Correct, x is 3."], None)):
+        with patch("scripts.smoke_conversation_context.speech_mute_status") as status_mock, \
+             patch("scripts.smoke_conversation_context.set_speech_mute") as mute_mock, \
+             patch("scripts.smoke_conversation_context.stream_command", return_value=(final, ["Correct, x is 3."], None)) as stream_mock:
             report = smoke_conversation_context.run_context_smoke(base_url="http://127.0.0.1:8765", timeout=1)
 
         self.assertEqual(report["result"]["status"], "passed")
         self.assertTrue(report["result"]["used_history"])
-        self.assertEqual(mute_calls, [True, True])
-        self.assertEqual(report["result"]["speech_mute_restored_to"], True)
+        self.assertTrue(stream_mock.call_args.args[1]["suppress_speech"])
+        self.assertTrue(report["result"]["speech_suppressed_per_request"])
+        self.assertFalse(report["result"]["speech_was_muted"])
+        status_mock.assert_not_called()
+        mute_mock.assert_not_called()
+
+    def test_conversation_context_smoke_marks_model_busy_as_inconclusive(self):
+        final = {
+            "tool": "conversation.fast_local",
+            "result": {
+                "status": "temporarily_busy",
+                "backend": "groq",
+                "model": "llama-3.3-70b-versatile",
+                "reply": "One moment, sir. The fast model is busy; try that again in a few seconds.",
+            },
+        }
+
+        with patch("scripts.smoke_conversation_context.stream_command", return_value=(final, [], None)):
+            report = smoke_conversation_context.run_context_smoke(base_url="http://127.0.0.1:8765", timeout=1)
+
+        self.assertEqual(report["result"]["status"], "model_busy")
+        self.assertTrue(report["result"]["model_busy"])
+        self.assertFalse(report["result"]["used_history"])
 
     def test_voice_loop_qa_no_permission_mode_skips_apple_speech(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -6940,10 +6973,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         }
         http_error = urllib.error.HTTPError(
             "https://api.groq.com/openai/v1/chat/completions",
-            429,
-            "Too Many Requests",
+            500,
+            "Internal Server Error",
             hdrs=None,
-            fp=io.BytesIO(b'{"error":"rate limit"}'),
+            fp=io.BytesIO(b'{"error":"server error"}'),
         )
         with patch("jarvis.tools.FAST_MODEL_BACKEND", "groq"), \
              patch("jarvis.tools.FAST_MODEL_FALLBACK_ENABLED", True), \
@@ -6998,6 +7031,280 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["primary_status"], "http_error")
         self.assertIsNotNone(result["first_visible_token_seconds"])
         self.assertNotIn("Groq fast chat returned an HTTP error", result["reply"])
+
+    def test_fast_chat_retries_groq_rate_limit_before_fallback(self):
+        primary_result = {
+            "tool": "conversation.fast_local",
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "available": True,
+            "status": "http_error",
+            "http_status": 429,
+            "executed": True,
+            "duration_seconds": 0.4,
+            "duration_human": "0.4s",
+            "reply": "Groq fast chat returned an HTTP error.",
+            "error": "Please try again in 130ms.",
+        }
+        retry_result = {
+            "tool": "conversation.fast_local",
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "available": True,
+            "status": "completed",
+            "executed": True,
+            "duration_seconds": 0.5,
+            "duration_human": "0.5s",
+            "reply": "Retry answer.",
+        }
+        with patch("jarvis.tools.FAST_MODEL_FALLBACK_ENABLED", True), \
+             patch("jarvis.tools.FAST_MODEL_FALLBACK_BACKEND", "ollama"), \
+             patch("jarvis.tools.time.sleep") as sleep_mock, \
+             patch("jarvis.tools._run_groq_fast_chat", return_value=retry_result), \
+             patch("jarvis.tools._run_ollama_fast_chat") as ollama_mock:
+            result = jarvis_tools._fast_chat_with_fallback("hello Jarvis", primary_result)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["reply"], "Retry answer.")
+        self.assertTrue(result["retry_used"])
+        self.assertEqual(result["primary_status"], "http_error")
+        sleep_mock.assert_called_once_with(0.13)
+        ollama_mock.assert_not_called()
+
+    def test_fast_chat_rate_limit_retry_returns_fast_busy_reply(self):
+        primary_result = {
+            "tool": "conversation.fast_local",
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "available": True,
+            "status": "http_error",
+            "http_status": 429,
+            "executed": True,
+            "duration_seconds": 0.4,
+            "duration_human": "0.4s",
+            "reply": "Groq fast chat returned an HTTP error.",
+            "error": "Please try again in 130ms.",
+        }
+        retry_result = {
+            "tool": "conversation.fast_local",
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "available": True,
+            "status": "http_error",
+            "http_status": 429,
+            "executed": True,
+            "duration_seconds": 0.5,
+            "duration_human": "0.5s",
+            "reply": "Groq fast chat returned an HTTP error.",
+        }
+        with patch("jarvis.tools.FAST_MODEL_FALLBACK_ENABLED", True), \
+             patch("jarvis.tools.FAST_MODEL_FALLBACK_BACKEND", "ollama"), \
+             patch("jarvis.tools.time.sleep"), \
+             patch("jarvis.tools._run_groq_fast_chat", return_value=retry_result), \
+             patch("jarvis.tools._run_ollama_fast_chat", return_value={
+                 "tool": "conversation.fast_local",
+                 "backend": "ollama",
+                 "model": "gpt-oss:120b-cloud",
+                 "available": True,
+                 "status": "timeout",
+                 "executed": True,
+                 "duration_seconds": 0.7,
+                 "duration_human": "0.7s",
+                 "reply": "",
+             }) as ollama_mock:
+            result = jarvis_tools._fast_chat_with_fallback("hello Jarvis", primary_result)
+
+        self.assertEqual(result["status"], "temporarily_busy")
+        self.assertIn("fast model is busy", result["reply"])
+        self.assertEqual(result["retry_status"], "http_error")
+        self.assertLess(result["duration_seconds"], 2.5)
+        self.assertNotIn("Groq fast chat returned an HTTP error", result["reply"])
+        ollama_mock.assert_called_once()
+
+    def test_fast_chat_rate_limit_retry_uses_middle_model_before_busy_reply(self):
+        primary_result = {
+            "tool": "conversation.fast_local",
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "available": True,
+            "status": "http_error",
+            "http_status": 429,
+            "executed": True,
+            "duration_seconds": 0.4,
+            "duration_human": "0.4s",
+            "reply": "Groq fast chat returned an HTTP error.",
+            "error": "Please try again in 130ms.",
+        }
+        retry_result = {
+            "tool": "conversation.fast_local",
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "available": True,
+            "status": "http_error",
+            "http_status": 429,
+            "executed": True,
+            "duration_seconds": 0.5,
+            "duration_human": "0.5s",
+            "reply": "Groq fast chat returned an HTTP error.",
+        }
+        middle_result = {
+            "tool": "conversation.fast_local",
+            "backend": "ollama",
+            "model": "gpt-oss:120b-cloud",
+            "available": True,
+            "status": "completed",
+            "executed": True,
+            "duration_seconds": 0.8,
+            "duration_human": "0.8s",
+            "reply": "Middle answer.",
+        }
+        with patch("jarvis.tools.FAST_MODEL_FALLBACK_ENABLED", True), \
+             patch("jarvis.tools.FAST_MODEL_FALLBACK_BACKEND", "ollama"), \
+             patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"), \
+             patch("jarvis.tools.time.sleep"), \
+             patch("jarvis.tools._run_groq_fast_chat", return_value=retry_result), \
+             patch("jarvis.tools._run_ollama_fast_chat", return_value=middle_result) as middle_mock:
+            result = jarvis_tools._fast_chat_with_fallback("hello Jarvis", primary_result)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["backend"], "ollama")
+        self.assertEqual(result["model"], "gpt-oss:120b-cloud")
+        self.assertTrue(result["rate_limit_fallback_used"])
+        self.assertTrue(result["retry_used"])
+        self.assertEqual(result["reply"], "Middle answer.")
+        middle_mock.assert_called_once()
+
+    def test_fast_chat_rate_limit_uses_middle_model_first_when_retry_delay_is_not_tiny(self):
+        primary_result = {
+            "tool": "conversation.fast_local",
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "available": True,
+            "status": "http_error",
+            "http_status": 429,
+            "executed": True,
+            "duration_seconds": 0.4,
+            "duration_human": "0.4s",
+            "reply": "Groq fast chat returned an HTTP error.",
+            "error": "Please try again in 600ms.",
+        }
+        middle_result = {
+            "tool": "conversation.fast_local",
+            "backend": "ollama",
+            "model": "gpt-oss:120b-cloud",
+            "available": True,
+            "status": "completed",
+            "executed": True,
+            "duration_seconds": 0.8,
+            "duration_human": "0.8s",
+            "reply": "Middle answer.",
+        }
+        with patch("jarvis.tools.FAST_MODEL_FALLBACK_ENABLED", True), \
+             patch("jarvis.tools.FAST_MODEL_FALLBACK_BACKEND", "ollama"), \
+             patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"), \
+             patch("jarvis.tools.time.sleep") as sleep_mock, \
+             patch("jarvis.tools._run_groq_fast_chat") as retry_mock, \
+             patch("jarvis.tools._run_ollama_fast_chat", return_value=middle_result) as middle_mock:
+            result = jarvis_tools._fast_chat_with_fallback("hello Jarvis", primary_result)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["reply"], "Middle answer.")
+        self.assertFalse(result["retry_used"])
+        self.assertTrue(result["groq_retry_skipped"])
+        sleep_mock.assert_not_called()
+        retry_mock.assert_not_called()
+        middle_mock.assert_called_once()
+
+    def test_ollama_fast_chat_gives_middle_model_larger_token_budget(self):
+        with patch("jarvis.tools.FAST_MODEL_MAX_TOKENS", 80), \
+             patch("jarvis.tools.MIDDLE_MODEL_MAX_TOKENS", 420), \
+             patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"):
+            self.assertEqual(jarvis_tools._ollama_fast_chat_num_predict("qwen3:0.6b"), 80)
+            self.assertEqual(jarvis_tools._ollama_fast_chat_num_predict("gpt-oss:120b-cloud"), 220)
+
+    def test_stream_ollama_fast_chat_yields_delta_before_final(self):
+        class FakeOllamaResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                lines = [
+                    {"response": "Hello", "done": False},
+                    {"response": " sir.", "done": True},
+                ]
+                return iter((json.dumps(line).encode("utf-8") + b"\n") for line in lines)
+
+        started = time.monotonic() - 0.25
+        primary = {
+            "backend": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "status": "http_error",
+            "duration_human": "0.4s",
+        }
+        with patch("jarvis.tools._find_executable", return_value="/usr/local/bin/ollama"), \
+             patch("jarvis.tools._ensure_ollama_server_running", return_value={"running": True, "status": "running"}), \
+             patch("jarvis.tools.urllib.request.urlopen", return_value=FakeOllamaResponse()), \
+             patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"):
+            events = list(jarvis_tools._stream_ollama_fast_chat_events(
+                "hello Jarvis",
+                model="gpt-oss:120b-cloud",
+                overall_started_at=started,
+                primary=primary,
+                retry_status="skipped_rate_limit_retry",
+            ))
+
+        deltas = [event["data"]["text"] for event in events if event["event"] == "delta"]
+        final = [event["data"] for event in events if event["event"] == "final_result"][-1]
+        self.assertEqual("".join(deltas), "Hello sir.")
+        self.assertEqual(final["status"], "completed")
+        self.assertEqual(final["backend"], "ollama")
+        self.assertEqual(final["model"], "gpt-oss:120b-cloud")
+        self.assertTrue(final["rate_limit_fallback_used"])
+        self.assertTrue(final["groq_retry_skipped"])
+        self.assertIsNotNone(final["first_visible_token_seconds"])
+
+    def test_stream_fast_chat_uses_streaming_middle_fallback_on_groq_rate_limit(self):
+        class FakeOllamaResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                lines = [
+                    {"response": "Fallback", "done": False},
+                    {"response": " answer.", "done": True},
+                ]
+                return iter((json.dumps(line).encode("utf-8") + b"\n") for line in lines)
+
+        http_error = urllib.error.HTTPError(
+            "https://api.groq.com/openai/v1/chat/completions",
+            429,
+            "Too Many Requests",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error":"Please try again in 600ms."}'),
+        )
+        with patch("jarvis.tools.FAST_MODEL_BACKEND", "groq"), \
+             patch("jarvis.tools.GROQ_API_KEY", "test-key"), \
+             patch("jarvis.tools.GROQ_FAST_MODEL", "llama-3.3-70b-versatile"), \
+             patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"), \
+             patch("jarvis.tools._find_executable", return_value="/usr/local/bin/ollama"), \
+             patch("jarvis.tools._ensure_ollama_server_running", return_value={"running": True, "status": "running"}), \
+             patch("jarvis.tools.urllib.request.urlopen", side_effect=[http_error, FakeOllamaResponse()]):
+            events = list(stream_fast_local_chat_events("hello Jarvis"))
+
+        deltas = [event["data"]["text"] for event in events if event["event"] == "delta"]
+        final = [event["data"] for event in events if event["event"] == "final_result"][-1]
+        self.assertEqual("".join(deltas), "Fallback answer.")
+        self.assertEqual(final["status"], "completed")
+        self.assertEqual(final["backend"], "ollama")
+        self.assertEqual(final["model"], "gpt-oss:120b-cloud")
+        self.assertTrue(final["rate_limit_fallback_used"])
+        self.assertTrue(final["groq_retry_skipped"])
 
     def test_stream_fast_local_chat_falls_back_to_ollama_on_groq_error(self):
         fallback_result = {

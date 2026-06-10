@@ -48,23 +48,25 @@ def main() -> int:
 
 def run_context_smoke(*, base_url: str, timeout: float) -> dict[str, Any]:
     started = time.monotonic()
-    original_mute = speech_mute_status(base_url)
-    set_speech_mute(base_url, True)
-    try:
-        final, deltas, error = stream_command(
-            base_url,
-            {"command": DEFAULT_COMMAND, "history": DEFAULT_HISTORY},
-            timeout=timeout,
-        )
-    finally:
-        set_speech_mute(base_url, original_mute)
+    final, deltas, error = stream_command(
+        base_url,
+        {"command": DEFAULT_COMMAND, "history": DEFAULT_HISTORY, "suppress_speech": True},
+        timeout=timeout,
+    )
     total = round(time.monotonic() - started, 3)
     result_payload = (final or {}).get("result") if isinstance(final, dict) else {}
     if not isinstance(result_payload, dict):
         result_payload = {}
     reply = "".join(deltas).strip() or str(result_payload.get("reply") or "").strip()
     used_history = context_reply_uses_history(reply)
-    status = "passed" if final and used_history and not error else "failed"
+    result_status = str(result_payload.get("status") or "").strip()
+    model_busy = result_status in {"temporarily_busy", "rate_limited", "timeout"}
+    if final and used_history and not error:
+        status = "passed"
+    elif model_busy:
+        status = "model_busy"
+    else:
+        status = "failed"
     return {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "base_url": base_url,
@@ -75,12 +77,15 @@ def run_context_smoke(*, base_url: str, timeout: float) -> dict[str, Any]:
             "used_history": used_history,
             "total_seconds": total,
             "tool": final.get("tool") if isinstance(final, dict) else None,
+            "result_status": result_status or None,
+            "model_busy": model_busy,
             "backend": result_payload.get("backend"),
             "model": result_payload.get("model"),
             "reply_preview": reply[:400],
             "error": error,
-            "speech_was_muted": True,
-            "speech_mute_restored_to": original_mute,
+            "speech_suppressed_per_request": True,
+            "speech_was_muted": False,
+            "speech_mute_restored_to": None,
         },
     }
 
