@@ -107,6 +107,7 @@ PROOF_ITEMS = [
     "Live verifier now probes voice.wake_debug with pasted Copy Chat JSON and requires no audio recording.",
     "Closed-loop voice QA now synthesizes a command with Piper, transcribes it, routes it through Jarvis while muted, synthesizes the visible reply, and compares the spoken transcript back to the screen text.",
     "Closed-loop voice QA now has a no-permission-prompts mode that skips Apple Speech and fails closed through local STT only.",
+    "Local faster-whisper tiny.en now has a complete checked model cache from the mirror endpoint, so no-permission voice QA can run without Apple Speech.",
     "Latest voice-loop QA passed with Hey Jarvis status routed to status and 0.94 reply similarity.",
     "A 35-second app-bundle Hey Jarvis soak on Jarvis 0.1.279 returned successfully without a new crash report.",
     "Native Hey Jarvis now pauses itself if Apple Speech enters a rapid microphone restart loop, preventing the menu-bar flicker from becoming a crash spiral.",
@@ -115,6 +116,7 @@ PROOF_ITEMS = [
     "Local-only voice QA now fails closed: if STT returns an empty transcript, it does not route a fake status command.",
     "Swift self-tests now reject a tiny Hello TTS preview when the visible final answer is longer.",
     "Voice-loop QA tests now prove no-permission mode does not call the Apple Speech app path.",
+    "Local-only voice QA now passes end to end with faster-whisper tiny.en: Hey Jarvis status routed to status and reply similarity cleared 0.90.",
     "The current live build launched cleanly after the anti-flicker cleanup.",
 ]
 
@@ -134,7 +136,7 @@ RISK_ITEMS = [
     "Real microphone pickup, false wakes, and room-noise reliability still need Leo testing.",
     "Browser loopback noise trials are useful but not a perfect model of a real room.",
     "Speech Recognition permission can still block the native listener until macOS grants it to the current Jarvis bundle.",
-    "Local-only faster-whisper STT is installed as a no-permission fallback path, but the tiny-model weight fetch still fails with connection reset and needs a stable retry before it can replace Apple Speech in overnight QA.",
+    "Local-only faster-whisper STT now works for file-based QA, but tiny.en still mishears some technical words and is not good enough as the final live dictation model.",
     "The full safe verifier was not rerun after the no-permission instruction because some verifier paths can touch microphone or Speech permission; the report keeps the latest 97/97 artifact and the safer live subset separate.",
     "The current wake phrase is experimental; it is not yet personalized to Leo's voice.",
     "Very technical diagnostics are still intentionally speech-silent so Jarvis does not read backend internals aloud.",
@@ -641,7 +643,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Add speech-alignment trace", "Copy Chat JSON now flags when TTS preview text is too short to match the visible answer."),
         ("done", "Add closed-loop voice QA", "The harness compares Piper audio, STT transcript, Jarvis reply text, and spoken reply transcript."),
         ("done", "Add no-prompt voice QA mode", "Overnight runs can skip Apple Speech and fail closed through local STT only."),
-        ("done", "Add local STT fallback hook", "faster-whisper is installed; the tiny model-weight fetch still hits a connection reset."),
+        ("done", "Complete local STT model cache", "faster-whisper tiny.en now has model.bin and passes no-permission voice QA."),
         ("done", "Fail closed on empty local STT", "If local STT returns no transcript, the QA harness stops instead of routing a fake status command."),
         ("done", "Soak-test wake listener", "Jarvis 0.1.279 completed a 35-second app-bundle wake soak without a new crash report."),
         ("done", "Pause wake restart storms", "If Apple Speech rapidly restarts the microphone engine, Jarvis pauses Hey Jarvis instead of flickering until it crashes."),
