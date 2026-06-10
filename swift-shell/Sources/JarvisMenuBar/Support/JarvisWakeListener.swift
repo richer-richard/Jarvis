@@ -4,6 +4,31 @@ import Foundation
 @preconcurrency import Speech
 #endif
 
+#if canImport(Speech)
+private final class JarvisWakeAudioTapSink: @unchecked Sendable {
+    private let request: SFSpeechAudioBufferRecognitionRequest
+
+    init(request: SFSpeechAudioBufferRecognitionRequest) {
+        self.request = request
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        request.append(buffer)
+    }
+}
+
+private func installJarvisWakeAudioTap(
+    on input: AVAudioInputNode,
+    request: SFSpeechAudioBufferRecognitionRequest
+) {
+    let format = input.outputFormat(forBus: 0)
+    let sink = JarvisWakeAudioTapSink(request: request)
+    input.installTap(onBus: 0, bufferSize: 1024, format: format) { [sink] buffer, _ in
+        sink.append(buffer)
+    }
+}
+#endif
+
 struct JarvisWakeListenerSnapshot: Equatable {
     let running: Bool
     let phase: String
@@ -169,7 +194,7 @@ final class JarvisWakeListener {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        Self.installAudioTap(on: input, request: request)
+        installJarvisWakeAudioTap(on: input, request: request)
         engine.prepare()
 
         recognitionRequest = request
@@ -186,16 +211,6 @@ final class JarvisWakeListener {
         recognitionTask = Self.makeRecognitionTask(listener: self, recognizer: recognizer, request: request, generation: generation)
         status = phase == .awaitingCommand ? "Listening for your command" : "Listening for Hey Jarvis"
         publish()
-    }
-
-    nonisolated private static func installAudioTap(
-        on input: AVAudioInputNode,
-        request: SFSpeechAudioBufferRecognitionRequest
-    ) {
-        let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
-        }
     }
 
     nonisolated private static func makeRecognitionTask(

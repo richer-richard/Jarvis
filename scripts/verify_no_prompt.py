@@ -93,16 +93,23 @@ def check_worker_health(base_url: str) -> str:
 
 def check_swift_source_contracts() -> str:
     model_path = PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Models" / "JarvisShellModel.swift"
-    source = model_path.read_text(encoding="utf-8")
-    verify_safe.require("guard !isBusy else" in source, "typed submit busy guard missing")
-    verify_safe.require("private static let busyReplyText" in source, "busy reply text missing")
-    verify_safe.require("private func sendSpeechMute" in source, "direct speech mute helper missing")
-    first_mute = source.find("return try await client.setSpeechMuted(muted)")
-    fallback = source.find("let startup = await workerSupervisor.ensureRunning()")
+    listener_path = PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Support" / "JarvisWakeListener.swift"
+    model_source = model_path.read_text(encoding="utf-8")
+    listener_source = listener_path.read_text(encoding="utf-8")
+    verify_safe.require("guard !isBusy else" in model_source, "typed submit busy guard missing")
+    verify_safe.require("private static let busyReplyText" in model_source, "busy reply text missing")
+    verify_safe.require("private func sendSpeechMute" in model_source, "direct speech mute helper missing")
+    first_mute = model_source.find("return try await client.setSpeechMuted(muted)")
+    fallback = model_source.find("let startup = await workerSupervisor.ensureRunning()")
     verify_safe.require(first_mute >= 0, "direct speech mute call missing")
     verify_safe.require(fallback >= 0, "worker-start fallback missing")
     verify_safe.require(first_mute < fallback, "speech mute should call backend before worker-start fallback")
-    return "Swift source keeps busy-submit guard and direct mute-first path"
+    verify_safe.require("JarvisWakeAudioTapSink: @unchecked Sendable" in listener_source, "non-actor audio tap sink missing")
+    verify_safe.require("installJarvisWakeAudioTap(on: input, request: request)" in listener_source, "audio tap helper call missing")
+    verify_safe.require("input.installTap(onBus: 0, bufferSize: 1024, format: format) { [sink] buffer, _ in" in listener_source, "audio tap should capture sink explicitly")
+    verify_safe.require("restartStormLimit = 2" in listener_source, "stricter wake restart storm limit missing")
+    verify_safe.require("lastPublishedSnapshot" in listener_source, "duplicate wake snapshot guard missing")
+    return "Swift source keeps busy-submit guard, direct mute-first path, and non-actor wake audio tap"
 
 
 if __name__ == "__main__":
