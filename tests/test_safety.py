@@ -4690,6 +4690,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("let previous = isSpeechMuted", model_source)
         self.assertIn("applySpeechMuteState(muted: target)", model_source)
         self.assertIn("applySpeechMuteState(muted: previous)", model_source)
+        self.assertIn("private func sendSpeechMute", model_source)
+        self.assertIn("return try await client.setSpeechMuted(muted)", model_source)
+        self.assertLess(
+            model_source.index("return try await client.setSpeechMuted(muted)"),
+            model_source.index("let startup = await workerSupervisor.ensureRunning()"),
+        )
         self.assertIn("model.onSpeechMuteStateChanged", app_source)
         self.assertIn('"Open Overnight Report"', app_source)
         self.assertIn("openOvernightReport", app_source)

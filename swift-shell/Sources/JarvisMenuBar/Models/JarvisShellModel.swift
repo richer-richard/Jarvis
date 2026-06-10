@@ -194,12 +194,7 @@ final class JarvisShellModel: ObservableObject {
         chatExportText = target ? "Muting speech..." : "Restoring speech..."
         Task {
             do {
-                let startup = await workerSupervisor.ensureRunning()
-                workerText = startup.description
-                guard startup.isReady else {
-                    throw ShellModelError.workerUnavailable(startup.description)
-                }
-                let response = try await client.setSpeechMuted(target)
+                let response = try await sendSpeechMute(target)
                 applySpeechMuteResponse(response)
                 state = response.muted ? "Muted" : "Ready"
                 chatExportText = response.muted ? "Speech muted" : "Speech unmuted"
@@ -215,6 +210,19 @@ final class JarvisShellModel: ObservableObject {
                 chatExportText = "Mute failed"
                 messages.append(ChatMessage(role: .jarvis, text: "I could not change speech mute: \(error)"))
             }
+        }
+    }
+
+    private func sendSpeechMute(_ muted: Bool) async throws -> SpeechMuteResponse {
+        do {
+            return try await client.setSpeechMuted(muted)
+        } catch {
+            let startup = await workerSupervisor.ensureRunning()
+            workerText = startup.description
+            guard startup.isReady else {
+                throw ShellModelError.workerUnavailable(startup.description)
+            }
+            return try await client.setSpeechMuted(muted)
         }
     }
 
