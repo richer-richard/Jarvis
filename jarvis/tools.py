@@ -5509,16 +5509,21 @@ def _report_integrity(
     git_head = _git_head_short()
     proof_text = "\n".join(str(item) for item in (report_snapshot.get("proof_items") or []))
     latest_verification = _latest_runtime_artifact("runtime/verification/verify-safe-*.json")
+    latest_no_prompt_verification = _latest_runtime_artifact("runtime/verification_no_prompt/verify-no-prompt-*.json")
     latest_voice_qa = _latest_runtime_artifact("runtime/voice_loop_qa/*/report.json")
     commit_known = bool(report_commit and git_head.get("ok"))
     bundle_known = bool(report_bundle["version"] and report_bundle["build"] and live_bundle["version"] and live_bundle["build"])
     commit_matches = bool(commit_known and report_commit == str(git_head.get("head") or ""))
     bundle_matches = bool(bundle_known and report_bundle == live_bundle)
     verification_matches = bool(latest_verification and latest_verification in proof_text)
+    no_prompt_verification_matches = bool(
+        latest_no_prompt_verification and latest_no_prompt_verification in proof_text
+    )
     voice_qa_matches = bool(latest_voice_qa and latest_voice_qa in proof_text)
-    artifact_known = bool(latest_verification or latest_voice_qa)
+    artifact_known = bool(latest_verification or latest_no_prompt_verification or latest_voice_qa)
     artifact_matches = (
         (not latest_verification or verification_matches)
+        and (not latest_no_prompt_verification or no_prompt_verification_matches)
         and (not latest_voice_qa or voice_qa_matches)
     )
     if commit_known and bundle_known:
@@ -5532,6 +5537,8 @@ def _report_integrity(
         mismatches.append("live_bundle")
     if latest_verification and not verification_matches:
         mismatches.append("latest_verification")
+    if latest_no_prompt_verification and not no_prompt_verification_matches:
+        mismatches.append("latest_no_prompt_verification")
     if latest_voice_qa and not voice_qa_matches:
         mismatches.append("latest_voice_qa")
     return {
@@ -5545,6 +5552,8 @@ def _report_integrity(
         "bundle_matches_live": bundle_matches,
         "latest_verification": latest_verification,
         "verification_matches_latest": verification_matches,
+        "latest_no_prompt_verification": latest_no_prompt_verification,
+        "no_prompt_verification_matches_latest": no_prompt_verification_matches,
         "latest_voice_qa": latest_voice_qa,
         "voice_qa_matches_latest": voice_qa_matches,
         "artifact_integrity_checked": artifact_known,

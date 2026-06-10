@@ -4106,12 +4106,15 @@ class PlannerTests(unittest.TestCase):
             report = root / "runtime" / "overnight_status" / "report.html"
             stt_page = root / "runtime" / "stt_audition" / "index.html"
             verification = root / "runtime" / "verification" / "verify-safe-20260611-001917.json"
+            no_prompt_verification = root / "runtime" / "verification_no_prompt" / "verify-no-prompt-20260611-013555.json"
             voice_qa = root / "runtime" / "voice_loop_qa" / "20260611-001607" / "report.json"
             workboard.parent.mkdir(parents=True)
             stt_page.parent.mkdir(parents=True)
             verification.parent.mkdir(parents=True)
+            no_prompt_verification.parent.mkdir(parents=True)
             voice_qa.parent.mkdir(parents=True)
             verification.write_text(json.dumps({"ok": True, "results": [{"passed": True}]}), encoding="utf-8")
+            no_prompt_verification.write_text(json.dumps({"ok": True, "results": [{"passed": True}]}), encoding="utf-8")
             voice_qa.write_text(json.dumps({"result": {"status": "failed"}}), encoding="utf-8")
             workboard.write_text("<!doctype html><title>Jarvis Overnight Status</title>", encoding="utf-8")
             report.write_text(
@@ -4200,12 +4203,15 @@ class PlannerTests(unittest.TestCase):
             report = root / "runtime" / "overnight_status" / "report.html"
             stt_page = root / "runtime" / "stt_audition" / "index.html"
             verification = root / "runtime" / "verification" / "verify-safe-20260611-001917.json"
+            no_prompt_verification = root / "runtime" / "verification_no_prompt" / "verify-no-prompt-20260611-013555.json"
             voice_qa = root / "runtime" / "voice_loop_qa" / "20260611-001607" / "report.json"
             workboard.parent.mkdir(parents=True)
             stt_page.parent.mkdir(parents=True)
             verification.parent.mkdir(parents=True)
+            no_prompt_verification.parent.mkdir(parents=True)
             voice_qa.parent.mkdir(parents=True)
             verification.write_text(json.dumps({"ok": True, "results": [{"passed": True}]}), encoding="utf-8")
+            no_prompt_verification.write_text(json.dumps({"ok": True, "results": [{"passed": True}]}), encoding="utf-8")
             voice_qa.write_text(json.dumps({"result": {"status": "failed"}}), encoding="utf-8")
             workboard.write_text("<!doctype html><title>Jarvis Overnight Status</title>", encoding="utf-8")
             report.write_text(
@@ -4219,6 +4225,7 @@ class PlannerTests(unittest.TestCase):
                 <section><h2>Shipped Since The Last Proven Build</h2><ul><li>Fixed launch diagnostics.</li></ul></section>
                 <section><h2>Proof So Far</h2><ul>
                 <li>Latest verifier artifact: runtime/verification/verify-safe-20260611-001917.json with 1/1 checks.</li>
+                <li>No-prompt verifier artifact: runtime/verification_no_prompt/verify-no-prompt-20260611-013555.json with 1/1 checks.</li>
                 <li>Newest closed-loop voice QA run: failed (runtime/voice_loop_qa/20260611-001607/report.json).</li>
                 </ul></section>
                 <section><h2>What You Should Be Able To Do Tomorrow</h2><ul><li>Read the report.</li></ul></section>
@@ -4241,6 +4248,7 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result["report_integrity"]["commit_matches_head"])
         self.assertTrue(result["report_integrity"]["bundle_matches_live"])
         self.assertTrue(result["report_integrity"]["verification_matches_latest"])
+        self.assertTrue(result["report_integrity"]["no_prompt_verification_matches_latest"])
         self.assertTrue(result["report_integrity"]["voice_qa_matches_latest"])
         self.assertIn("Report integrity is current.", result["reply"])
 
@@ -4289,13 +4297,16 @@ class PlannerTests(unittest.TestCase):
             report = root / "runtime" / "overnight_status" / "report.html"
             stt_page = root / "runtime" / "stt_audition" / "index.html"
             verification = root / "runtime" / "verification" / "verify-safe-20260611-001917.json"
+            no_prompt_verification = root / "runtime" / "verification_no_prompt" / "verify-no-prompt-20260611-013555.json"
             voice_qa = root / "runtime" / "voice_loop_qa" / "20260611-001607" / "report.json"
             workboard.parent.mkdir(parents=True)
             stt_page.parent.mkdir(parents=True)
             verification.parent.mkdir(parents=True)
+            no_prompt_verification.parent.mkdir(parents=True)
             voice_qa.parent.mkdir(parents=True)
             workboard.write_text("<!doctype html><title>Jarvis Overnight Status</title>", encoding="utf-8")
             verification.write_text(json.dumps({"ok": True, "results": [{"passed": True}]}), encoding="utf-8")
+            no_prompt_verification.write_text(json.dumps({"ok": True, "results": [{"passed": True}]}), encoding="utf-8")
             voice_qa.write_text(json.dumps({"result": {"status": "failed"}}), encoding="utf-8")
             report.write_text(
                 """
@@ -4324,8 +4335,12 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result["report_integrity"]["commit_matches_head"])
         self.assertTrue(result["report_integrity"]["bundle_matches_live"])
         self.assertFalse(result["report_integrity"]["verification_matches_latest"])
+        self.assertFalse(result["report_integrity"]["no_prompt_verification_matches_latest"])
         self.assertFalse(result["report_integrity"]["voice_qa_matches_latest"])
-        self.assertEqual(result["report_integrity"]["mismatches"], ["latest_verification", "latest_voice_qa"])
+        self.assertEqual(
+            result["report_integrity"]["mismatches"],
+            ["latest_verification", "latest_no_prompt_verification", "latest_voice_qa"],
+        )
         self.assertIn("Report integrity warning", result["reply"])
 
     def test_latest_latency_status_reads_local_smoke_report(self):
