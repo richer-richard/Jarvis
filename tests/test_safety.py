@@ -270,7 +270,17 @@ class VerifySafeScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (failed_dir / "report.json").write_text(
-                json.dumps({"result": {"status": "failed", "reply_similarity": 0.0}}),
+                json.dumps(
+                    {
+                        "input": {"stt_provider": "local"},
+                        "result": {
+                            "status": "failed",
+                            "command_stt": {"status": "failed", "error": "ConnectError: reset"},
+                            "routed_command": "",
+                            "reply_similarity": 0.0,
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
             with patch("scripts.render_overnight_status.PROJECT_ROOT", root):
@@ -282,6 +292,12 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["command_transcript"], "Hey Jarvis status")
         self.assertEqual(result["routed_command"], "status")
         self.assertEqual(result["reply_similarity"], 0.94)
+        self.assertEqual(result["latest_path"], "runtime/voice_loop_qa/20260610-230440/report.json")
+        self.assertEqual(result["latest_label"], "failed")
+        self.assertEqual(result["latest_stt_provider"], "local")
+        self.assertEqual(result["latest_command_stt_status"], "failed")
+        self.assertEqual(result["latest_command_stt_error"], "ConnectError: reset")
+        self.assertEqual(result["latest_routed_command"], "")
 
     def test_verify_safe_checks_overnight_report_routes(self):
         headers = {

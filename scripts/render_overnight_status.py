@@ -240,6 +240,18 @@ def proof_items_with_verification(
             f"routed command {voice_loop['routed_command']!r}, reply similarity {voice_loop['reply_similarity']:.3f} "
             f"({voice_loop['path']})."
         )
+        latest_path = str(voice_loop.get("latest_path") or "")
+        if latest_path and latest_path != voice_loop.get("path"):
+            latest_error = str(voice_loop.get("latest_command_stt_error") or "")
+            if latest_error:
+                latest_error = f", error {shorten(latest_error, 96)}"
+            items.append(
+                "Newest closed-loop voice QA run: "
+                f"{voice_loop['latest_label']}, provider {voice_loop['latest_stt_provider']}, "
+                f"command STT {voice_loop['latest_command_stt_status']}, "
+                f"routed command {voice_loop['latest_routed_command']!r}{latest_error} "
+                f"({latest_path})."
+            )
     return items
 
 
@@ -385,23 +397,27 @@ def latest_voice_loop_qa() -> dict[str, Any]:
             "command_transcript": "",
             "routed_command": "",
             "reply_similarity": 0.0,
+            "latest_path": "",
+            "latest_label": "none",
+            "latest_stt_provider": "",
+            "latest_command_stt_status": "",
+            "latest_command_stt_error": "",
+            "latest_routed_command": "",
         }
-    latest = reports[-1]
-    latest_data: dict[str, Any] | None = None
+    latest_readable: tuple[Path, dict[str, Any]] | None = None
+    latest_passed: tuple[Path, dict[str, Any]] | None = None
     for candidate in reversed(reports):
         try:
             data = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         result = data.get("result") if isinstance(data.get("result"), dict) else {}
-        if latest_data is None:
-            latest = candidate
-            latest_data = data
+        if latest_readable is None:
+            latest_readable = (candidate, data)
         if result.get("status") == "passed":
-            latest = candidate
-            latest_data = data
+            latest_passed = (candidate, data)
             break
-    if latest_data is None:
+    if latest_readable is None:
         return {
             "ok": False,
             "path": str(reports[-1]),
@@ -409,19 +425,41 @@ def latest_voice_loop_qa() -> dict[str, Any]:
             "command_transcript": "",
             "routed_command": "",
             "reply_similarity": 0.0,
+            "latest_path": str(reports[-1]),
+            "latest_label": "unreadable",
+            "latest_stt_provider": "",
+            "latest_command_stt_status": "",
+            "latest_command_stt_error": "",
+            "latest_routed_command": "",
         }
-    data = latest_data
+    latest_path, latest_data = latest_readable
+    proof_path, data = latest_passed or latest_readable
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
     ok = result.get("status") == "passed"
-    relative = str(latest.relative_to(PROJECT_ROOT))
-    return {
+    relative = str(proof_path.relative_to(PROJECT_ROOT))
+    latest_result = latest_data.get("result") if isinstance(latest_data.get("result"), dict) else {}
+    latest_command_stt = latest_result.get("command_stt") if isinstance(latest_result.get("command_stt"), dict) else {}
+    summary = {
         "ok": ok,
         "path": relative,
         "label": "passed" if ok else "needs attention",
         "command_transcript": str(result.get("command_transcript") or ""),
         "routed_command": str(result.get("routed_command") or ""),
         "reply_similarity": float(result.get("reply_similarity") or 0.0),
+        "latest_path": str(latest_path.relative_to(PROJECT_ROOT)),
+        "latest_label": str(latest_result.get("status") or "unknown"),
+        "latest_stt_provider": str(nested(latest_data, "input").get("stt_provider") or "auto"),
+        "latest_command_stt_status": str(latest_command_stt.get("status") or "unknown"),
+        "latest_command_stt_error": str(latest_command_stt.get("error") or ""),
+        "latest_routed_command": str(latest_result.get("routed_command") or ""),
     }
+    return summary
+
+
+def shorten(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 3)].rstrip() + "..."
 
 
 def nested(data: dict[str, Any], *keys: str) -> dict[str, Any]:
