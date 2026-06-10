@@ -6,6 +6,10 @@ import SwiftUI
 @main
 struct JarvisMenuBarApp {
     static func main() {
+        if let fileTest = speechFileSelfTestArguments(CommandLine.arguments) {
+            runSpeechFileSelfTest(audioPath: fileTest.audioPath, outputPath: fileTest.outputPath)
+            return
+        }
         if CommandLine.arguments.contains("--hotkey-self-test") {
             runHotKeySelfTest()
             return
@@ -52,6 +56,14 @@ struct JarvisMenuBarApp {
         app.delegate = delegate
         app.setActivationPolicy(Self.activationPolicy())
         app.run()
+    }
+
+    private static func speechFileSelfTestArguments(_ arguments: [String]) -> (audioPath: String, outputPath: String)? {
+        guard let index = arguments.firstIndex(of: "--stt-file-self-test"),
+              arguments.count > index + 2 else {
+            return nil
+        }
+        return (arguments[index + 1], arguments[index + 2])
     }
 
     static func activationPolicy(environment: [String: String] = ProcessInfo.processInfo.environment) -> NSApplication.ActivationPolicy {
@@ -115,6 +127,27 @@ struct JarvisMenuBarApp {
                 Foundation.exit(0)
             } catch {
                 fputs("Jarvis permission self-test failed: \(error)\n", stderr)
+                Foundation.exit(1)
+            }
+        }
+
+        RunLoop.main.run()
+    }
+
+    private static func runSpeechFileSelfTest(audioPath: String, outputPath: String) {
+        Task {
+            do {
+                try await JarvisMenuBarSelfTest.runSpeechFileTranscription(audioPath: audioPath, outputPath: outputPath)
+                Foundation.exit(0)
+            } catch {
+                try? JarvisMenuBarSelfTest.writeJSON(
+                    [
+                        "status": "failed",
+                        "error": "\(error)",
+                        "audio_path": audioPath,
+                    ],
+                    to: outputPath
+                )
                 Foundation.exit(1)
             }
         }
