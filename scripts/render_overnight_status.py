@@ -67,7 +67,7 @@ SHIPPED_ITEMS = [
     "Speech diagnostics now include a short sanitized text preview, so Copy Chat JSON can show what TTS was asked to say.",
     "Copy Chat JSON turn traces now include speech-alignment diagnostics that flag tiny TTS previews such as Hello against longer visible answers.",
     "Live command endpoints now accept suppress_speech=true or speak=false for quiet verification without muting the whole app.",
-    "Groq 429 rate-limit responses now skip non-tiny retry waits and stream GPT-OSS 120B Cloud through Ollama, with a natural busy reply only if that middle fallback also fails.",
+    "Groq 429 rate-limit responses now retry Groq first before falling through to GPT-OSS 120B Cloud, keeping the smart fallback while improving first-visible latency.",
     "Hey Jarvis now spaces out Apple Speech restarts and stops after the third close restart, reducing the menu-bar dictation flicker loop.",
     "Hey Jarvis now also stops after the fourth restart in one activation, catching slower flicker loops that are not rapid enough for the storm guard.",
     "Hey Jarvis now de-duplicates identical listener snapshots before publishing them to the SwiftUI panel.",
@@ -79,7 +79,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Python safety suite: 447/447 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, and voice-QA work.",
+    "Python safety suite: 464/464 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, retry-first latency, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
@@ -96,8 +96,8 @@ PROOF_ITEMS = [
     "Live verifier now probes diagnostics.model_context and requires the speech-dictation input policy without calling models.",
     "Swift source-contract tests now require Copy Chat JSON to expose the filtered conversation-history payload preview.",
     "Conversation-context smoke tests now suppress speech per request and detect whether a follow-up used prior history without changing global mute state.",
-    "Fast-latency smoke tests now suppress speech per request before timing live prompts, and they read the model-result status so a busy placeholder cannot masquerade as a completed answer.",
-    "Live latency smoke passed on the warmed GPT-OSS fallback path with first visible text between roughly 2.1s and 2.4s.",
+    "Fast-latency smoke tests now suppress speech per request before timing live prompts, count direct final-only replies as visible, and read the model-result status so a busy placeholder cannot masquerade as a completed answer.",
+    "Live latency smoke now passes on Jarvis 0.1.315 with max first visible 2.855s, max total 3.111s, and first visible text as low as 0.214s.",
     "Wake-threshold smoke tests now verify hey jervis passes while hey jars and hey charvis reject at the 0.86 threshold.",
     "Static wake-lab tests now require the threshold corpus panel, corpus buttons, and below-threshold charvis case.",
     "Static and verifier wake-lab tests now require the self-explanatory Live Transcript Only and Copy Codex JSON labels.",
@@ -297,12 +297,20 @@ def proof_items_with_verification(
             f"({wake_threshold['path']})."
         )
     if voice_loop and voice_loop.get("path"):
-        items.append(
-            "Latest closed-loop voice QA: "
-            f"{voice_loop['label']}, command transcript {voice_loop['command_transcript']!r}, "
-            f"routed command {voice_loop['routed_command']!r}, reply similarity {voice_loop['reply_similarity']:.3f} "
-            f"({voice_loop['path']})."
-        )
+        if voice_loop.get("speech_audit_only"):
+            items.append(
+                "Latest voice speech audit: "
+                f"{voice_loop['label']}, payloads {voice_loop['speech_payload_count']}, "
+                f"leaks {voice_loop['speech_leak_count']}, tool {voice_loop['command_response_tool']!r} "
+                f"({voice_loop['path']})."
+            )
+        else:
+            items.append(
+                "Latest closed-loop voice QA: "
+                f"{voice_loop['label']}, command transcript {voice_loop['command_transcript']!r}, "
+                f"routed command {voice_loop['routed_command']!r}, reply similarity {voice_loop['reply_similarity']:.3f} "
+                f"({voice_loop['path']})."
+            )
         latest_path = str(voice_loop.get("latest_path") or "")
         if latest_path and latest_path != voice_loop.get("path"):
             latest_error = str(voice_loop.get("latest_command_stt_error") or "")
@@ -549,6 +557,10 @@ def latest_voice_loop_qa() -> dict[str, Any]:
             "latest_command_stt_status": "",
             "latest_command_stt_error": "",
             "latest_routed_command": "",
+            "speech_audit_only": False,
+            "speech_payload_count": 0,
+            "speech_leak_count": 0,
+            "command_response_tool": "",
         }
     latest_readable: tuple[Path, dict[str, Any]] | None = None
     latest_passed: tuple[Path, dict[str, Any]] | None = None
@@ -577,20 +589,27 @@ def latest_voice_loop_qa() -> dict[str, Any]:
             "latest_command_stt_status": "",
             "latest_command_stt_error": "",
             "latest_routed_command": "",
+            "speech_audit_only": False,
+            "speech_payload_count": 0,
+            "speech_leak_count": 0,
+            "command_response_tool": "",
         }
     latest_path, latest_data = latest_readable
     proof_path, data = latest_passed or latest_readable
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
+    input_data = data.get("input") if isinstance(data.get("input"), dict) else {}
+    speech_audit = result.get("speech_audit") if isinstance(result.get("speech_audit"), dict) else {}
     ok = result.get("status") == "passed"
     relative = str(proof_path.relative_to(PROJECT_ROOT))
     latest_result = latest_data.get("result") if isinstance(latest_data.get("result"), dict) else {}
     latest_command_stt = latest_result.get("command_stt") if isinstance(latest_result.get("command_stt"), dict) else {}
+    is_speech_audit_only = bool(input_data.get("speech_audit_only"))
     summary = {
         "ok": ok,
         "path": relative,
         "label": "passed" if ok else "needs attention",
-        "command_transcript": str(result.get("command_transcript") or ""),
-        "routed_command": str(result.get("routed_command") or ""),
+        "command_transcript": str(result.get("command_transcript") or input_data.get("command_text") or ""),
+        "routed_command": str(result.get("routed_command") or result.get("command_response_tool") or ""),
         "reply_similarity": float(result.get("reply_similarity") or 0.0),
         "latest_path": str(latest_path.relative_to(PROJECT_ROOT)),
         "latest_label": str(latest_result.get("status") or "unknown"),
@@ -598,6 +617,10 @@ def latest_voice_loop_qa() -> dict[str, Any]:
         "latest_command_stt_status": str(latest_command_stt.get("status") or "unknown"),
         "latest_command_stt_error": str(latest_command_stt.get("error") or ""),
         "latest_routed_command": str(latest_result.get("routed_command") or ""),
+        "speech_audit_only": is_speech_audit_only,
+        "speech_payload_count": int(speech_audit.get("payload_count") or 0),
+        "speech_leak_count": int(speech_audit.get("leak_count") or 0),
+        "command_response_tool": str(result.get("command_response_tool") or ""),
     }
     return summary
 

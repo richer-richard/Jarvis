@@ -667,6 +667,48 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["latest_command_stt_error"], "ConnectError: reset")
         self.assertEqual(result["latest_routed_command"], "")
 
+    def test_render_overnight_status_summarizes_speech_audit_voice_qa(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report_dir = root / "runtime" / "voice_loop_qa" / "20260611-233427"
+            report_dir.mkdir(parents=True)
+            (report_dir / "report.json").write_text(
+                json.dumps(
+                    {
+                        "input": {
+                            "command_text": "voice loop simulation: Hey Jarvis. Hello sir. check status",
+                            "stt_provider": "local",
+                            "speech_audit_only": True,
+                        },
+                        "result": {
+                            "status": "passed",
+                            "command_response_tool": "voice.loop_simulation",
+                            "speech_audit": {
+                                "status": "passed",
+                                "payload_count": 2,
+                                "leak_count": 0,
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("scripts.render_overnight_status.PROJECT_ROOT", root):
+                result = render_overnight_status.latest_voice_loop_qa()
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["speech_audit_only"])
+        self.assertEqual(result["speech_payload_count"], 2)
+        self.assertEqual(result["speech_leak_count"], 0)
+        self.assertEqual(result["command_response_tool"], "voice.loop_simulation")
+        items = render_overnight_status.proof_items_with_verification(
+            {"path": "", "passed": 0, "total": 0},
+            voice_loop=result,
+        )
+        self.assertIn("Latest voice speech audit", items[-1])
+        self.assertIn("payloads 2", items[-1])
+        self.assertIn("leaks 0", items[-1])
+
     def test_verify_safe_checks_overnight_report_routes(self):
         headers = {
             "content-length": "48",
