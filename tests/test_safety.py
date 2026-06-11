@@ -4885,6 +4885,19 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('return true', app_source)
         self.assertNotIn("<key>LSUIElement</key>", bundle_script)
 
+    def test_app_bundle_prefers_stable_local_signing_identity(self):
+        bundle_script = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "scripts"
+            / "build_app_bundle.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('local_identity="Jarvis Local Code Signing"', bundle_script)
+        self.assertIn("security find-identity -v -p codesigning", bundle_script)
+        self.assertIn('SIGN_IDENTITY="${SIGN_IDENTITY:-$(default_sign_identity)}"', bundle_script)
+        self.assertIn('codesign --force --deep --sign "$SIGN_IDENTITY"', bundle_script)
+
     def test_swift_menu_bar_has_shut_up_toggle_contract(self):
         app_source = (
             PROJECT_ROOT
@@ -5242,8 +5255,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn("static func wakeStartPreflight()", service_source)
         self.assertIn("wakeStartPreflight(microphone: microphoneStatus(), speechRecognition: speechRecognitionStatus())", service_source)
+        self.assertIn("isRequestableVoiceState", service_source)
+        self.assertIn("Starting Hey Jarvis will ask macOS", service_source)
         self.assertIn("I cannot start Hey Jarvis yet", service_source)
         self.assertIn("let preflight = JarvisPermissionService.wakeStartPreflight()", model_source)
+        self.assertIn("wakeDetailText = preflight.detail", model_source)
         self.assertIn('recordWakeEvent("listener_start_blocked"', model_source)
         self.assertIn('detail: "Wake not started"', model_source)
         self.assertLess(

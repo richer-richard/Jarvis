@@ -12,7 +12,18 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/output}"
 APP_VERSION="${APP_VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 REPLACE_APP="${REPLACE_APP:-0}"
-SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+
+default_sign_identity() {
+  local local_identity="Jarvis Local Code Signing"
+  if command -v security >/dev/null 2>&1 \
+    && security find-identity -v -p codesigning 2>/dev/null | grep -Fq "\"$local_identity\""; then
+    printf '%s\n' "$local_identity"
+    return
+  fi
+  printf '%s\n' "-"
+}
+
+SIGN_IDENTITY="${SIGN_IDENTITY:-$(default_sign_identity)}"
 
 xml_escape() {
   local value="$1"

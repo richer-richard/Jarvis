@@ -185,6 +185,7 @@ final class JarvisShellModel: ObservableObject {
                 messages.append(ChatMessage(role: .jarvis, text: preflight.message, detail: "Wake not started"))
                 return
             }
+            wakeDetailText = preflight.detail
             recordWakeEvent("listener_start_requested", detail: wakeDetailText)
             wakeListener.start()
         }

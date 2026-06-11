@@ -123,9 +123,12 @@ def check_swift_wake_preflight_contracts() -> str:
     permission_source = permission_path.read_text(encoding="utf-8")
     verify_safe.require("wakeStartPreflight()" in permission_source, "wake permission preflight helper missing")
     verify_safe.require("let preflight = JarvisPermissionService.wakeStartPreflight()" in model_source, "wake start should preflight permissions")
+    verify_safe.require("isRequestableVoiceState" in permission_source, "wake preflight should distinguish requestable and blocked voice states")
+    verify_safe.require("Starting Hey Jarvis will ask macOS" in permission_source, "wake preflight should allow explicit start for requestable voice states")
+    verify_safe.require("wakeDetailText = preflight.detail" in model_source, "wake start should show preflight detail before starting listener")
     verify_safe.require('recordWakeEvent("listener_start_blocked"' in model_source, "wake start blocked event missing")
     verify_safe.require('detail: "Wake not started"' in model_source, "wake start blocked visible message missing")
-    return "Swift wake start preflights permissions and shows a visible blocked message without requesting prompts"
+    return "Swift wake start preflights permissions, allows explicit requestable voice starts, and blocks denied states visibly"
 
 
 if __name__ == "__main__":

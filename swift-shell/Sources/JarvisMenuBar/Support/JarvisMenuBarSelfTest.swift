@@ -307,11 +307,11 @@ enum JarvisMenuBarSelfTest {
             detail: "Ready",
             isReady: true
         )
-        let missingSpeech = PermissionReadiness(
+        let requestableSpeech = PermissionReadiness(
             id: "speech-recognition",
             label: "Speech Recognition",
             state: "Not requested",
-            detail: "Missing",
+            detail: "Not requested",
             isReady: false
         )
         guard JarvisPermissionService.wakeStartPreflight(
@@ -320,12 +320,26 @@ enum JarvisMenuBarSelfTest {
         ).allowed else {
             throw SelfTestError.failed("Wake preflight should allow already-granted voice permissions.")
         }
+        let requestableWake = JarvisPermissionService.wakeStartPreflight(
+            microphone: readyMicrophone,
+            speechRecognition: requestableSpeech
+        )
+        guard requestableWake.allowed, requestableWake.detail.contains("Starting Hey Jarvis will ask macOS") else {
+            throw SelfTestError.failed("Wake preflight should allow user-initiated start when voice permissions are still requestable.")
+        }
+        let deniedSpeech = PermissionReadiness(
+            id: "speech-recognition",
+            label: "Speech Recognition",
+            state: "Denied",
+            detail: "Denied",
+            isReady: false
+        )
         let blockedWake = JarvisPermissionService.wakeStartPreflight(
             microphone: readyMicrophone,
-            speechRecognition: missingSpeech
+            speechRecognition: deniedSpeech
         )
         guard !blockedWake.allowed, blockedWake.message.contains("I cannot start Hey Jarvis yet") else {
-            throw SelfTestError.failed("Wake preflight should block without prompting when speech permission is missing.")
+            throw SelfTestError.failed("Wake preflight should block without prompting when speech permission is denied.")
         }
 
         print("Jarvis permission self-test passed")

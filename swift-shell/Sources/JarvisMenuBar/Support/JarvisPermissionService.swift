@@ -32,8 +32,22 @@ enum JarvisPermissionService {
         microphone: PermissionReadiness,
         speechRecognition: PermissionReadiness
     ) -> WakeStartPreflight {
-        let blockers = [microphone, speechRecognition].filter { !$0.isReady }
+        let voicePermissions = [microphone, speechRecognition]
+        let blockers = voicePermissions.filter { permission in
+            !permission.isReady && !isRequestableVoiceState(permission.state)
+        }
         guard !blockers.isEmpty else {
+            let requestable = voicePermissions.filter { permission in
+                !permission.isReady && isRequestableVoiceState(permission.state)
+            }
+            if !requestable.isEmpty {
+                let labels = requestable.map { "\($0.label) is \($0.state.lowercased())" }.joined(separator: "; ")
+                return WakeStartPreflight(
+                    allowed: true,
+                    message: "Hey Jarvis can start.",
+                    detail: "\(labels). Starting Hey Jarvis will ask macOS for voice access if it still needs to."
+                )
+            }
             return WakeStartPreflight(
                 allowed: true,
                 message: "Hey Jarvis can start.",
@@ -46,6 +60,10 @@ enum JarvisPermissionService {
             message: "I cannot start Hey Jarvis yet. \(labels). Open Permissions and grant them first.",
             detail: labels
         )
+    }
+
+    private static func isRequestableVoiceState(_ state: String) -> Bool {
+        state.caseInsensitiveCompare("Not requested") == .orderedSame
     }
 
     private static func microphoneStatus() -> PermissionReadiness {
