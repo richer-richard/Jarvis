@@ -40,6 +40,31 @@ JARVIS_APP = PROJECT_ROOT / "output" / "Jarvis.app"
 LOCAL_STT_ROOT = PROJECT_ROOT / "runtime" / "stt_models" / "faster_whisper"
 LOCAL_STT_PYTHON = LOCAL_STT_ROOT / ".venv" / "bin" / "python"
 LOCAL_STT_MODEL = "tiny.en"
+INTERNAL_SPEECH_LEAK_PATTERNS: list[tuple[str, str, str]] = [
+    ("hidden_tool_call", "Hidden tool call syntax", r"\\\s*tool\s*[\(\{]"),
+    ("json_tool_key", "Raw JSON tool key", r"[\"']tool[\"']\s*:"),
+    ("selected_tool", "Selected-tool field", r"\bselected[_\s-]?tool\b"),
+    ("status_text", "Status-text field", r"\bstatus[_\s-]?text\b"),
+    ("tool_requested", "Tool-requested routing state", r"\btool[_\s-]?requested\b"),
+    ("final_result", "Streaming final-result event", r"\bfinal[_\s-]?result\b"),
+    ("audit_event_id", "Audit event identifier", r"\baudit[_\s-]?event[_\s-]?id\b"),
+    (
+        "internal_tool_id",
+        "Internal dotted tool id",
+        r"\b(?:app|browser|codex|conversation|diagnostics|files|memory|outlook|quick|screen|shell|system|teams|terminal|tools|ui|voice|workflow)\.[a-z0-9_]+\b",
+    ),
+]
+NORMALIZED_INTERNAL_SPEECH_PHRASES = {
+    "backslash tool": "Hidden tool call syntax",
+    "selected tool": "Selected-tool field",
+    "status text": "Status-text field",
+    "tool requested": "Tool-requested routing state",
+    "final result": "Streaming final-result event",
+    "audit event id": "Audit event identifier",
+    "quick local control": "Internal quick local tool id",
+    "conversation fast local": "Internal fast-chat tool id",
+    "outlook visible summary": "Internal email tool id",
+}
 
 PIPER_SYNTHESIZE_CODE = r"""
 import sys
@@ -144,21 +169,37 @@ def main() -> int:
         action="store_true",
         help="Do not open the Apple Speech transcription path; use local STT only and fail closed if it is unavailable.",
     )
+    parser.add_argument(
+        "--speech-audit-only",
+        action="store_true",
+        help="Skip wake-command synthesis and audit only the exact speech payloads Jarvis would produce for --command.",
+    )
     args = parser.parse_args()
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     run_dir = Path(args.output_dir).resolve() / stamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    report = run_voice_loop(
-        command_text=args.command,
-        base_url=args.base_url.rstrip("/"),
-        run_dir=run_dir,
-        length_scale=args.length_scale,
-        timeout=args.timeout,
-        stt_provider=args.stt_provider,
-        no_permission_prompts=args.no_permission_prompts,
-    )
+    if args.speech_audit_only:
+        report = run_speech_audit(
+            command_text=args.command,
+            base_url=args.base_url.rstrip("/"),
+            run_dir=run_dir,
+            length_scale=args.length_scale,
+            timeout=args.timeout,
+            stt_provider=args.stt_provider,
+            no_permission_prompts=args.no_permission_prompts,
+        )
+    else:
+        report = run_voice_loop(
+            command_text=args.command,
+            base_url=args.base_url.rstrip("/"),
+            run_dir=run_dir,
+            length_scale=args.length_scale,
+            timeout=args.timeout,
+            stt_provider=args.stt_provider,
+            no_permission_prompts=args.no_permission_prompts,
+        )
 
     report_path = run_dir / "report.json"
     latest_path = Path(args.output_dir).resolve() / "latest.json"
@@ -167,11 +208,24 @@ def main() -> int:
 
     result = report.get("result", {})
     print(f"Report: {report_path}")
-    print(f"Command transcript: {result.get('command_transcript')!r}")
-    print(f"Routed command: {result.get('routed_command')!r}")
-    print(f"Visible reply: {result.get('visible_reply_preview')!r}")
-    print(f"Reply transcript: {result.get('reply_transcript')!r}")
-    print(f"Similarity: {result.get('reply_similarity')}")
+    if args.speech_audit_only:
+        audit = result.get("speech_audit") if isinstance(result.get("speech_audit"), dict) else {}
+        transcripts = [
+            str(item.get("transcript") or "").strip()
+            for item in audit.get("items", [])
+            if isinstance(item, dict) and str(item.get("transcript") or "").strip()
+        ]
+        print(f"Speech audit status: {audit.get('status')}")
+        print(f"Payloads: {audit.get('payload_count')} | Leaks: {audit.get('leak_count')}")
+        print(f"Visible reply: {result.get('visible_reply_preview')!r}")
+        if transcripts:
+            print(f"Speech transcript: {transcripts[-1]!r}")
+    else:
+        print(f"Command transcript: {result.get('command_transcript')!r}")
+        print(f"Routed command: {result.get('routed_command')!r}")
+        print(f"Visible reply: {result.get('visible_reply_preview')!r}")
+        print(f"Reply transcript: {result.get('reply_transcript')!r}")
+        print(f"Similarity: {result.get('reply_similarity')}")
     return 0 if result.get("status") == "passed" else 1
 
 
@@ -241,13 +295,25 @@ def run_voice_loop(
             }
             return report
 
-        command_response = post_json(
-            f"{base_url}/api/command",
-            {"command": route["command"], "suppress_speech": True},
+        stream_events = stream_command_events(
+            base_url,
+            route["command"],
             timeout=timeout,
+            suppress_speech=True,
         )
+        command_response = final_response_from_stream_events(stream_events)
+        if not command_response:
+            raise RuntimeError("Jarvis stream did not return a final response.")
 
         visible_reply = extract_visible_reply(command_response)
+        speech_audit = audit_spoken_payloads(
+            speech_payloads_from_stream_events(stream_events),
+            run_dir=run_dir,
+            length_scale=length_scale,
+            timeout=timeout,
+            stt_provider=stt_provider,
+            no_permission_prompts=no_permission_prompts,
+        )
         reply_tts = synthesize(visible_reply or "No visible reply.", reply_audio, length_scale=length_scale)
         reply_transcription = transcribe_audio(
             reply_audio,
@@ -271,6 +337,12 @@ def run_voice_loop(
         if similarity < 0.68:
             status = "warning"
             warnings.append("Reply transcript differed meaningfully from visible reply.")
+        if speech_audit.get("status") == "failed":
+            status = "failed"
+            warnings.append("Speech audit found internal text in spoken output.")
+        elif speech_audit.get("status") == "warning" and status == "passed":
+            status = "warning"
+            warnings.extend(str(warning) for warning in speech_audit.get("warnings", []))
 
         report["result"] = {
             "status": status,
@@ -283,6 +355,8 @@ def run_voice_loop(
             "routed_command": route["command"],
             "command_response_tool": command_response.get("tool"),
             "visible_reply_preview": visible_reply[:500],
+            "stream_event_count": len(stream_events),
+            "speech_audit": speech_audit,
             "reply_tts": reply_tts,
             "reply_stt": reply_transcription,
             "reply_transcript": reply_transcript,
@@ -298,8 +372,228 @@ def run_voice_loop(
         return report
 
 
+def run_speech_audit(
+    *,
+    command_text: str,
+    base_url: str,
+    run_dir: Path,
+    length_scale: float,
+    timeout: float,
+    stt_provider: str,
+    no_permission_prompts: bool = False,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    report: dict[str, Any] = {
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "base_url": base_url,
+        "run_dir": str(run_dir),
+        "input": {
+            "command_text": command_text,
+            "length_scale": length_scale,
+            "stt_provider": stt_provider,
+            "no_permission_prompts": no_permission_prompts,
+            "speech_audit_only": True,
+        },
+    }
+    try:
+        stream_events = stream_command_events(
+            base_url,
+            command_text,
+            timeout=timeout,
+            suppress_speech=True,
+        )
+        command_response = final_response_from_stream_events(stream_events)
+        speech_audit = audit_spoken_payloads(
+            speech_payloads_from_stream_events(stream_events),
+            run_dir=run_dir,
+            length_scale=length_scale,
+            timeout=timeout,
+            stt_provider=stt_provider,
+            no_permission_prompts=no_permission_prompts,
+        )
+        report["result"] = {
+            "status": speech_audit.get("status", "failed"),
+            "warnings": speech_audit.get("warnings", []),
+            "total_seconds": round(time.monotonic() - started, 3),
+            "command_response_tool": command_response.get("tool") if command_response else "",
+            "visible_reply_preview": extract_visible_reply(command_response)[:500] if command_response else "",
+            "stream_event_count": len(stream_events),
+            "speech_audit": speech_audit,
+        }
+        return report
+    except Exception as error:
+        report["result"] = {
+            "status": "failed",
+            "error": f"{type(error).__name__}: {error}",
+            "total_seconds": round(time.monotonic() - started, 3),
+        }
+        return report
+
+
+def audit_spoken_payloads(
+    payloads: list[dict[str, Any]],
+    *,
+    run_dir: Path,
+    length_scale: float,
+    timeout: float,
+    stt_provider: str,
+    no_permission_prompts: bool = False,
+) -> dict[str, Any]:
+    audit_dir = run_dir / "speech-audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    items: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    all_leaks: list[dict[str, Any]] = []
+    for index, payload in enumerate(payloads, start=1):
+        source = re.sub(r"[^a-z0-9]+", "-", str(payload.get("source") or "speech").lower()).strip("-") or "speech"
+        text = str(payload.get("text") or "").strip()
+        audio_path = audit_dir / f"{index:02d}-{source}.wav"
+        stt_path = audit_dir / f"{index:02d}-{source}-stt.json"
+        local_stt_path = audit_dir / f"{index:02d}-{source}-local-stt.json"
+        intended_leaks = detect_internal_speech_leaks(text, source=f"{source}.intended")
+        item: dict[str, Any] = {
+            "index": index,
+            "source": source,
+            "reason": payload.get("reason"),
+            "tool": payload.get("tool"),
+            "text_preview": text[:500],
+            "intended_leaks": intended_leaks,
+            "audio_path": str(audio_path),
+            "stt_path": str(stt_path),
+            "local_stt_path": str(local_stt_path),
+        }
+        all_leaks.extend(intended_leaks)
+        try:
+            item["tts"] = synthesize(text, audio_path, length_scale=length_scale)
+            transcription = transcribe_audio(
+                audio_path,
+                apple_output_json=stt_path,
+                local_output_json=local_stt_path,
+                timeout=timeout,
+                provider=stt_provider,
+                no_permission_prompts=no_permission_prompts,
+            )
+            transcript = str(transcription.get("transcript") or "").strip()
+            transcript_leaks = detect_internal_speech_leaks(transcript, source=f"{source}.transcript")
+            all_leaks.extend(transcript_leaks)
+            item["stt"] = transcription
+            item["transcript"] = transcript
+            item["transcript_leaks"] = transcript_leaks
+            item["similarity"] = text_similarity(text, transcript)
+            if transcription.get("status") != "completed":
+                warnings.append(f"{source} STT status was {transcription.get('status')}.")
+        except Exception as error:
+            item["stt"] = {
+                "status": "failed",
+                "error": f"{type(error).__name__}: {error}",
+            }
+            warnings.append(f"{source} audit failed: {type(error).__name__}: {error}")
+        items.append(item)
+
+    if not payloads:
+        warnings.append("No spoken payloads were captured from the Jarvis stream.")
+    status = "passed"
+    if all_leaks:
+        status = "failed"
+    elif warnings:
+        status = "warning"
+    return {
+        "status": status,
+        "payload_count": len(payloads),
+        "warnings": warnings,
+        "leak_count": len(all_leaks),
+        "leaks": all_leaks,
+        "items": items,
+    }
+
+
+def detect_internal_speech_leaks(text: str, *, source: str = "speech") -> list[dict[str, Any]]:
+    leaks: list[dict[str, Any]] = []
+    raw_text = str(text or "")
+    for leak_id, label, pattern in INTERNAL_SPEECH_LEAK_PATTERNS:
+        match = re.search(pattern, raw_text, flags=re.IGNORECASE)
+        if match:
+            leaks.append(
+                {
+                    "id": leak_id,
+                    "label": label,
+                    "source": source,
+                    "excerpt": match.group(0)[:160],
+                }
+            )
+    normalized = normalize_text(raw_text)
+    for phrase, label in NORMALIZED_INTERNAL_SPEECH_PHRASES.items():
+        if phrase in normalized:
+            leaks.append(
+                {
+                    "id": phrase.replace(" ", "_"),
+                    "label": label,
+                    "source": source,
+                    "excerpt": phrase,
+                }
+            )
+    return leaks
+
+
+def speech_payloads_from_stream_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for index, event in enumerate(events):
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        event_name = str(event.get("event") or "")
+        speech = data.get("speech") if isinstance(data.get("speech"), dict) else {}
+        if event_name == "status":
+            text = str(speech.get("text_preview") or data.get("text") or "").strip()
+            if text and speech.get("status") != "suppressed_for_stop_speaking":
+                payloads.append(
+                    {
+                        "source": "status",
+                        "event_index": index,
+                        "reason": speech.get("reason") or "status",
+                        "tool": data.get("tool"),
+                        "text": text,
+                    }
+                )
+        elif event_name == "final":
+            text = str(speech.get("text_preview") or "").strip()
+            if text:
+                payloads.append(
+                    {
+                        "source": "final",
+                        "event_index": index,
+                        "reason": speech.get("reason") or "final",
+                        "tool": data.get("tool"),
+                        "text": text,
+                    }
+                )
+    return payloads
+
+
+def final_response_from_stream_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    for event in reversed(events):
+        if event.get("event") == "final" and isinstance(event.get("data"), dict):
+            return event["data"]
+    return {}
+
+
 def synthesize(text: str, output_wav: Path, *, length_scale: float) -> dict[str, Any]:
     output_wav.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = synthesize_with_say(text, output_wav)
+        result["matches_live_provider"] = True
+        return result
+    except Exception as say_error:
+        if not (PIPER_PYTHON.exists() and PIPER_MODEL.exists() and PIPER_CONFIG.exists()):
+            raise
+        fallback = synthesize_with_piper(text, output_wav, length_scale=length_scale)
+        fallback["fallback_from"] = "macos-say"
+        fallback["fallback_reason"] = f"{type(say_error).__name__}: {say_error}"[-500:]
+        fallback["matches_live_provider"] = False
+        return fallback
+
+
+def synthesize_with_piper(text: str, output_wav: Path, *, length_scale: float) -> dict[str, Any]:
     if PIPER_PYTHON.exists() and PIPER_MODEL.exists() and PIPER_CONFIG.exists():
         started = time.monotonic()
         env = os.environ.copy()
@@ -335,9 +629,10 @@ def synthesize(text: str, output_wav: Path, *, length_scale: float) -> dict[str,
         fallback = synthesize_with_say(text, output_wav)
         fallback["fallback_from"] = "piper"
         fallback["fallback_reason"] = piper_error[-500:]
+        fallback["matches_live_provider"] = True
         return fallback
 
-    return synthesize_with_say(text, output_wav)
+    raise RuntimeError("Piper is unavailable.")
 
 
 def piper_espeak_data_dir() -> Path | None:
@@ -356,7 +651,7 @@ def synthesize_with_say(text: str, output_wav: Path) -> dict[str, Any]:
     started = time.monotonic()
     aiff_path = output_wav.with_suffix(".aiff")
     completed = subprocess.run(
-        ["/usr/bin/say", "-v", "Alex", "-o", str(aiff_path), text],
+        ["/usr/bin/say", "-o", str(aiff_path), text],
         capture_output=True,
         text=True,
         timeout=60,
@@ -378,7 +673,7 @@ def synthesize_with_say(text: str, output_wav: Path) -> dict[str, Any]:
         raise RuntimeError(f"ffmpeg failed: {converted.stderr.strip() or converted.stdout.strip()}")
     return {
         "provider": "macos-say",
-        "voice": "Alex",
+        "voice": "system default",
         "output": str(output_wav),
         "duration_seconds": round(time.monotonic() - started, 3),
     }
@@ -636,6 +931,58 @@ def normalize_text(text: str) -> str:
 def get_json(url: str, *, timeout: float) -> dict[str, Any]:
     with urllib.request.urlopen(url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def stream_command_events(
+    base_url: str,
+    command: str,
+    *,
+    timeout: float,
+    suppress_speech: bool = True,
+) -> list[dict[str, Any]]:
+    payload = {"command": command, "suppress_speech": True}
+    if not suppress_speech:
+        payload["suppress_speech"] = False
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/api/command/stream",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    events: list[dict[str, Any]] = []
+    event_name = "message"
+    data_lines: list[str] = []
+
+    def flush_event() -> None:
+        nonlocal event_name, data_lines
+        if not data_lines:
+            event_name = "message"
+            return
+        raw_data = "\n".join(data_lines)
+        try:
+            data: Any = json.loads(raw_data)
+        except json.JSONDecodeError:
+            data = raw_data
+        events.append({"event": event_name, "data": data})
+        event_name = "message"
+        data_lines = []
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    flush_event()
+                    continue
+                if line.startswith("event:"):
+                    event_name = line[6:].strip() or "message"
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].strip())
+            flush_event()
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {error.code}: {body[:500]}") from error
+    return events
 
 
 def post_json(url: str, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:

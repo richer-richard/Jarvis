@@ -359,6 +359,80 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["apple_speech"]["status"], "apple_speech_skipped_no_permission_prompts")
         local_stt.assert_called_once()
 
+    def test_voice_loop_qa_detects_internal_speech_leaks(self):
+        safe = voice_loop_qa.detect_internal_speech_leaks("Yes sir, checking your email now.")
+        leaky = voice_loop_qa.detect_internal_speech_leaks(
+            'Yes sir. \\tool({"tool":"outlook.visible_summary","selected_tool":"x"})'
+        )
+        ids = {item["id"] for item in leaky}
+
+        self.assertEqual(safe, [])
+        self.assertIn("hidden_tool_call", ids)
+        self.assertIn("json_tool_key", ids)
+        self.assertIn("selected_tool", ids)
+        self.assertIn("internal_tool_id", ids)
+
+    def test_voice_loop_qa_extracts_spoken_payloads_from_stream_events(self):
+        events = [
+            {
+                "event": "status",
+                "data": {
+                    "text": "Yes sir, checking your email now.",
+                    "tool": "outlook.visible_summary",
+                    "speech": {
+                        "status": "suppressed_by_request",
+                        "reason": "status",
+                        "text_preview": "Yes sir, checking your email now.",
+                    },
+                },
+            },
+            {
+                "event": "final",
+                "data": {
+                    "tool": "outlook.visible_summary",
+                    "speech": {
+                        "status": "suppressed_by_request",
+                        "reason": "final",
+                        "text_preview": "There is a form you may need to fill in.",
+                    },
+                },
+            },
+        ]
+
+        payloads = voice_loop_qa.speech_payloads_from_stream_events(events)
+
+        self.assertEqual([item["source"] for item in payloads], ["status", "final"])
+        self.assertEqual(payloads[0]["text"], "Yes sir, checking your email now.")
+        self.assertEqual(payloads[1]["text"], "There is a form you may need to fill in.")
+
+    def test_voice_loop_qa_audits_payloads_and_transcripts_for_leaks(self):
+        payloads = [
+            {"source": "status", "reason": "status", "tool": "outlook.visible_summary", "text": "Yes sir, checking your email now."},
+            {"source": "final", "reason": "final", "tool": "outlook.visible_summary", "text": 'Done. \\tool({"tool":"quick.local_control"})'},
+        ]
+        transcripts = [
+            {"status": "completed", "provider": "faster_whisper", "transcript": "Yes sir checking your email now"},
+            {"status": "completed", "provider": "faster_whisper", "transcript": "Done backslash tool quick local control"},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.synthesize", side_effect=lambda text, output, *, length_scale: {"provider": "test", "output": str(output)}), \
+             patch("scripts.voice_loop_qa.transcribe_audio", side_effect=transcripts):
+            result = voice_loop_qa.audit_spoken_payloads(
+                payloads,
+                run_dir=Path(temp_dir),
+                length_scale=1.0,
+                timeout=1,
+                stt_provider="local",
+                no_permission_prompts=True,
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["payload_count"], 2)
+        self.assertGreaterEqual(result["leak_count"], 2)
+        leak_sources = {leak["source"] for leak in result["leaks"]}
+        self.assertIn("final.intended", leak_sources)
+        self.assertIn("final.transcript", leak_sources)
+
     def test_wake_threshold_smoke_has_expected_boundary(self):
         report = smoke_wake_threshold.run_wake_threshold_smoke()
 
@@ -5182,8 +5256,17 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("--stt-provider", script_source)
         self.assertIn('choices=("auto", "apple", "local")', script_source)
         self.assertIn("--no-permission-prompts", script_source)
+        self.assertIn("--speech-audit-only", script_source)
         self.assertIn("apple_speech_skipped_no_permission_prompts", script_source)
         self.assertIn("no_permission_prompts", script_source)
+        self.assertIn("run_speech_audit", script_source)
+        self.assertIn("stream_command_events", script_source)
+        self.assertIn("speech_payloads_from_stream_events", script_source)
+        self.assertIn("audit_spoken_payloads", script_source)
+        self.assertIn("detect_internal_speech_leaks", script_source)
+        self.assertIn("INTERNAL_SPEECH_LEAK_PATTERNS", script_source)
+        self.assertIn("speech-audit", script_source)
+        self.assertIn('["/usr/bin/say", "-o", str(aiff_path), text]', script_source)
         self.assertIn('if provider == "local"', script_source)
         self.assertIn('HF_HUB_DISABLE_XET", "1"', script_source)
         self.assertIn("first_existing_path", script_source)
@@ -8723,6 +8806,46 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(mail_mock.call_args.kwargs["selection"], "index:2")
         speak_mock.assert_any_call("Yes sir, checking your second email now.", reason="status")
         speak_mock.assert_any_call("Checked email without reading a real mailbox in this test.", reason="final")
+
+    def test_stream_command_suppressed_speech_includes_auditable_text_preview(self):
+        fake_result = {
+            "tool": "outlook.visible_summary",
+            "status": "checked",
+            "source": "apple_mail",
+            "messages": [],
+            "message_count": 0,
+            "reply": "Checked email without reading a real mailbox in this test.",
+        }
+        fake_events = [
+            {
+                "event": "final_result",
+                "data": {
+                    "tool": "conversation.fast_local",
+                    "status": "tool_requested",
+                    "selected_tool": "outlook.visible_summary",
+                    "status_text": "Yes sir, checking your email now.",
+                    "entities": {},
+                    "executed": True,
+                },
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.stream_fast_local_chat_events", return_value=fake_events), \
+                 patch("jarvis.planner.outlook_read_only_check", return_value=fake_result), \
+                 patch("jarvis.server.speak_text_async") as speak_mock:
+                events = list(server.stream_command("please check my email", suppress_speech=True))
+
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(events[0]["data"]["speech"]["text_preview"], "Yes sir, checking your email now.")
+        self.assertEqual(events[-1]["data"]["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(
+            events[-1]["data"]["speech"]["text_preview"],
+            "Checked email without reading a real mailbox in this test.",
+        )
+        speak_mock.assert_not_called()
 
     def test_native_outlook_visible_text_endpoint_speaks_final_reply(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -43,6 +43,7 @@ from .tools import (
     tool_registry,
     wake_audition_score,
     wake_audition_status,
+    _sanitize_spoken_text,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -134,7 +135,7 @@ class JarvisServer:
                 if preview_tool == "voice.stop_speaking":
                     speech = {"spoken": False, "status": "suppressed_for_stop_speaking", "reason": "status"}
                 elif suppress_speech:
-                    speech = _suppressed_speech_result(reason="status")
+                    speech = _suppressed_speech_result(reason="status", text=status_text)
                 else:
                     speech = speak_text_async(status_text, reason="status")
                 yield {
@@ -178,6 +179,8 @@ class JarvisServer:
             if status_text:
                 if selected_tool == "voice.stop_speaking":
                     speech = {"spoken": False, "status": "suppressed_for_stop_speaking", "reason": "status"}
+                elif suppress_speech:
+                    speech = _suppressed_speech_result(reason="status", text=status_text)
                 else:
                     speech = speak_text_async(status_text, reason="status")
                 yield {
@@ -714,19 +717,28 @@ def _attach_auto_speech(data: dict[str, Any], *, reason: str, suppress: bool = F
     text = _speech_text_from_result(result) or str(data.get("summary") or "").strip()
     if suppress:
         if text.strip():
-            data["speech"] = _suppressed_speech_result(reason=reason)
+            data["speech"] = _suppressed_speech_result(reason=reason, text=text)
         return
     speech = speak_text_async(text, reason=reason)
     if speech.get("spoken") or speech.get("status") not in {"disabled", "empty"}:
         data["speech"] = speech
 
 
-def _suppressed_speech_result(*, reason: str) -> dict[str, Any]:
-    return {
+def _suppressed_speech_result(*, reason: str, text: str = "") -> dict[str, Any]:
+    result = {
         "spoken": False,
         "status": "suppressed_by_request",
         "reason": reason,
     }
+    if text.strip():
+        sanitized = _sanitize_spoken_text(text)
+        result.update(
+            {
+                "text_preview": sanitized,
+                "text_length": len(sanitized),
+            }
+        )
+    return result
 
 
 def _should_auto_speak(data: dict[str, Any]) -> bool:
