@@ -8988,9 +8988,9 @@ def _retry_groq_rate_limited_fast_chat(
 def _ollama_fast_chat_num_predict(selected_model: str) -> int:
     model = str(selected_model or "").strip()
     if model and model == str(MIDDLE_MODEL or "").strip():
-        return max(FAST_MODEL_MAX_TOKENS, min(MIDDLE_MODEL_MAX_TOKENS, 220))
+        return max(FAST_MODEL_MAX_TOKENS, min(MIDDLE_MODEL_MAX_TOKENS, 128))
     if _ollama_model_uses_cloud(model):
-        return max(FAST_MODEL_MAX_TOKENS, min(MIDDLE_MODEL_MAX_TOKENS, 220))
+        return max(FAST_MODEL_MAX_TOKENS, min(MIDDLE_MODEL_MAX_TOKENS, 128))
     return FAST_MODEL_MAX_TOKENS
 
 
@@ -9056,6 +9056,10 @@ def _groq_rate_limit_middle_fallback_model() -> str | None:
 def _groq_rate_limit_should_try_middle_first(delay_seconds: float) -> bool:
     del delay_seconds
     return False
+
+
+def _groq_fast_response_timeout_seconds() -> float:
+    return max(1.0, min(float(FAST_MODEL_TIMEOUT_SECONDS), 2.4))
 
 
 def _groq_retry_delay_seconds(error_text: Any) -> float:
@@ -9145,7 +9149,7 @@ def _run_groq_fast_chat(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=FAST_MODEL_TIMEOUT_SECONDS, context=_https_context()) as response:
+        with urllib.request.urlopen(request, timeout=_groq_fast_response_timeout_seconds(), context=_https_context()) as response:
             raw = response.read().decode("utf-8", errors="replace")
     except TimeoutError:
         duration = _duration_fields(started_at)
@@ -9362,7 +9366,7 @@ def stream_fast_local_chat_events(
     visible_buffer = _FastChatVisibleStreamBuffer() if tool_specs else None
     first_visible_token_at: float | None = None
     try:
-        with urllib.request.urlopen(request, timeout=FAST_MODEL_TIMEOUT_SECONDS, context=_https_context()) as response:
+        with urllib.request.urlopen(request, timeout=_groq_fast_response_timeout_seconds(), context=_https_context()) as response:
             for raw_line in response:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line.startswith("data:"):
@@ -9403,6 +9407,18 @@ def stream_fast_local_chat_events(
             **duration,
             "reply": _fast_model_timeout_reply(selected_model, duration["duration_human"]),
         }
+        if FAST_MODEL_FALLBACK_ENABLED and FAST_MODEL_FALLBACK_BACKEND == "ollama":
+            yield _fast_chat_fallback_status_event()
+            yield from _stream_ollama_fast_chat_events(
+                prompt,
+                model=_groq_rate_limit_middle_fallback_model(),
+                history=history,
+                tool_specs=tool_specs,
+                overall_started_at=started_at,
+                primary=result,
+                retry_status="primary_timeout",
+            )
+            return
         yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=tool_specs)}
         return
     except urllib.error.HTTPError as error:
@@ -9423,18 +9439,17 @@ def stream_fast_local_chat_events(
             "reply": "Groq fast chat returned an HTTP error.",
         }
         if _fast_chat_should_retry_groq_rate_limit(result):
-            delay = _groq_retry_delay_seconds(result.get("error"))
-            if _groq_rate_limit_should_try_middle_first(delay):
-                yield from _stream_ollama_fast_chat_events(
-                    prompt,
-                    model=_groq_rate_limit_middle_fallback_model(),
-                    history=history,
-                    tool_specs=tool_specs,
-                    overall_started_at=started_at,
-                    primary=result,
-                    retry_status="skipped_rate_limit_retry",
-                )
-                return
+            yield _fast_chat_fallback_status_event()
+            yield from _stream_ollama_fast_chat_events(
+                prompt,
+                model=_groq_rate_limit_middle_fallback_model(),
+                history=history,
+                tool_specs=tool_specs,
+                overall_started_at=started_at,
+                primary=result,
+                retry_status="skipped_rate_limit_retry",
+            )
+            return
         yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=tool_specs)}
         return
     except (urllib.error.URLError, OSError) as error:
@@ -9540,6 +9555,7 @@ def _stream_ollama_fast_chat_events(
 ):
     selected_model = (model or FAST_MODEL_NAME).strip() or FAST_MODEL_NAME
     started_at = overall_started_at if overall_started_at is not None else time.monotonic()
+    effective_tool_specs = _fast_chat_stream_fallback_tool_specs(tool_specs, primary=primary)
     ollama_path = _find_executable("ollama")
     if not ollama_path or Path(ollama_path).name != "ollama":
         yield {
@@ -9581,7 +9597,7 @@ def _stream_ollama_fast_chat_events(
 
     payload = {
         "model": selected_model,
-        "prompt": _fast_local_prompt(prompt, history=history, tool_specs=tool_specs),
+        "prompt": _fast_local_prompt(prompt, history=history, tool_specs=effective_tool_specs),
         "stream": True,
         "think": False,
         "options": {
@@ -9604,11 +9620,12 @@ def _stream_ollama_fast_chat_events(
             "model": selected_model,
             "streaming": True,
             "fallback_used": primary is not None,
+            "tool_catalog_compacted": bool(primary is not None and effective_tool_specs != (tool_specs or [])),
         },
     }
 
     chunks: list[str] = []
-    visible_buffer = _FastChatVisibleStreamBuffer() if tool_specs else None
+    visible_buffer = _FastChatVisibleStreamBuffer() if effective_tool_specs else None
     first_visible_token_at: float | None = None
     try:
         with urllib.request.urlopen(request, timeout=FAST_MODEL_TIMEOUT_SECONDS) as response:
@@ -9678,11 +9695,14 @@ def _stream_ollama_fast_chat_events(
     }
     if primary is not None:
         base.update(_rate_limit_fallback_metadata(primary, selected_model, retry_status=retry_status))
-    tool_request = _parse_fast_chat_tool_request(reply, tool_specs or [])
+        if effective_tool_specs != (tool_specs or []):
+            base["tool_catalog_compacted"] = True
+            base["tool_catalog_ids"] = [str(spec.get("tool") or "") for spec in effective_tool_specs if spec.get("tool")]
+    tool_request = _parse_fast_chat_tool_request(reply, effective_tool_specs or [])
     if tool_request is not None:
         yield {"event": "final_result", "data": {**base, "status": "tool_requested", **tool_request}}
         return
-    if tool_specs and _fast_chat_contains_hidden_call_fragment(reply):
+    if effective_tool_specs and _fast_chat_contains_hidden_call_fragment(reply):
         yield {
             "event": "final_result",
             "data": _fast_chat_malformed_tool_result(
@@ -9698,6 +9718,24 @@ def _stream_ollama_fast_chat_events(
         }
         return
     if not reply:
+        if primary is not None and effective_tool_specs:
+            retry = _run_ollama_fast_chat(prompt, model=selected_model, history=history, tool_specs=[])
+            retry_reply = str(retry.get("reply") or "").strip()
+            if retry.get("status") == "completed" and retry_reply:
+                retry_duration = _duration_fields(started_at)
+                yield {
+                    "event": "final_result",
+                    "data": {
+                        **base,
+                        **retry_duration,
+                        "status": "completed",
+                        "reply": retry_reply,
+                        "empty_stream_retry_without_tools_used": True,
+                        "empty_stream_retry_status": retry.get("status"),
+                        "empty_stream_retry_duration_seconds": retry.get("duration_seconds"),
+                    },
+                }
+                return
         yield {
             "event": "final_result",
             "data": {
@@ -9745,15 +9783,30 @@ def _stream_ollama_error_result(
     return result
 
 
+def _fast_chat_fallback_status_event() -> dict[str, Any]:
+    return {
+        "event": "status",
+        "data": {
+            "text": "Yes sir, one moment.",
+            "tool": "conversation.fast_local",
+            "transient": True,
+            "speech": {"spoken": False, "status": "not_requested", "reason": "fallback_status"},
+        },
+    }
+
+
 def _rate_limit_fallback_metadata(
     primary: dict[str, Any],
     selected_model: str,
     *,
     retry_status: str | None,
 ) -> dict[str, Any]:
-    retry_was_used = bool(retry_status and retry_status != "skipped_rate_limit_retry")
+    retry_was_used = bool(retry_status and retry_status not in {"skipped_rate_limit_retry", "primary_timeout", "network_error"})
+    rate_limited = int(primary.get("http_status") or 0) == 429 or retry_status == "skipped_rate_limit_retry"
     return {
-        "rate_limit_fallback_used": True,
+        "primary_fallback_used": True,
+        "fallback_trigger": retry_status or primary.get("status"),
+        "rate_limit_fallback_used": rate_limited,
         "rate_limit_fallback_model": selected_model,
         "rate_limit_fallback_uses_cloud_model": _ollama_model_uses_cloud(selected_model),
         "retry_used": retry_was_used,
@@ -9848,6 +9901,45 @@ def _fast_chat_tool_catalog(tool_specs: list[dict[str, Any]]) -> str:
         entities = ", ".join(str(entity) for entity in spec.get("entities", []) if entity)
         lines.append(f"- {tool_id}: {description} Entities: {entities or 'none'}")
     return "\n".join(lines)
+
+
+_FAST_CHAT_STREAM_FALLBACK_CORE_TOOLS = {
+    "outlook.visible_summary",
+    "app.open",
+    "app.focus",
+    "app.status",
+    "app.running",
+    "app.frontmost",
+    "app.list",
+    "voice.stop_speaking",
+    "tools.more",
+    "codex.job",
+    "codex.chat_plan",
+    "codex.activity",
+    "diagnostics.device",
+    "diagnostics.model_context",
+    "diagnostics.permissions",
+    "diagnostics.fast_model",
+    "diagnostics.overnight",
+    "diagnostics.tts",
+    "diagnostics.wake",
+}
+
+
+def _fast_chat_stream_fallback_tool_specs(
+    tool_specs: list[dict[str, Any]] | None,
+    *,
+    primary: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    specs = [spec for spec in (tool_specs or []) if isinstance(spec, dict)]
+    if primary is None or not specs:
+        return specs
+    compact = [
+        spec
+        for spec in specs
+        if str(spec.get("tool") or "") in _FAST_CHAT_STREAM_FALLBACK_CORE_TOOLS
+    ]
+    return compact or specs
 
 
 def _compact_fast_chat_tool_description(tool_id: str, raw_description: Any) -> str:

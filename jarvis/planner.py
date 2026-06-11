@@ -1060,12 +1060,9 @@ class Planner:
             transcript = _clean_optional_entity(entities.get("transcript")) or _extract_voice_loop_transcript(text) or text
             return self._voice_loop_result(text, assessment, transcript)
         if selected_tool == "outlook.visible_summary":
-            sender_query = _clean_optional_entity(entities.get("sender_query")) or _extract_email_sender_constraint(text)
-            selection = (
-                _clean_optional_entity(entities.get("selection"))
-                or _email_selection_from_entities(entities)
-                or _extract_email_selection_constraint(text)
-            )
+            email_request = email_request_metadata(text, entities)
+            sender_query = email_request.get("sender_query")
+            selection = email_request.get("selection")
             if not execute:
                 return PlannedResult(
                     command=text,
@@ -1077,9 +1074,8 @@ class Planner:
                         "would_execute_if_run": True,
                         "selected_tool": "outlook.visible_summary",
                         "intent": intent,
-                        "sender_query": sender_query,
-                        "selection": selection,
-                        "plan": outlook_read_only_plan(),
+                        **email_request,
+                        "plan": email_request_preview_plan(text, entities),
                     },
                     executed=False,
                     confirmation=None,
@@ -1493,10 +1489,11 @@ def _middle_plan_next_tool_preview(text: str, result: dict[str, Any]) -> dict[st
             "preview": browser_open_url_plan(url),
         }
     if recommended == "outlook.visible_summary":
+        preview = email_request_preview_plan(text, entities)
         return {
             "recommended_tool": recommended,
             "executed": False,
-            "preview": outlook_read_only_plan(),
+            "preview": preview,
         }
     if recommended == "voice.stt_candidates":
         preview = stt_candidate_status()
@@ -1938,6 +1935,97 @@ def _extract_email_sender_constraint(text: str) -> str | None:
     if sender.lower() in blocked:
         return None
     return sender[:120]
+
+
+def email_request_metadata(text: str, entities: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve email details after a model has already selected the email tool."""
+    safe_entities = entities if isinstance(entities, dict) else {}
+    entity_selection = _clean_optional_entity(safe_entities.get("selection"))
+    structured_selection = _email_selection_from_entities(safe_entities)
+    prompt_selection = _extract_email_selection_constraint(text)
+    selection = entity_selection or structured_selection or prompt_selection
+    sender_query = _clean_optional_entity(safe_entities.get("sender_query")) or _extract_email_sender_constraint(text)
+    return {
+        "sender_query": sender_query,
+        "selection": selection,
+        "selection_source": (
+            "model_entities"
+            if entity_selection or structured_selection
+            else "original_prompt"
+            if prompt_selection
+            else "default_unread_then_newest"
+        ),
+        "selection_rule": selection or "unread_first_then_newest_if_none_unread",
+        "spoken_status": email_request_status_text(text, safe_entities),
+    }
+
+
+def email_request_preview_plan(text: str, entities: dict[str, Any] | None = None) -> dict[str, Any]:
+    metadata = email_request_metadata(text, entities)
+    plan = outlook_read_only_plan()
+    plan.update(
+        {
+            "executed": False,
+            "planned_only": True,
+            "would_read_email_content_if_run": True,
+            "sender_query": metadata["sender_query"],
+            "selection": metadata["selection"],
+            "selection_source": metadata["selection_source"],
+            "selection_rule": metadata["selection_rule"],
+            "spoken_status": metadata["spoken_status"],
+        }
+    )
+    return plan
+
+
+def email_request_status_text(text: str, entities: dict[str, Any] | None = None) -> str:
+    safe_entities = entities if isinstance(entities, dict) else {}
+    selection = (
+        _clean_optional_entity(safe_entities.get("selection"))
+        or _email_selection_from_entities(safe_entities)
+        or _extract_email_selection_constraint(text)
+    )
+    if selection:
+        lowered = selection.lower()
+        if lowered == "latest":
+            return "Yes sir, checking your newest email now."
+        if lowered == "unread_first":
+            return "Yes sir, checking your unread email now."
+        index_match = re.fullmatch(r"index:(\d{1,2})", lowered)
+        if index_match:
+            index = int(index_match.group(1))
+            ordinal = _email_ordinal_label(index)
+            return f"Yes sir, checking your {ordinal} email now."
+        range_match = re.fullmatch(r"range:(\d{1,2})-(\d{1,2})", lowered)
+        if range_match:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2))
+            return f"Yes sir, checking emails {start} through {end} now."
+    sender_query = _clean_optional_entity(safe_entities.get("sender_query")) or _extract_email_sender_constraint(text)
+    if sender_query:
+        return f"Yes sir, checking your email from {sender_query} now."
+    return "Yes sir, checking your email now."
+
+
+def _email_ordinal_label(value: int) -> str:
+    words = {
+        1: "first",
+        2: "second",
+        3: "third",
+        4: "fourth",
+        5: "fifth",
+        6: "sixth",
+        7: "seventh",
+        8: "eighth",
+        9: "ninth",
+        10: "tenth",
+    }
+    if value in words:
+        return words[value]
+    suffix = "th"
+    if value % 100 not in {11, 12, 13}:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(value % 10, "th")
+    return f"{value}{suffix}"
 
 
 def _extract_email_selection_constraint(text: str) -> str | None:

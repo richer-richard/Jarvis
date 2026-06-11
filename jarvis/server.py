@@ -28,7 +28,7 @@ from .config import (
     START_PAUSED,
     host_allowed,
 )
-from .planner import NATURAL_LANGUAGE_TOOL_SPECS, Planner
+from .planner import NATURAL_LANGUAGE_TOOL_SPECS, Planner, email_request_status_text
 from .safety import classify_command, policy_summary
 from .self_check import run_self_checks
 from .tools import (
@@ -174,6 +174,8 @@ class JarvisServer:
         if result.get("status") == "tool_requested":
             selected_tool = str(result.get("selected_tool") or "")
             status_text = str(result.get("status_text") or "").strip()
+            entities = result.get("entities") if isinstance(result.get("entities"), dict) else {}
+            status_text = _tool_request_status_text(command, selected_tool, status_text, entities)
             if not status_text:
                 status_text = _stream_status_text({"tool": selected_tool})
             if status_text:
@@ -191,7 +193,6 @@ class JarvisServer:
                         "speech": speech,
                     },
                 }
-            entities = result.get("entities") if isinstance(result.get("entities"), dict) else {}
             planned = self.planner.handle_selected_tool(command, selected_tool, entities, history=history)
             if planned is None:
                 data = {
@@ -620,6 +621,17 @@ class JarvisServer:
 
 
 STATE = JarvisServer()
+
+
+def _tool_request_status_text(
+    command: str,
+    selected_tool: str,
+    status_text: str,
+    entities: dict[str, Any] | None = None,
+) -> str:
+    if selected_tool == "outlook.visible_summary":
+        return email_request_status_text(command, entities)
+    return status_text
 
 
 def _stream_status_text(preview: dict[str, Any]) -> str:

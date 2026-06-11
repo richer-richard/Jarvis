@@ -274,7 +274,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 yield b"\n"
 
         with patch("scripts.smoke_fast_latency.urllib.request.urlopen", return_value=FakeStream()), \
-             patch("scripts.smoke_fast_latency.time.monotonic", side_effect=[100.0, 100.25]):
+             patch("scripts.smoke_fast_latency.time.monotonic", side_effect=[100.0, 100.2, 100.25]):
             result = smoke_fast_latency.smoke_prompt("hello Jarvis", base_url="http://127.0.0.1:8765", timeout=1)
 
         self.assertEqual(result["status"], "completed")
@@ -1622,6 +1622,27 @@ class PlannerTests(unittest.TestCase):
         more_mock.assert_called_once_with("Go to Teams and find my newest Music assignment.", history=history)
         open_mock.assert_called_once_with("Microsoft Teams", execute=False)
 
+    def test_tools_more_email_recommendation_preview_preserves_prompt_selection(self):
+        fake_plan = {
+            "tool": "tools.more",
+            "status": "planned",
+            "executed": False,
+            "recommended_tool": "outlook.visible_summary",
+            "entities": {},
+            "reply": "Yes sir, checking your email now.",
+        }
+        with patch("jarvis.planner.more_tools_plan", return_value=fake_plan):
+            result = Planner().handle_selected_tool("check my second email and summarize it", "tools.more", {})
+
+        self.assertEqual(result.tool, "tools.more")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["next_tool_preview"]["recommended_tool"], "outlook.visible_summary")
+        preview = result.result["next_tool_preview"]["preview"]
+        self.assertEqual(preview["selection"], "index:2")
+        self.assertEqual(preview["selection_source"], "original_prompt")
+        self.assertEqual(preview["spoken_status"], "Yes sir, checking your second email now.")
+        self.assertFalse(preview["executed"])
+
     def test_tools_more_low_confidence_asks_clarification_without_preview_or_followup(self):
         fake_plan = {
             "tool": "tools.more",
@@ -2928,6 +2949,26 @@ class PlannerTests(unittest.TestCase):
         kwargs = mail_mock.call_args.kwargs
         self.assertEqual(kwargs["selection"], "index:2")
         self.assertIn("second email", kwargs["original_prompt"])
+
+    def test_email_preview_exposes_original_prompt_selection_without_reading_mail(self):
+        intent = {
+            "status": "completed",
+            "selected_tool": "outlook.visible_summary",
+            "confidence": 0.91,
+            "entities": {},
+        }
+        with patch("jarvis.planner.select_tool_intent", return_value=intent), \
+             patch("jarvis.planner.outlook_read_only_check") as mail_mock:
+            result = Planner().preview("check my second email and summarize it")
+
+        self.assertEqual(result.tool, "outlook.visible_summary")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.result["selection"], "index:2")
+        self.assertEqual(result.result["selection_source"], "original_prompt")
+        self.assertEqual(result.result["spoken_status"], "Yes sir, checking your second email now.")
+        self.assertEqual(result.result["plan"]["selection"], "index:2")
+        self.assertFalse(result.result["plan"]["executed"])
+        mail_mock.assert_not_called()
 
     def test_email_backend_status_is_no_content_diagnostic(self):
         with patch("jarvis.tools.app_availability") as app_mock, \
@@ -7339,6 +7380,23 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("\\tool", prompt)
         self.assertNotIn("Looking for", prompt)
 
+    def test_fast_chat_stream_fallback_compacts_tool_catalog(self):
+        primary = {"backend": "groq", "status": "http_error", "http_status": 429}
+        compact = jarvis_tools._fast_chat_stream_fallback_tool_specs(
+            NATURAL_LANGUAGE_TOOL_SPECS,
+            primary=primary,
+        )
+        compact_ids = [spec["tool"] for spec in compact]
+        compact_prompt = jarvis_tools._fast_local_prompt("tell me a short joke", tool_specs=compact)
+        full_prompt = jarvis_tools._fast_local_prompt("tell me a short joke", tool_specs=NATURAL_LANGUAGE_TOOL_SPECS)
+
+        self.assertIn("outlook.visible_summary", compact_ids)
+        self.assertIn("tools.more", compact_ids)
+        self.assertIn("app.open", compact_ids)
+        self.assertLess(len(compact), len(NATURAL_LANGUAGE_TOOL_SPECS))
+        self.assertLess(len(compact_prompt), len(full_prompt))
+        self.assertLess(len(compact_prompt), 5500)
+
     def test_stream_fast_local_chat_buffers_hidden_tool_call(self):
         class FakeStreamResponse:
             def __enter__(self):
@@ -7727,12 +7785,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
         retry_mock.assert_called_once()
         middle_mock.assert_called_once()
 
-    def test_ollama_fast_chat_gives_middle_model_larger_token_budget(self):
+    def test_ollama_fast_chat_keeps_cloud_middle_fallback_on_bounded_fast_budget(self):
         with patch("jarvis.tools.FAST_MODEL_MAX_TOKENS", 80), \
              patch("jarvis.tools.MIDDLE_MODEL_MAX_TOKENS", 420), \
              patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"):
             self.assertEqual(jarvis_tools._ollama_fast_chat_num_predict("qwen3:0.6b"), 80)
-            self.assertEqual(jarvis_tools._ollama_fast_chat_num_predict("gpt-oss:120b-cloud"), 220)
+            self.assertEqual(jarvis_tools._ollama_fast_chat_num_predict("gpt-oss:120b-cloud"), 128)
 
     def test_stream_ollama_fast_chat_yields_delta_before_final(self):
         class FakeOllamaResponse:
@@ -7778,7 +7836,21 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(final["groq_retry_skipped"])
         self.assertIsNotNone(final["first_visible_token_seconds"])
 
-    def test_stream_fast_chat_retries_groq_before_middle_fallback_on_rate_limit(self):
+    def test_stream_fast_chat_skips_groq_retry_and_streams_middle_on_rate_limit(self):
+        class FakeOllamaResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                lines = [
+                    {"response": "Middle", "done": False},
+                    {"response": " answer.", "done": True},
+                ]
+                return iter((json.dumps(line).encode("utf-8") + b"\n") for line in lines)
+
         http_error = urllib.error.HTTPError(
             "https://api.groq.com/openai/v1/chat/completions",
             429,
@@ -7786,34 +7858,106 @@ class RuntimeSurfaceTests(unittest.TestCase):
             hdrs=None,
             fp=io.BytesIO(b'{"error":"Please try again in 600ms."}'),
         )
-        retry_result = {
-            "tool": "conversation.fast_local",
-            "backend": "groq",
-            "model": "llama-3.3-70b-versatile",
-            "available": True,
-            "status": "completed",
-            "executed": True,
-            "duration_seconds": 0.4,
-            "duration_human": "0.4s",
-            "reply": "Retry answer.",
-        }
         with patch("jarvis.tools.FAST_MODEL_BACKEND", "groq"), \
              patch("jarvis.tools.GROQ_API_KEY", "test-key"), \
              patch("jarvis.tools.GROQ_FAST_MODEL", "llama-3.3-70b-versatile"), \
              patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"), \
+             patch("jarvis.tools._find_executable", return_value="/usr/local/bin/ollama"), \
+             patch("jarvis.tools._ensure_ollama_server_running", return_value={"running": True, "status": "running"}), \
              patch("jarvis.tools.time.sleep") as sleep_mock, \
-             patch("jarvis.tools._run_groq_fast_chat", return_value=retry_result) as retry_mock, \
-             patch("jarvis.tools.urllib.request.urlopen", side_effect=http_error):
+             patch("jarvis.tools._run_groq_fast_chat") as retry_mock, \
+             patch("jarvis.tools.urllib.request.urlopen", side_effect=[http_error, FakeOllamaResponse()]):
             events = list(stream_fast_local_chat_events("hello Jarvis"))
 
         deltas = [event["data"]["text"] for event in events if event["event"] == "delta"]
         final = [event["data"] for event in events if event["event"] == "final_result"][-1]
-        self.assertEqual("".join(deltas), "")
+        self.assertEqual("".join(deltas), "Middle answer.")
         self.assertEqual(final["status"], "completed")
-        self.assertEqual(final["backend"], "groq")
-        self.assertEqual(final["model"], "llama-3.3-70b-versatile")
-        self.assertTrue(final["retry_used"])
-        sleep_mock.assert_called_once_with(0.6)
+        self.assertEqual(final["backend"], "ollama")
+        self.assertEqual(final["model"], "gpt-oss:120b-cloud")
+        self.assertTrue(final["rate_limit_fallback_used"])
+        self.assertFalse(final["retry_used"])
+        self.assertTrue(final["groq_retry_skipped"])
+        self.assertIsNotNone(final["first_visible_token_seconds"])
+        sleep_mock.assert_not_called()
+        retry_mock.assert_not_called()
+
+    def test_stream_fast_chat_streams_middle_on_groq_timeout(self):
+        class FakeOllamaResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                lines = [
+                    {"response": "Timeout", "done": False},
+                    {"response": " fallback.", "done": True},
+                ]
+                return iter((json.dumps(line).encode("utf-8") + b"\n") for line in lines)
+
+        with patch("jarvis.tools.FAST_MODEL_BACKEND", "groq"), \
+             patch("jarvis.tools.FAST_MODEL_FALLBACK_ENABLED", True), \
+             patch("jarvis.tools.FAST_MODEL_FALLBACK_BACKEND", "ollama"), \
+             patch("jarvis.tools.GROQ_API_KEY", "test-key"), \
+             patch("jarvis.tools.GROQ_FAST_MODEL", "llama-3.3-70b-versatile"), \
+             patch("jarvis.tools.MIDDLE_MODEL", "gpt-oss:120b-cloud"), \
+             patch("jarvis.tools._find_executable", return_value="/usr/local/bin/ollama"), \
+             patch("jarvis.tools._ensure_ollama_server_running", return_value={"running": True, "status": "running"}), \
+             patch("jarvis.tools.urllib.request.urlopen", side_effect=[TimeoutError(), FakeOllamaResponse()]):
+            events = list(stream_fast_local_chat_events("hello Jarvis", tool_specs=NATURAL_LANGUAGE_TOOL_SPECS))
+
+        deltas = [event["data"]["text"] for event in events if event["event"] == "delta"]
+        final = [event["data"] for event in events if event["event"] == "final_result"][-1]
+        self.assertEqual("".join(deltas), "Timeout fallback.")
+        self.assertEqual(final["backend"], "ollama")
+        self.assertEqual(final["model"], "gpt-oss:120b-cloud")
+        self.assertTrue(final["primary_fallback_used"])
+        self.assertFalse(final["rate_limit_fallback_used"])
+        self.assertEqual(final["fallback_trigger"], "primary_timeout")
+        self.assertFalse(final["retry_used"])
+        self.assertTrue(final["tool_catalog_compacted"])
+
+    def test_stream_ollama_empty_tool_aware_fallback_retries_plain_chat(self):
+        class EmptyOllamaResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                return iter([json.dumps({"response": "", "done": True}).encode("utf-8") + b"\n"])
+
+        primary = {"backend": "groq", "model": "llama-3.3-70b-versatile", "status": "timeout", "duration_human": "2.4s"}
+        retry = {
+            "tool": "conversation.fast_local",
+            "backend": "ollama",
+            "model": "gpt-oss:120b-cloud",
+            "status": "completed",
+            "executed": True,
+            "duration_seconds": 0.7,
+            "duration_human": "0.7s",
+            "reply": "Plain retry answer.",
+        }
+        with patch("jarvis.tools._find_executable", return_value="/usr/local/bin/ollama"), \
+             patch("jarvis.tools._ensure_ollama_server_running", return_value={"running": True, "status": "running"}), \
+             patch("jarvis.tools.urllib.request.urlopen", return_value=EmptyOllamaResponse()), \
+             patch("jarvis.tools._run_ollama_fast_chat", return_value=retry) as retry_mock:
+            events = list(jarvis_tools._stream_ollama_fast_chat_events(
+                "write five bullets",
+                model="gpt-oss:120b-cloud",
+                tool_specs=NATURAL_LANGUAGE_TOOL_SPECS,
+                primary=primary,
+                retry_status="primary_timeout",
+            ))
+
+        final = [event["data"] for event in events if event["event"] == "final_result"][-1]
+        self.assertEqual(final["status"], "completed")
+        self.assertEqual(final["reply"], "Plain retry answer.")
+        self.assertTrue(final["empty_stream_retry_without_tools_used"])
+        self.assertTrue(final["tool_catalog_compacted"])
         retry_mock.assert_called_once()
 
     def test_stream_fast_local_chat_falls_back_to_ollama_on_groq_error(self):
@@ -8995,6 +9139,42 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(mail_mock.call_args.kwargs["selection"], "index:2")
         speak_mock.assert_any_call("Yes sir, checking your second email now.", reason="status")
         speak_mock.assert_any_call("Checked email without reading a real mailbox in this test.", reason="final")
+
+    def test_stream_command_refines_generic_email_status_from_original_prompt(self):
+        fake_result = {
+            "tool": "outlook.visible_summary",
+            "status": "checked",
+            "source": "apple_mail",
+            "messages": [],
+            "message_count": 0,
+            "reply": "Checked the second email without reading a real mailbox in this test.",
+        }
+        fake_events = [
+            {
+                "event": "final_result",
+                "data": {
+                    "tool": "conversation.fast_local",
+                    "status": "tool_requested",
+                    "selected_tool": "outlook.visible_summary",
+                    "status_text": "Yes sir, checking your email now.",
+                    "entities": {},
+                    "executed": True,
+                },
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.stream_fast_local_chat_events", return_value=fake_events), \
+                 patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock, \
+                 patch("jarvis.server.speak_text_async", side_effect=lambda text, *, reason: {"spoken": True, "status": "queued", "reason": reason, "text_preview": text}) as speak_mock:
+                events = list(server.stream_command("please check my second email"))
+
+        self.assertEqual(events[0]["event"], "status")
+        self.assertEqual(events[0]["data"]["text"], "Yes sir, checking your second email now.")
+        self.assertEqual(events[0]["data"]["speech"]["text_preview"], "Yes sir, checking your second email now.")
+        self.assertEqual(mail_mock.call_args.kwargs["selection"], "index:2")
+        speak_mock.assert_any_call("Yes sir, checking your second email now.", reason="status")
 
     def test_stream_command_suppressed_speech_includes_auditable_text_preview(self):
         fake_result = {

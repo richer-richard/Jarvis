@@ -90,7 +90,9 @@ def main() -> int:
 def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any]:
     started = time.monotonic()
     first_visible_at: float | None = None
+    first_answer_at: float | None = None
     deltas: list[str] = []
+    status_texts: list[str] = []
     final: dict[str, Any] | None = None
     payload = json.dumps({"command": prompt, "suppress_speech": True}).encode("utf-8")
     request = urllib.request.Request(
@@ -107,16 +109,22 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
             for raw_line in response:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line:
+                    delta_count = len(deltas)
+                    status_count = len(status_texts)
                     event_name, final = process_event(
                         event_name,
                         data_lines,
                         deltas,
+                        status_texts,
                         final,
                         first_visible_at=first_visible_at,
                         started=started,
                     )
-                    if first_visible_at is None and deltas:
-                        first_visible_at = time.monotonic()
+                    now = time.monotonic()
+                    if first_answer_at is None and len(deltas) > delta_count:
+                        first_answer_at = now
+                    if first_visible_at is None and (len(deltas) > delta_count or len(status_texts) > status_count):
+                        first_visible_at = now
                     data_lines = []
                     continue
                 if line.startswith("event:"):
@@ -124,16 +132,22 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
                 elif line.startswith("data:"):
                     data_lines.append(line[5:].strip())
             if data_lines:
+                delta_count = len(deltas)
+                status_count = len(status_texts)
                 _, final = process_event(
                     event_name,
                     data_lines,
                     deltas,
+                    status_texts,
                     final,
                     first_visible_at=first_visible_at,
                     started=started,
                 )
-                if first_visible_at is None and deltas:
-                    first_visible_at = time.monotonic()
+                now = time.monotonic()
+                if first_answer_at is None and len(deltas) > delta_count:
+                    first_answer_at = now
+                if first_visible_at is None and (len(deltas) > delta_count or len(status_texts) > status_count):
+                    first_visible_at = now
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")
         return error_result(prompt, started, f"http_{error.code}", body)
@@ -160,8 +174,10 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
     else:
         first_visible_seconds = None
     visible_chars = len(reply)
-    if first_visible_seconds is not None:
-        after_first_seconds = max(0.001, total - float(first_visible_seconds))
+    first_answer_seconds = round(first_answer_at - started, 3) if first_answer_at is not None else None
+    rate_start_seconds = first_answer_seconds if first_answer_seconds is not None else first_visible_seconds
+    if rate_start_seconds is not None:
+        after_first_seconds = max(0.001, total - float(rate_start_seconds))
         chars_per_second = round(visible_chars / after_first_seconds, 1)
     else:
         after_first_seconds = None
@@ -176,11 +192,13 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
         "after_first_visible_seconds": round(after_first_seconds, 3) if after_first_seconds is not None else None,
         "visible_chars": visible_chars,
         "chars_per_second_after_first_visible": chars_per_second,
+        "first_answer_seconds": first_answer_seconds,
         "model_reported_first_visible_seconds": model_first,
         "model_reported_total_seconds": model_total,
         "tool": final.get("tool") if isinstance(final, dict) else None,
         "backend": result_payload.get("backend") if isinstance(result_payload, dict) else None,
         "model": result_payload.get("model") if isinstance(result_payload, dict) else None,
+        "status_preview": " ".join(status_texts)[:160],
         "reply_preview": reply[:240],
     }
 
@@ -200,6 +218,7 @@ def process_event(
     event_name: str,
     data_lines: list[str],
     deltas: list[str],
+    status_texts: list[str],
     final: dict[str, Any] | None,
     *,
     first_visible_at: float | None,
@@ -217,6 +236,10 @@ def process_event(
         text = str(data.get("text") or "")
         if text:
             deltas.append(text)
+    elif event_name == "status":
+        text = str(data.get("text") or "")
+        if text:
+            status_texts.append(text)
     elif event_name == "final" and isinstance(data, dict):
         final = data
     return "message", final
