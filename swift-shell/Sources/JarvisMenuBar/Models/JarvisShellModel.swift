@@ -28,6 +28,7 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var isWakeListening: Bool = false
     @Published private(set) var isSpeechMuted: Bool = false
     @Published private(set) var speechMuteText: String = "Speech On"
+    @Published private(set) var summonSurface: JarvisSummonSurface = .hidden
     @Published private(set) var chatExportText: String = "Chat JSON ready"
     @Published private(set) var messages: [ChatMessage] = [
         ChatMessage(
@@ -49,6 +50,9 @@ final class JarvisShellModel: ObservableObject {
     private var lastWakePauseStatus: String = ""
     private var activeTurnID: UUID?
     private var activeProgressNudgeIDs: Set<UUID> = []
+    private var pendingWakeSummonCommand = false
+    private var summonHideTask: Task<Void, Never>?
+    private var summonGeneration = 0
     var onSpeechMuteStateChanged: (() -> Void)?
     private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
     private static let smokeTestPrompts = [
@@ -174,6 +178,7 @@ final class JarvisShellModel: ObservableObject {
     func toggleWakeListener() {
         if isWakeListening {
             recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
+            hideSummonSurface()
             wakeListener.stop()
         } else {
             let preflight = JarvisPermissionService.wakeStartPreflight()
@@ -193,6 +198,7 @@ final class JarvisShellModel: ObservableObject {
 
     func stopWakeListener() {
         recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
+        hideSummonSurface()
         wakeListener.stop()
     }
 
@@ -258,6 +264,46 @@ final class JarvisShellModel: ObservableObject {
         muted ? "Muted" : "Speech On"
     }
 
+    private func updateSummonSurface(
+        phase: JarvisSummonPhase,
+        title: String,
+        transcript: String = "",
+        response: String = "",
+        detail: String = "",
+        autoHideAfter delay: TimeInterval? = nil
+    ) {
+        summonHideTask?.cancel()
+        summonGeneration += 1
+        let generation = summonGeneration
+        summonSurface = JarvisSummonSurface(
+            phase: phase,
+            title: title,
+            transcript: transcript,
+            response: response,
+            detail: detail
+        )
+        guard let delay else {
+            return
+        }
+        summonHideTask = Task { [weak self] in
+            let nanoseconds = UInt64(max(0.1, delay) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            await MainActor.run {
+                guard let self, self.summonGeneration == generation else {
+                    return
+                }
+                self.summonSurface = .hidden
+            }
+        }
+    }
+
+    private func hideSummonSurface() {
+        summonHideTask?.cancel()
+        summonHideTask = nil
+        summonGeneration += 1
+        summonSurface = .hidden
+    }
+
     private func configureWakeListener() {
         wakeListener.onStateChange = { [weak self] snapshot in
             guard let self else {
@@ -293,6 +339,12 @@ final class JarvisShellModel: ObservableObject {
             recordWakeEvent("wake_detected", detail: "Wake callback fired.", transcript: transcript)
             let greeting = "Yes sir?"
             messages.append(ChatMessage(role: .jarvis, text: greeting, detail: "Wake detected."))
+            updateSummonSurface(
+                phase: .listening,
+                title: greeting,
+                transcript: transcript,
+                detail: "Listening for your command."
+            )
             if !isSpeechMuted {
                 Task { [weak self, greeting] in
                     guard let self else {
@@ -312,8 +364,23 @@ final class JarvisShellModel: ObservableObject {
             guard !isBusy else {
                 recordWakeEvent("command_held_busy", detail: "Jarvis was busy when the wake command arrived.", transcript: transcript, command: command)
                 messages.append(ChatMessage(role: .jarvis, text: "I heard \(command), but I am still finishing the current task.", detail: "Wake command held."))
+                updateSummonSurface(
+                    phase: .thinking,
+                    title: "I heard you.",
+                    transcript: command,
+                    response: "I am still finishing the current task.",
+                    detail: "Busy",
+                    autoHideAfter: 5
+                )
                 return
             }
+            pendingWakeSummonCommand = true
+            updateSummonSurface(
+                phase: .transcribing,
+                title: "I heard you.",
+                transcript: command,
+                detail: "Cleaning up the dictation."
+            )
             submit(command)
         }
         wakeListener.onCommandIgnored = { [weak self] reason, transcript, command in
@@ -414,12 +481,22 @@ final class JarvisShellModel: ObservableObject {
             messages.append(ChatMessage(role: .jarvis, text: Self.busyReplyText, detail: "Busy"))
             return
         }
+        let drivesSummonSurface = pendingWakeSummonCommand
+        pendingWakeSummonCommand = false
+        if drivesSummonSurface {
+            updateSummonSurface(
+                phase: .thinking,
+                title: "Yes sir.",
+                transcript: trimmed,
+                detail: "Working on it."
+            )
+        }
         isBusy = true
         messages.append(ChatMessage(role: .user, text: trimmed))
         command = ""
 
         Task {
-            await runCommand(trimmed)
+            await runCommand(trimmed, drivesSummonSurface: drivesSummonSurface)
         }
     }
 
@@ -508,6 +585,47 @@ final class JarvisShellModel: ObservableObject {
         pasteboard.setString(text, forType: .string)
         chatExportText = "Copied \(Self.smokeTestPrompts.count) tests"
         state = "Copied"
+    }
+
+    func previewSummonSurface() {
+        updateSummonSurface(
+            phase: .listening,
+            title: "Yes sir?",
+            transcript: "Hey Jarvis",
+            detail: "Listening for your command."
+        )
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 850_000_000)
+            await MainActor.run {
+                self?.updateSummonSurface(
+                    phase: .thinking,
+                    title: "Yes sir, checking that now.",
+                    transcript: "Show me the Jarvis popout",
+                    detail: "Choosing the best route."
+                )
+            }
+            try? await Task.sleep(nanoseconds: 950_000_000)
+            await MainActor.run {
+                self?.updateSummonSurface(
+                    phase: .answering,
+                    title: "Answering.",
+                    transcript: "Show me the Jarvis popout",
+                    response: "The new Jarvis surface is ready.",
+                    detail: "Writing the response."
+                )
+            }
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            await MainActor.run {
+                self?.updateSummonSurface(
+                    phase: .speaking,
+                    title: "Speaking.",
+                    transcript: "Show me the Jarvis popout",
+                    response: "The new Jarvis surface is ready.",
+                    detail: "Reading the answer aloud.",
+                    autoHideAfter: 8
+                )
+            }
+        }
     }
 
     private func refreshNow() async {
@@ -603,7 +721,7 @@ final class JarvisShellModel: ObservableObject {
         }
     }
 
-    private func runCommand(_ commandText: String) async {
+    private func runCommand(_ commandText: String, drivesSummonSurface: Bool = false) async {
         isBusy = true
         state = "Thinking"
         turnPhaseText = "Thinking"
@@ -652,6 +770,43 @@ final class JarvisShellModel: ObservableObject {
                 activeTurnID = nil
             }
         }
+        func updateSummonThinking(_ title: String, detail: String = "Working on it.") {
+            guard drivesSummonSurface else {
+                return
+            }
+            updateSummonSurface(
+                phase: .thinking,
+                title: title,
+                transcript: commandText,
+                detail: detail
+            )
+        }
+        func updateSummonAnswering(_ text: String) {
+            guard drivesSummonSurface else {
+                return
+            }
+            updateSummonSurface(
+                phase: .answering,
+                title: "Answering.",
+                transcript: commandText,
+                response: text,
+                detail: "Writing the response."
+            )
+        }
+        func finishSummon(_ text: String, isError: Bool = false) {
+            guard drivesSummonSurface else {
+                return
+            }
+            let phase: JarvisSummonPhase = isError ? .error : (isSpeechMuted ? .complete : .speaking)
+            updateSummonSurface(
+                phase: phase,
+                title: isError ? "Something went wrong." : (isSpeechMuted ? "Done." : "Speaking."),
+                transcript: commandText,
+                response: text,
+                detail: isError ? "The debug window has details." : "Ready for the next command.",
+                autoHideAfter: isError ? 8 : 9
+            )
+        }
         defer {
             stopProgressNudges()
             if state == "Error" {
@@ -682,8 +837,10 @@ final class JarvisShellModel: ObservableObject {
                 recordTurnPhase("Working", detail: "Using native keyboard shortcut status.")
                 let placeholderId = appendJarvisMessage(text: "Checking keyboard shortcut status.", detail: "Working")
                 visibleStatusLines.append("Checking keyboard shortcut status.")
+                updateSummonThinking("Checking keyboard shortcut.")
                 runNativeHotKeyStatus(commandText, placeholderId: placeholderId)
                 finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                finishSummon(finalVisibleText)
                 turnEndedCleanly = true
                 recordTurnPhase("Done", detail: "Native keyboard shortcut status displayed.")
                 return
@@ -693,8 +850,10 @@ final class JarvisShellModel: ObservableObject {
                 recordTurnPhase("Working", detail: "Using native voice status.")
                 let placeholderId = appendJarvisMessage(text: "Checking voice status.", detail: "Working")
                 visibleStatusLines.append("Checking voice status.")
+                updateSummonThinking("Checking voice status.")
                 await runNativeVoiceStatus(commandText, placeholderId: placeholderId)
                 finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                finishSummon(finalVisibleText)
                 turnEndedCleanly = true
                 recordTurnPhase("Done", detail: "Native voice status displayed.")
                 return
@@ -704,8 +863,10 @@ final class JarvisShellModel: ObservableObject {
                 recordTurnPhase("Working", detail: "Using native smoke-test status.")
                 let placeholderId = appendJarvisMessage(text: "Checking test prompts.", detail: "Working")
                 visibleStatusLines.append("Checking test prompts.")
+                updateSummonThinking("Checking test prompts.")
                 runNativeTestStatus(commandText, placeholderId: placeholderId)
                 finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                finishSummon(finalVisibleText)
                 turnEndedCleanly = true
                 recordTurnPhase("Done", detail: "Native smoke-test status displayed.")
                 return
@@ -715,8 +876,10 @@ final class JarvisShellModel: ObservableObject {
                 recordTurnPhase("Working", detail: "Using native permission status.")
                 let placeholderId = appendJarvisMessage(text: "Checking permissions.", detail: "Working")
                 visibleStatusLines.append("Checking permissions.")
+                updateSummonThinking("Checking permissions.")
                 await runNativePermissionStatus(commandText, placeholderId: placeholderId)
                 finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                finishSummon(finalVisibleText)
                 turnEndedCleanly = true
                 recordTurnPhase("Done", detail: "Native permission status displayed.")
                 return
@@ -726,8 +889,10 @@ final class JarvisShellModel: ObservableObject {
                 recordTurnPhase("Working", detail: "Using native screen status.")
                 let placeholderId = appendJarvisMessage(text: "Checking screen status.", detail: "Working")
                 visibleStatusLines.append("Checking screen status.")
+                updateSummonThinking("Checking screen status.")
                 await runNativeScreenStatus(commandText, placeholderId: placeholderId)
                 finalVisibleText = messages.first(where: { $0.id == placeholderId })?.text ?? ""
+                finishSummon(finalVisibleText)
                 turnEndedCleanly = true
                 recordTurnPhase("Done", detail: "Native screen status displayed.")
                 return
@@ -744,6 +909,7 @@ final class JarvisShellModel: ObservableObject {
                 let statusText = "Yes sir, checking what Outlook is showing now."
                 _ = appendJarvisMessage(text: statusText, detail: "Working")
                 visibleStatusLines.append(statusText)
+                updateSummonThinking(statusText)
                 if !isSpeechMuted {
                     _ = try? await client.speakStatus(statusText)
                 }
@@ -763,6 +929,7 @@ final class JarvisShellModel: ObservableObject {
                         lastStatusText = statusText
                         visibleStatusLines.append(statusText)
                         recordTurnPhase("Working", detail: statusText)
+                        updateSummonThinking(statusText)
                         if !streamedReply.isEmpty {
                             if progressTask == nil {
                                 progressTask = self.startProgressNudges(for: commandText, turnID: turnID)
@@ -792,6 +959,7 @@ final class JarvisShellModel: ObservableObject {
                             recordTurnPhase("Answering", detail: "First visible answer text arrived.")
                         }
                         streamedReply += delta
+                        updateSummonAnswering(streamedReply)
                         let id = placeholderId ?? self.appendJarvisMessage(text: streamedReply, detail: "Streaming")
                         placeholderId = id
                         self.replaceMessage(
@@ -833,6 +1001,7 @@ final class JarvisShellModel: ObservableObject {
             }
             startCodexJobMonitorIfNeeded(from: response)
             updateTimerMirrorsIfNeeded(from: response)
+            finishSummon(finalText)
             turnEndedCleanly = true
             turnPhaseText = response.confirmation?.required == true ? "Approval" : "Done"
             recordTurnPhase(turnPhaseText, detail: "Turn lifecycle finished.")
@@ -858,6 +1027,7 @@ final class JarvisShellModel: ObservableObject {
                 messages.append(ChatMessage(role: .jarvis, text: "I hit a worker error: \(error)"))
                 finalVisibleText = "I hit a worker error: \(error)"
             }
+            finishSummon(finalVisibleText, isError: true)
         }
     }
 

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import JarvisClient
 import SwiftUI
@@ -247,14 +248,22 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var speechMuteItem: NSMenuItem?
     private var wakeListenerItem: NSMenuItem?
     private var panel: NSWindow?
+    private var summonWindowController: JarvisSummonWindowController?
     private let model = JarvisShellModel()
     private var hotKeyService: JarvisHotKeyService?
     private var hotKeyStatus: HotKeyRegistrationResult?
+    private var cancellables: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.onSpeechMuteStateChanged = { [weak self] in
             self?.updateSpeechMuteMenuItem()
         }
+        model.$summonSurface
+            .receive(on: RunLoop.main)
+            .sink { [weak self] surface in
+                self?.syncSummonSurface(surface)
+            }
+            .store(in: &cancellables)
         configureMainMenu()
         if Self.menuBarItemEnabled {
             configureStatusItem()
@@ -266,6 +275,7 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        cancellables.removeAll()
         model.stopWorkerMonitoring()
     }
 
@@ -425,6 +435,16 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let result = service.start()
         hotKeyService = service
         hotKeyStatus = result
+    }
+
+    private func syncSummonSurface(_ surface: JarvisSummonSurface) {
+        guard surface.isVisible else {
+            summonWindowController?.hide()
+            return
+        }
+        let controller = summonWindowController ?? JarvisSummonWindowController(model: model)
+        summonWindowController = controller
+        controller.show()
     }
 
     @objc private func openPanel() {

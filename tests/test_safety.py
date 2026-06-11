@@ -4898,6 +4898,77 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('SIGN_IDENTITY="${SIGN_IDENTITY:-$(default_sign_identity)}"', bundle_script)
         self.assertIn('codesign --force --deep --sign "$SIGN_IDENTITY"', bundle_script)
 
+    def test_summon_surface_is_top_right_nonactivating_glass_popout(self):
+        app_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "App"
+            / "JarvisMenuBarApp.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        surface_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisSummonSurface.swift"
+        ).read_text(encoding="utf-8")
+        window_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Support"
+            / "JarvisSummonWindowController.swift"
+        ).read_text(encoding="utf-8")
+        view_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Views"
+            / "JarvisSummonOverlayView.swift"
+        ).read_text(encoding="utf-8")
+        panel_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Views"
+            / "JarvisPanelView.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("model.$summonSurface", app_source)
+        self.assertIn("syncSummonSurface", app_source)
+        self.assertIn("JarvisSummonWindowController(model: model)", app_source)
+        self.assertIn("styleMask: [.borderless, .nonactivatingPanel]", window_source)
+        self.assertIn("panel.level = .statusBar", window_source)
+        self.assertIn("panel.ignoresMouseEvents = true", window_source)
+        self.assertIn("visibleFrame.maxX - size.width - edgeInset", window_source)
+        self.assertIn("visibleFrame.maxY - size.height - edgeInset", window_source)
+        self.assertIn("enum JarvisSummonPhase", surface_source)
+        self.assertIn("case listening", surface_source)
+        self.assertIn("case answering", surface_source)
+        self.assertIn("@Published private(set) var summonSurface", model_source)
+        self.assertIn("func previewSummonSurface()", model_source)
+        self.assertIn("pendingWakeSummonCommand = true", model_source)
+        self.assertIn("updateSummonSurface(", model_source)
+        self.assertIn("finishSummon(finalText)", model_source)
+        self.assertIn('Button("Popout")', panel_source)
+        self.assertIn(".ultraThinMaterial", view_source)
+        self.assertIn("AngularGradient", view_source)
+        self.assertIn("TimelineView(.animation)", view_source)
+
     def test_swift_menu_bar_has_shut_up_toggle_contract(self):
         app_source = (
             PROJECT_ROOT

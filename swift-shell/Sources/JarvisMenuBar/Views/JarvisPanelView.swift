@@ -103,6 +103,10 @@ struct JarvisPanelView: View {
             QuickActionButton("Report", command: "overnight status", model: model)
             QuickActionButton("Wake Lab", command: "Hey Jarvis wake audition status", model: model)
             WakeToggleButton(model: model)
+            Button("Popout") {
+                model.previewSummonSurface()
+            }
+            .help("Preview the top-right Jarvis summon surface without starting the microphone listener.")
             QuickActionButton("Perms", command: "permissions status", model: model)
             QuickActionButton("Screen", command: "screenshot capability", model: model)
             QuickActionButton("Codex", command: "ask Codex to review this project", model: model)
