@@ -3462,7 +3462,10 @@ def _localos_music_play_via_chrome(
       try {{
         const current = typeof getCurrentTrack === "function" ? getCurrentTrack() : null;
         const playing = !!(typeof audioEl !== "undefined" && audioEl.src && !audioEl.paused);
-        if (current && current.id === trackId && typeof markJarvisMusicCommandStatus === "function") {{
+        const currentStatus = typeof jarvisMusicControlStatus !== "undefined"
+          ? String(jarvisMusicControlStatus.lastCommandStatus || "")
+          : "";
+        if (current && current.id === trackId && currentStatus !== "failed" && typeof markJarvisMusicCommandStatus === "function") {{
           markJarvisMusicCommandStatus(playing ? "playing" : "accepted", {{ track: current }});
         }}
         if (typeof publishJarvisMusicSnapshot === "function") {{

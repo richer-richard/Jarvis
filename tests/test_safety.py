@@ -1743,6 +1743,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("LocalOSMusicPlayer", script)
         self.assertIn("playTrackById", script)
         self.assertIn("jarvis-chrome-direct", script)
+        self.assertIn('currentStatus !== \\"failed\\"', script)
         self.assertIn("delay 1.2", script)
         self.assertIn("chrome-direct-", result["command_id"])
         self.assertLessEqual(result["script_timeout_seconds"], 4.0)

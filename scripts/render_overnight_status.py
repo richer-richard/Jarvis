@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.366 fixes a LocalOS Chrome-direct false-accepted path: if Chrome rejects or fails playback, Jarvis no longer lets a delayed status update overwrite that failure as `accepted`.",
     "Jarvis 0.1.365 hardens speech interruption: the wake listener now ignores tiny transcript noise, captured-command echoes, and Jarvis's own spoken output before it calls Stop Speaking.",
     "Jarvis 0.1.364 fixes the spoken Calendar route: `check my calendar for my schedule today` now reads the Calendar schedule path instead of opening the Calendar app.",
     "Jarvis 0.1.363 speeds up stale LocalOS music recovery: Chrome-direct playback attempts are now bounded to a 4-second script window with a shorter new-tab wait instead of a long-feeling 7-second AppleEvent stall.",
@@ -128,6 +129,7 @@ SHIPPED_ITEMS = [
 
 PROOF_ITEMS = [
     "Current verification: focused Chrome-session handoff tests pass; full safety, Swift, no-prompt, and live-app checks are rerun after each bundle rebuild.",
+    "Focused LocalOS Chrome-direct regression now requires the injected control script to preserve `failed` playback status instead of rewriting it to `accepted` after the delayed snapshot publish.",
     "Swift self-test and Python source regression now prove short listener fragments, Calendar-answer echoes, and captured wake-command echoes do not stop Jarvis speech, while an intentional `wait stop for a second` interruption still does.",
     "Focused contact inference timing on this Mac showed preview is instant and 50 recent Mail sender records completed in about 2.7s, while larger scans are now explicit instead of default.",
     "Live quiet voice-loop QA passed for `Hey Jarvis, who is Ms. Sharpay from email?`, routing to `contacts.infer` with spoken-output similarity 0.988.",
