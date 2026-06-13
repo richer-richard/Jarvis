@@ -2972,8 +2972,11 @@ def localos_music_search(query: str, limit: int | str | None = None) -> dict[str
     matches = _rank_localos_music_matches(clean_query, sanitized_library)[:parsed_limit]
     if matches:
         first = matches[0]
-        confidence = "strong" if first.get("score", 0) >= 85 else "possible"
-        reply = f"I found {confidence} match: {_localos_music_track_phrase([first])}."
+        if first.get("match_kind") == "alias":
+            reply = f"I found the closest Local OS file: {_localos_music_track_phrase([first])}."
+        else:
+            confidence = "strong" if first.get("score", 0) >= 85 else "possible"
+            reply = f"I found {confidence} match: {_localos_music_track_phrase([first])}."
         if len(matches) > 1:
             reply += f" I also found {len(matches) - 1} other possible match{'es' if len(matches) != 2 else ''}."
     else:
@@ -3052,7 +3055,7 @@ def localos_music_play(
             "playback_confirmation": "suppressed",
             "control_lane": "none_suppressed_for_verification",
             "reply": (
-                f"I found {_localos_music_track_phrase([selected])}. "
+                f"I found {_localos_music_found_phrase(selected)}. "
                 "Audio actions are suppressed for this verification run."
             ),
             **_duration_fields(started_at),
@@ -3064,9 +3067,9 @@ def localos_music_play(
         direct_status = str(direct_confirmation.get("status") or "")
         if direct_status in {"playing", "accepted"}:
             reply = (
-                f"Playing {_localos_music_track_phrase([selected])} in Local OS."
+                f"Playing {_localos_music_found_phrase(selected)} in Local OS."
                 if direct_status == "playing"
-                else f"Local OS accepted {_localos_music_track_phrase([selected])}; waiting for the audio to start."
+                else f"Local OS accepted {_localos_music_found_phrase(selected)}; waiting for the audio to start."
             )
             return {
                 **base,
@@ -3103,7 +3106,7 @@ def localos_music_play(
             "chrome_direct": direct_confirmation,
             "bridge_recovery": _localos_music_bridge_recovery(),
             "reply": (
-                f"I found {_localos_music_track_phrase([selected])}, but Local OS Music is not connected right now. "
+                f"I found {_localos_music_found_phrase(selected)}, but Local OS Music is not connected right now. "
                 "Open or refresh the Local OS Music Player, then try again."
             ),
             **_duration_fields(started_at),
@@ -3114,23 +3117,23 @@ def localos_music_play(
     confirmation_status = str(confirmation.get("status") or "unconfirmed")
     bridge_version = confirmation.get("bridge_version")
     if confirmation_status == "playing":
-        reply = f"Playing {_localos_music_track_phrase([selected])} in Local OS."
+        reply = f"Playing {_localos_music_found_phrase(selected)} in Local OS."
     elif confirmation_status == "failed":
-        reply = f"I found {_localos_music_track_phrase([selected])}, but Local OS could not start it."
+        reply = f"I found {_localos_music_found_phrase(selected)}, but Local OS could not start it."
     elif confirmation_status == "ignored":
-        reply = f"Local OS ignored the request for {_localos_music_track_phrase([selected])}."
+        reply = f"Local OS ignored the request for {_localos_music_found_phrase(selected)}."
     elif confirmation_status == "bridge_not_polling":
         reply = (
-            f"I found {_localos_music_track_phrase([selected])}, but Local OS did not pick up the command. "
+            f"I found {_localos_music_found_phrase(selected)}, but Local OS did not pick up the command. "
             "Open or refresh the Local OS Music Player, then try again."
         )
     elif confirmation_status == "accepted":
-        reply = f"Local OS accepted {_localos_music_track_phrase([selected])}; waiting for the audio to start."
+        reply = f"Local OS accepted {_localos_music_found_phrase(selected)}; waiting for the audio to start."
     elif bridge_version:
-        reply = f"I sent {_localos_music_track_phrase([selected])} to Local OS, but it has not confirmed playback yet."
+        reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS, but it has not confirmed playback yet."
     else:
         reply = (
-            f"I queued {_localos_music_track_phrase([selected])} in Local OS. "
+            f"I queued {_localos_music_found_phrase(selected)} in Local OS. "
             "If it does not start, refresh the LocalOS music window once."
         )
     return {
@@ -3792,6 +3795,13 @@ def _localos_music_track_phrase(tracks: list[dict[str, Any]]) -> str:
     return "; ".join(parts)
 
 
+def _localos_music_found_phrase(track: dict[str, Any]) -> str:
+    phrase = _localos_music_track_phrase([track])
+    if track.get("match_kind") == "alias":
+        return f"the closest Local OS file, {phrase}"
+    return phrase
+
+
 def _localos_music_choice_prompt(user_request: str, candidates: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for index, track in enumerate(candidates[:LOCALOS_MUSIC_SNAPSHOT_MAX_TRACKS], start=1):
@@ -3884,15 +3894,24 @@ def _rank_localos_music_matches(query: str, tracks: list[dict[str, Any]]) -> lis
             continue
         score = _music_match_score(query_norm, query_tokens, haystack_norm)
         score += _music_direct_field_bonus(query_norm, track)
+        match_kind = "direct"
+        matched_alias = ""
         if score <= 0:
             for alias_norm, alias_tokens in aliases:
                 alias_score = _music_match_score(alias_norm, alias_tokens, haystack_norm)
                 if alias_score > 0:
-                    score = max(score, alias_score - 6.0 + _music_alias_preference_bonus(query_norm, haystack_norm))
+                    adjusted_score = alias_score - 6.0 + _music_alias_preference_bonus(query_norm, haystack_norm)
+                    if adjusted_score > score:
+                        score = adjusted_score
+                        match_kind = "alias"
+                        matched_alias = alias_norm
         if score <= 0:
             continue
         next_track = dict(track)
         next_track["score"] = round(score, 3)
+        next_track["match_kind"] = match_kind
+        if matched_alias:
+            next_track["matched_alias"] = matched_alias
         scored.append((score, index, next_track))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [item[2] for item in scored]

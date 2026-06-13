@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.355 makes LocalOS music alias matches honest: if `Waving Through a Window` maps to the broader `Dear Evan Hansen | 2017 Tony Awards` MP3, Jarvis now says it found the closest Local OS file instead of implying an exact song title exists.",
     "Jarvis 0.1.354 fixes a streaming-only voice bug: lowercase STT text like `test the gemma 3 4b model for me` now routes to `models.test_plan` before fast chat can answer casually.",
     "Jarvis 0.1.353 makes MacBook Air offload diagnostics fast and honest: before waiting on SSH, it checks the local Tailscale transport and reports `Tailscale is stopped` without changing network settings.",
     "Jarvis 0.1.352 carries bounded email date ranges such as `past_month` from the user's prompt into the Apple Mail read path, so `emails from Ms. Sharpay in the past month` no longer becomes an unbounded recent-inbox search.",
@@ -116,7 +117,8 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 554/554 after the Tailnet/offload and streaming model-test fixes; Swift and live-app verification are rerun after each bundle rebuild.",
+    "Current verification: Python safety suite passed 554/554 after the Tailnet/offload, streaming model-test, and LocalOS alias-wording fixes; Swift and live-app verification are rerun after each bundle rebuild.",
+    "Focused LocalOS check now reports `closest Local OS file` for the Waving Through a Window alias and still keeps audio actions suppressed in automation.",
     "Focused streaming regression now proves `test the gemma 3 4b model for me` bypasses fast chat, emits `Planning the model test now`, and returns the safe MacBook Air/local-fallback plan.",
     "Live quiet voice-loop QA passed after the fix for model offload, Chrome-login migration, Teams assignment planning, and suppressed `Play Waving Through a Window` playback.",
     "Live remote-worker probe now returns in about 0.1s with `tailnet_stopped` when Tailscale is stopped, and model-test planning tells Leo the real reason before asking for any local fallback.",
