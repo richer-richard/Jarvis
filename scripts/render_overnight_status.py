@@ -21,6 +21,8 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.339 preserves dictated model handles such as `Gemma 3 4B` instead of turning them into misleading names like `Gemma 3.4B`.",
+    "Codex action requests such as `open Codex and send a prompt called test in the Default chat` now require strong confirmation instead of being downgraded to harmless Codex chat-status diagnostics.",
     "Jarvis 0.1.337 makes dictated Chrome bookmark requests more forgiving: if STT hears `my team's bookmark` as `my team s bookmark`, Jarvis still finds the Teams bookmark instead of saying no match.",
     "Closed-loop voice QA no longer mistakes real domains such as `teams.microsoft.com` for leaked internal tool names, so spoken-output checks fail for real backend leaks, not normal website addresses.",
     "LocalOS music playback now reports `Local OS did not pick up the command` when the LocalOS player bridge snapshot is stale, instead of claiming playback worked just because Jarvis queued a command.",
@@ -97,7 +99,10 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 526/526, Swift self-test passed, and Jarvis 0.1.337 build 337 launched from bundled app resources.",
+    "Current verification: Python safety suite passed 527/527, Swift self-test passed, and Jarvis 0.1.339 build 339 launched from bundled app resources.",
+    "Live closed-loop voice QA now passes for the safe example prompts: Teams Music assignment planning, Activity Monitor RAM, Calendar fast-fail, Codex strong-confirmation, Teams bookmark, and Gemma 3 4B model-test planning.",
+    "The Gemma model-test voice loop now keeps the visible reply as `Gemma 3 4B`, routes to `models.test_plan`, and matches spoken output with 1.0 similarity.",
+    "The Codex Default-chat prompt voice loop now routes to `policy.strong_confirmation` and says `Command requires strong confirmation and was not executed` instead of sending anything or showing chat-status diagnostics.",
     "Live closed-loop voice QA passed for `Hey Jarvis, open my Teams bookmark`: local STT heard `my team's bookmark`, Jarvis routed `open my team s bookmark`, selected `browser.bookmark_open`, and the spoken reply matched the visible reply with 0.995 similarity.",
     "Focused LocalOS tests now prove stale player snapshots return `bridge_not_polling` and tell Leo to open or refresh the Local OS Music Player instead of making a false audible-playback claim.",
     "Focused browser-lane tests now prove Teams URLs choose `chrome_authenticated`, ordinary URLs choose `jarvis_webkit`, and the Swift shell opens Chrome when `open_chrome_to_reuse_login` is set.",
@@ -184,7 +189,7 @@ TRY_ITEMS = [
 ]
 
 RISK_ITEMS = [
-    "Jarvis 0.1.337 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
+    "Jarvis 0.1.339 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
     "The LocalOS music page likely needs a reload to pick up the new playback-state bridge; Jarvis now reports that honestly as `bridge_not_polling`, but live audible playback was not triggered while Leo was asleep.",
     "MacBook Air remote-worker probing currently reaches the SSH target but does not return the expected worker response, so Jarvis should ask before running model tests locally.",
     "Groq returned HTTP 403 during the latest cloud model comparison, so the current reliable cloud lanes are Ollama Cloud GPT-OSS 120B and Gemma4 31B.",

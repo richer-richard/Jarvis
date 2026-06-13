@@ -4059,10 +4059,12 @@ def _looks_like_codex_chat_status(lower: str) -> bool:
     )
     status_cues = ("status", "check", "show", "what", "which", "configured", "using", "default")
     mutation_cues = ("change", "switch", "set ", "delete", "remove", "rename", "edit")
+    action_cues = ("send", "submit", "post", "type", "paste", "write", "prompt called", "prompt named")
     return (
         any(cue in lower for cue in chat_cues)
         and any(cue in lower for cue in status_cues)
         and not any(cue in lower for cue in mutation_cues)
+        and not any(cue in lower for cue in action_cues)
     )
 
 

@@ -8203,7 +8203,10 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
 
 def model_test_plan(model_name: str | None = None, *, prompt: str | None = None) -> dict[str, Any]:
     """Plan a model test without loading heavy local models on Leo's Mac."""
-    clean_model = _clean_model_name(model_name or _extract_model_name_from_text(prompt or "") or "")
+    extracted_model = _clean_model_name(_extract_model_name_from_text(prompt or ""))
+    clean_model = _clean_model_name(model_name or extracted_model or "")
+    if extracted_model and _model_name_handles_match(clean_model, extracted_model):
+        clean_model = extracted_model
     heavy = _model_is_heavy_for_this_mac(clean_model)
     remote = remote_worker_status(probe=True)
     remote_available = remote.get("status") == "available"
@@ -8250,7 +8253,34 @@ def model_test_plan(model_name: str | None = None, *, prompt: str | None = None)
 def _clean_model_name(value: Any) -> str:
     text = _clean_local_field(value)
     text = re.sub(r"(?i)\b(?:test|try|run|model|for me|please|jarvis)\b", " ", text)
-    return re.sub(r"\s+", " ", text).strip(" .,:;\"'")[:120]
+    text = re.sub(r"\s+", " ", text).strip(" .,:;\"'")[:120]
+    return _canonical_model_name_casing(text)
+
+
+def _model_name_handles_match(left: str, right: str) -> bool:
+    def normalize(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+    return bool(left and right and normalize(left) == normalize(right))
+
+
+def _canonical_model_name_casing(text: str) -> str:
+    value = str(text or "")
+    if not value:
+        return ""
+    replacements = (
+        (r"\bgpt[-\s]*oss\b", "GPT OSS"),
+        (r"\bgemma\b", "Gemma"),
+        (r"\bqwen\b", "Qwen"),
+        (r"\bllama\b", "Llama"),
+        (r"\bdeepseek\b", "DeepSeek"),
+    )
+    for pattern, replacement in replacements:
+        value = re.sub(pattern, replacement, value, flags=re.IGNORECASE)
+    value = re.sub(r"\b(\d+)\s*b\b", lambda match: f"{match.group(1)}B", value, flags=re.IGNORECASE)
+    value = re.sub(r"\be(\d+)b\b", lambda match: f"E{match.group(1)}B", value, flags=re.IGNORECASE)
+    value = re.sub(r"\br(\d+)\b", lambda match: f"R{match.group(1)}", value, flags=re.IGNORECASE)
+    return value
 
 
 def _extract_model_name_from_text(text: str) -> str:

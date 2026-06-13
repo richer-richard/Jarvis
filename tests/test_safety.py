@@ -4012,6 +4012,16 @@ class PlannerTests(unittest.TestCase):
             else:
                 tool_mock.assert_called_once_with(*expected_args)
 
+    def test_codex_send_prompt_request_is_not_downgraded_to_chat_status(self):
+        command = "open Codex and send a prompt called test in the Default chat"
+        result = Planner().handle(command)
+        preview = Planner().preview(command)
+
+        self.assertEqual(result.tool, "policy.strong_confirmation")
+        self.assertFalse(result.executed)
+        self.assertTrue(result.confirmation["required"])
+        self.assertEqual(preview.tool, "policy.strong_confirmation")
+
     def test_contact_tools_route_and_parse_fallback_entities(self):
         with patch("jarvis.planner.contact_data_lookup", return_value={"tool": "contacts.lookup", "status": "found", "executed": True, "reply": "Known."}) as lookup_mock:
             lookup_result = Planner().handle_selected_tool("who is Ms Sharpay", "contacts.lookup", {})
@@ -4219,12 +4229,18 @@ Pages occupied by compressor:             10.
         }
         with patch("jarvis.tools.remote_worker_status", return_value=remote):
             result = model_test_plan("Gemma 3 4B")
+            repaired = model_test_plan("Gemma 3.4B", prompt="test the Gemma 3 4B model for me")
+            canonical = model_test_plan("gemma 3 4b", prompt="test the gemma 3 4b model for me")
 
         self.assertEqual(result["tool"], "models.test_plan")
         self.assertEqual(result["preferred_lane"], "ask_before_local")
         self.assertFalse(result["ran_model"])
         self.assertIn("MacBook Air", result["reply"])
         self.assertIn("ask before running", result["reply"])
+        self.assertEqual(repaired["model"], "Gemma 3 4B")
+        self.assertIn("Gemma 3 4B", repaired["reply"])
+        self.assertNotIn("Gemma 3.4B", repaired["reply"])
+        self.assertEqual(canonical["model"], "Gemma 3 4B")
 
     def test_calendar_schedule_parses_events_without_changing_calendar(self):
         stdout = "EVENT\tSchool\tMath class\t2026-06-13 09:00\t2026-06-13 09:45\tRoom 207\tfalse\n"
