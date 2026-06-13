@@ -8268,7 +8268,7 @@ def model_test_plan(model_name: str | None = None, *, prompt: str | None = None)
 def _clean_model_name(value: Any) -> str:
     text = _clean_local_field(value)
     text = re.sub(r"(?i)\b(?:test|try|run|model|for me|please|jarvis)\b", " ", text)
-    text = re.sub(r"\s+", " ", text).strip(" .,:;\"'")[:120]
+    text = re.sub(r"\s+", " ", text).strip(" .,:;\"'-")[:120]
     return _canonical_model_name_casing(text)
 
 
@@ -8292,6 +8292,7 @@ def _canonical_model_name_casing(text: str) -> str:
     )
     for pattern, replacement in replacements:
         value = re.sub(pattern, replacement, value, flags=re.IGNORECASE)
+    value = re.sub(r"\b(\d+)\s*-\s*(\d+)\s*b\b", lambda match: f"{match.group(1)} {match.group(2)}B", value, flags=re.IGNORECASE)
     value = re.sub(r"\b(\d+)\s*b\b", lambda match: f"{match.group(1)}B", value, flags=re.IGNORECASE)
     value = re.sub(r"\be(\d+)b\b", lambda match: f"E{match.group(1)}B", value, flags=re.IGNORECASE)
     value = re.sub(r"\br(\d+)\b", lambda match: f"R{match.group(1)}", value, flags=re.IGNORECASE)

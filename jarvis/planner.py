@@ -678,6 +678,8 @@ class Planner:
             if _looks_like_teams_assignment_request(lower):
                 return self._result(text, "teams.assignment", "Prepared safe Teams assignment workflow plan.", assessment, teams_assignment_workflow_plan(text), True)
             return self._result(text, "workflow.app_task_plan", "Prepared safe app-task workflow plan.", assessment, app_task_workflow_plan(text), True)
+        if _looks_like_teams_assignment_request(lower):
+            return self._result(text, "teams.assignment", "Prepared safe Teams assignment workflow plan.", assessment, teams_assignment_workflow_plan(text), True)
         app_quit_name = _extract_app_quit_name(text)
         if app_quit_name is not None:
             return self._app_quit_confirmation_result(text, assessment, app_quit_name)
@@ -762,6 +764,8 @@ class Planner:
             return self._result(text, "diagnostics.latency", "Read local fast-latency status.", assessment, latest_latency_status(), True)
         if _looks_like_fast_model_status(lower):
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
+        if _looks_like_memory_usage_request(lower):
+            return self._result(text, "diagnostics.memory_usage", "Read local memory usage.", assessment, memory_usage_status(), True)
         if _looks_like_device_status(lower):
             if use_model_router:
                 return self._first_model_result(text, assessment, history=history)
@@ -965,6 +969,8 @@ class Planner:
             if _looks_like_teams_assignment_request(lower):
                 return self._preview_result(text, "teams.assignment", assessment, True, plan={"goal": text})
             return self._preview_result(text, "workflow.app_task_plan", assessment, True, plan={"goal": text})
+        if _looks_like_teams_assignment_request(lower):
+            return self._preview_result(text, "teams.assignment", assessment, True, plan={"goal": text})
         app_quit_name = _extract_app_quit_name(text)
         if app_quit_name is not None:
             return self._app_quit_confirmation_result(text, assessment, app_quit_name)
@@ -1051,6 +1057,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.latency", assessment, True)
         if _looks_like_fast_model_status(lower):
             return self._preview_result(text, "diagnostics.fast_model", assessment, True)
+        if _looks_like_memory_usage_request(lower):
+            return self._preview_result(text, "diagnostics.memory_usage", assessment, True)
         if _looks_like_device_status(lower):
             return self._preview_result(text, "diagnostics.device", assessment, True)
         if _looks_like_deep_tool_catalog_status(lower):
@@ -1433,7 +1441,10 @@ class Planner:
                 return self._preview_result(text, "calendar.today_schedule", assessment, True, plan={"intent": intent, "date_iso": date_iso})
             return self._result(text, "calendar.today_schedule", "Read local Calendar schedule.", assessment, calendar_today_schedule(date_iso), True)
         if selected_tool == "models.test_plan":
-            model_name = _clean_optional_entity(entities.get("model_name") or entities.get("model"))
+            model_name = (
+                _clean_optional_entity(entities.get("model_name") or entities.get("model"))
+                or _extract_model_name_for_test_plan(text)
+            )
             if not execute:
                 return self._preview_result(text, "models.test_plan", assessment, True, plan={"intent": intent, "model_name": model_name})
             return self._result(text, "models.test_plan", "Prepared safe model test plan.", assessment, model_test_plan(model_name, prompt=text), True)
@@ -2688,6 +2699,24 @@ def _extract_contact_remember_entities(text: str) -> tuple[str | None, str | Non
     return None, None
 
 
+def _extract_model_name_for_test_plan(text: str) -> str | None:
+    stripped = re.sub(r"\s+", " ", str(text or "")).strip(" .?!")
+    patterns = (
+        r"(?i)\btest\s+(?:the\s+)?(.+?)(?:[\s-]+model)\b",
+        r"(?i)\btry\s+(?:the\s+)?(.+?)(?:[\s-]+model)\b",
+        r"(?i)\bbenchmark\s+(?:the\s+)?(.+?)(?:[\s-]+model)\b",
+        r"(?i)\brun\s+(?:the\s+)?(.+?)(?:[\s-]+model)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, stripped)
+        if not match:
+            continue
+        model_name = re.sub(r"\s+", " ", match.group(1)).strip(" .?!\"'")
+        if model_name:
+            return model_name[:120]
+    return None
+
+
 def _bool_entity(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -3393,6 +3422,13 @@ def _looks_like_device_status(lower: str) -> bool:
     return bool(
         re.search(r"\b(mac|computer|machine|device|hardware)\s+(profile|specs|specifications|status)\b", text)
     )
+
+
+def _looks_like_memory_usage_request(lower: str) -> bool:
+    text = re.sub(r"\s+", " ", lower).strip()
+    memory_cue = re.search(r"\b(ram|memory|memory pressure|swap|used memory|free memory)\b", text)
+    usage_cue = re.search(r"\b(using|usage|used|available|free|pressure|activity monitor|how much)\b", text)
+    return bool(memory_cue and usage_cue)
 
 
 def _looks_like_model_context_status(lower: str) -> bool:

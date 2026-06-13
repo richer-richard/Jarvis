@@ -1852,6 +1852,7 @@ class PlannerTests(unittest.TestCase):
             "simulate voice loop Hey Jarvis final QA plan": "voice.loop_simulation",
             "teams assignment plan": "teams.assignment",
             "workflow plan for Teams assignment": "teams.assignment",
+            "look in Teams for my newest Music assignment and ask me questions": "teams.assignment",
             "overnight status": "diagnostics.overnight",
             "morning report draft status": "diagnostics.overnight",
             "show me the master report": "diagnostics.overnight",
@@ -1865,6 +1866,7 @@ class PlannerTests(unittest.TestCase):
             "what requires confirmation": "diagnostics.safety",
             "what model are you using": "diagnostics.fast_model",
             "model status": "diagnostics.fast_model",
+            "check in Activity Monitor how much RAM my computer is using": "diagnostics.memory_usage",
             "what Mac is this": "diagnostics.device",
             "device profile": "diagnostics.device",
             "model inputs for hello Jarvis": "diagnostics.model_context",
@@ -4161,6 +4163,17 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["total_human"], "16.0 GB")
         self.assertEqual(result["memory_pressure"], "normal")
 
+    def test_activity_monitor_ram_request_routes_to_memory_usage_before_device_profile(self):
+        fake_result = {"tool": "diagnostics.memory_usage", "status": "checked", "executed": True, "reply": "Memory checked."}
+        with patch("jarvis.planner.memory_usage_status", return_value=fake_result) as memory_mock:
+            result = Planner().handle("Check in Activity Monitor how much RAM my computer is using.")
+            preview = Planner().preview("Check in Activity Monitor how much RAM my computer is using.")
+
+        self.assertEqual(result.tool, "diagnostics.memory_usage")
+        self.assertEqual(preview.tool, "diagnostics.memory_usage")
+        self.assertEqual(result.result["reply"], "Memory checked.")
+        memory_mock.assert_called_once_with()
+
     def test_browser_session_strategy_refuses_cookie_migration(self):
         result = browser_session_strategy("use Teams without logging in again")
 
@@ -4253,6 +4266,7 @@ Pages occupied by compressor:             10.
             result = model_test_plan("Gemma 3 4B")
             repaired = model_test_plan("Gemma 3.4B", prompt="test the Gemma 3 4B model for me")
             canonical = model_test_plan("gemma 3 4b", prompt="test the gemma 3 4b model for me")
+            hyphenated = model_test_plan("Gemma 3-4 B", prompt="Test the Gemma 3-4 B-model for me.")
 
         self.assertEqual(result["tool"], "models.test_plan")
         self.assertEqual(result["preferred_lane"], "ask_before_local")
@@ -4263,6 +4277,16 @@ Pages occupied by compressor:             10.
         self.assertIn("Gemma 3 4B", repaired["reply"])
         self.assertNotIn("Gemma 3.4B", repaired["reply"])
         self.assertEqual(canonical["model"], "Gemma 3 4B")
+        self.assertEqual(hyphenated["model"], "Gemma 3 4B")
+
+    def test_model_test_preview_preserves_dictated_model_name(self):
+        result = Planner().preview("Test the Gemma 3 4B model for me.")
+        stt_artifact = Planner().preview("Test the Gemma 3-4 B-model for me.")
+
+        self.assertEqual(result.tool, "models.test_plan")
+        self.assertEqual(result.result["plan"]["model_name"], "Gemma 3 4B")
+        self.assertEqual(stt_artifact.tool, "models.test_plan")
+        self.assertEqual(stt_artifact.result["plan"]["model_name"], "Gemma 3-4 B")
 
     def test_calendar_schedule_parses_events_without_changing_calendar(self):
         stdout = "EVENT\tSchool\tMath class\t2026-06-13 09:00\t2026-06-13 09:45\tRoom 207\tfalse\n"
@@ -5485,6 +5509,18 @@ Pages occupied by compressor:             10.
         self.assertTrue(result.executed)
         self.assertEqual(result.result["goal"], prompt)
         self.assertIn("newest Music assignment", result.result["reply"])
+
+    def test_teams_assignment_natural_request_routes_to_safe_plan(self):
+        prompt = "Look in Teams for my newest Music assignment and ask me a list of questions to answer."
+        result = Planner().handle(prompt)
+        preview = Planner().preview(prompt)
+
+        self.assertEqual(result.tool, "teams.assignment")
+        self.assertEqual(preview.tool, "teams.assignment")
+        self.assertTrue(result.executed)
+        self.assertFalse(result.result["read_private_content"])
+        self.assertFalse(result.result["opened_app"])
+        self.assertFalse(result.result["clicked_ui"])
 
     def test_ui_overlay_plan_is_plan_only_without_ui_changes(self):
         result = ui_overlay_plan("normal")
