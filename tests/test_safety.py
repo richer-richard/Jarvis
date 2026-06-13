@@ -4086,6 +4086,24 @@ class PlannerTests(unittest.TestCase):
             else:
                 tool_mock.assert_called_once_with(*expected_args)
 
+    def test_calendar_today_preview_resolves_empty_date_to_local_today(self):
+        with patch("jarvis.planner._local_today_iso", return_value="2026-06-13"):
+            result = Planner()._handle_model_intent(
+                "Check my calendar for my schedule today.",
+                classify_command("Check my calendar for my schedule today."),
+                {
+                    "status": "completed",
+                    "selected_tool": "calendar.today_schedule",
+                    "entities": {},
+                },
+                execute=False,
+            )
+
+        self.assertEqual(result.tool, "calendar.today_schedule")
+        self.assertFalse(result.executed)
+        self.assertTrue(result.result["planned_only"])
+        self.assertEqual(result.result["plan"]["date_iso"], "2026-06-13")
+
     def test_codex_send_prompt_request_is_not_downgraded_to_chat_status(self):
         command = "open Codex and send a prompt called test in the Default chat"
         result = Planner().handle(command)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 from .safety import DANGEROUS_SHELL_TOKENS, READ_ONLY_SHELL_COMMANDS, VERSION_ONLY_SHELL_COMMANDS, classify_command
@@ -1436,7 +1437,7 @@ class Planner:
                 return self._preview_result(text, "diagnostics.memory_usage", assessment, True, plan={"intent": intent})
             return self._result(text, "diagnostics.memory_usage", "Read local memory usage.", assessment, memory_usage_status(), True)
         if selected_tool == "calendar.today_schedule":
-            date_iso = _clean_optional_entity(entities.get("date_iso") or entities.get("date"))
+            date_iso = _clean_optional_entity(entities.get("date_iso") or entities.get("date")) or _local_today_iso()
             if not execute:
                 return self._preview_result(text, "calendar.today_schedule", assessment, True, plan={"intent": intent, "date_iso": date_iso})
             return self._result(text, "calendar.today_schedule", "Read local Calendar schedule.", assessment, calendar_today_schedule(date_iso), True)
@@ -4413,6 +4414,10 @@ def _format_number(value: float) -> str:
     if abs(value - round(value)) <= 1e-9:
         return str(int(round(value)))
     return f"{value:.6g}"
+
+
+def _local_today_iso() -> str:
+    return datetime.now().astimezone().date().isoformat()
 
 
 def _explicitly_asks_codex(lower: str) -> bool:
