@@ -3062,7 +3062,7 @@ def localos_music_play(
         }
 
     bridge_liveness = _localos_music_bridge_liveness()
-    if bridge_liveness.get("status") in {"stale", "not_polling"}:
+    if bridge_liveness.get("status") in {"unknown", "stale", "not_polling"}:
         direct_confirmation = _localos_music_play_via_chrome(selected, user_request=user_request or query or "")
         direct_status = str(direct_confirmation.get("status") or "")
         if direct_status in {"playing", "accepted"}:
@@ -3103,6 +3103,7 @@ def localos_music_play(
             "localos_bridge_polling_active": bridge_liveness.get("polling_active"),
             "localos_bridge_snapshot_age_seconds": bridge_liveness.get("snapshot_age_seconds"),
             "localos_command_error": bridge_liveness.get("error"),
+            "localos_bridge_status": bridge_liveness.get("status"),
             "chrome_direct": direct_confirmation,
             "bridge_recovery": _localos_music_bridge_recovery(),
             "reply": (

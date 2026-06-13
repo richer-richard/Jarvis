@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.362 closes the LocalOS music false-queue gap: a library snapshot is no longer enough; Jarvis now requires a live control heartbeat or Chrome-direct LocalOS confirmation before it claims playback was sent.",
     "Jarvis 0.1.361 keeps ambiguous contact candidate names out of the spoken email summary; names stay in diagnostics while Jarvis simply asks Leo to confirm the contact.",
     "Jarvis 0.1.360 stops ambiguous sender aliases before slow mailbox scans: prompts like `emails from Ms. Sharpay` now ask for contact confirmation instead of searching for the nickname as a literal sender.",
     "Jarvis 0.1.359 fixes closed-loop voice QA report collisions: simultaneous spoken-command probes now write unique run folders instead of overwriting each other's synthesized command audio.",
@@ -131,7 +132,7 @@ PROOF_ITEMS = [
     "Live quiet voice-loop QA passed after the fix for model offload, Chrome-login migration, Teams assignment planning, and suppressed `Play Waving Through a Window` playback.",
     "Live remote-worker probe now returns in about 0.1s with `tailnet_stopped` when Tailscale is stopped, and model-test planning tells Leo the real reason before asking for any local fallback.",
     "Voice-loop QA now sends `suppress_audio_actions: true`, and server/tool tests prove this suppresses LocalOS music side effects for automation while normal user play commands remain executable.",
-    "Focused LocalOS tests now prove stale player snapshots still refuse when Chrome-direct LocalOS control is unavailable, and succeed only when the LocalOS page confirms the direct `playTrackById` command.",
+    "Focused LocalOS tests now prove stale or heartbeat-missing player snapshots still refuse when Chrome-direct LocalOS control is unavailable, and succeed only when the LocalOS page confirms the direct `playTrackById` command.",
     "Overnight no-permission voice suite passed for Teams assignment planning, Waving Through a Window recovery, Activity Monitor RAM, Codex strong-confirmation, Gemma 3 4B model-test planning, and Chrome-session migration.",
     "Live closed-loop voice QA now passes for the safe example prompts: natural Teams Music assignment planning, Activity Monitor RAM, Codex strong-confirmation, Teams bookmark, browser session strategy, and Gemma 3 4B model-test planning.",
     "The Gemma model-test voice loop now survives local STT hearing `Gemma 3-4 B-model`, repairs the visible reply to `Gemma 3 4B`, routes to `models.test_plan`, and matches spoken output with 1.0 similarity.",
@@ -152,7 +153,7 @@ PROOF_ITEMS = [
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
     "Sharpay-style email previews now include `contact_alias_lookup`, `resolved_sender_query`, and `recommended_tool: contacts.infer` when the alias is not known, while remaining planned-only; actual email execution can now infer a confident alias from recent sender metadata before searching messages.",
     "Latest local checkpoint commits record the browser/session, music-recovery, model-scoring, report-proof, voice-loop routing, LocalOS stale-bridge hardening, and contact-aware email planning; the branch has not been pushed while Leo is asleep.",
-    "Python safety suite: 558/558 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, and voice-QA work.",
+    "Python safety suite: 559/559 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
@@ -229,7 +230,7 @@ TRY_ITEMS = [
 
 RISK_ITEMS = [
     "Jarvis 0.1.346 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
-    "The LocalOS music page likely needs a reload to pick up the new playback-state bridge; Jarvis now reports that honestly as `bridge_not_polling`, but live audible playback was not triggered while Leo was asleep.",
+    "The LocalOS music page likely needs a reload or active Chrome tab to pick up the playback-state bridge; Jarvis now reports missing/stale bridge status honestly, but live audible playback was not triggered while Leo was asleep.",
     "MacBook Air remote-worker probing currently cannot proceed because Tailscale is stopped on this Mac; Jarvis now detects that quickly and should ask before running model tests locally.",
     "Groq works as Jarvis's fast conversation model, but the scored middle-model comparison showed it should not be trusted for safety-sensitive planning without stronger prompting or a safer model layer.",
     "GPT-OSS 20B Cloud returned empty visible replies in the newest comparison and should not be treated as a dependable middle model yet.",

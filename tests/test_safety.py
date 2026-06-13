@@ -1433,6 +1433,8 @@ class PlannerTests(unittest.TestCase):
             control_path = Path(tmpdir) / "localos_music_control.json"
             payload = {
                 "source": "localos-music-player",
+                "jarvisControlBridgeVersion": 2,
+                "jarvisControlPollingActive": True,
                 "library": [
                     {
                         "id": "track-2",
@@ -1455,7 +1457,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(pending["command"]["action"], "play_track")
         self.assertEqual(pending["command"]["track"]["id"], "track-2")
         self.assertEqual(result["playback_confirmation"], "unconfirmed")
-        self.assertIn("I queued Waving Through A Window by Dear Evan Hansen", result["reply"])
+        self.assertIn("I sent Waving Through A Window by Dear Evan Hansen to Local OS", result["reply"])
 
     def test_localos_music_search_merges_file_fallback_when_snapshot_library_is_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1492,6 +1494,8 @@ class PlannerTests(unittest.TestCase):
             payload = {
                 "source": "localos-music-player",
                 "allSongsCount": 2,
+                "jarvisControlBridgeVersion": 2,
+                "jarvisControlPollingActive": True,
                 "yourPick": [{"title": "Dear Evan Hansen - For Forever", "artist": "Unknown"}],
                 "library": [],
             }
@@ -1516,6 +1520,8 @@ class PlannerTests(unittest.TestCase):
             control_path = Path(tmpdir) / "localos_music_control.json"
             payload = {
                 "source": "localos-music-player",
+                "jarvisControlBridgeVersion": 2,
+                "jarvisControlPollingActive": True,
                 "library": [
                     {
                         "id": "track-2",
@@ -1666,6 +1672,8 @@ class PlannerTests(unittest.TestCase):
             control_path = Path(tmpdir) / "localos_music_control.json"
             payload = {
                 "source": "localos-music-player",
+                "jarvisControlBridgeVersion": 2,
+                "jarvisControlPollingActive": True,
                 "library": [
                     {
                         "id": "track-2",
@@ -1736,12 +1744,44 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("jarvis-chrome-direct", script)
         self.assertIn("chrome-direct-", result["command_id"])
 
+    def test_localos_music_play_refuses_unknown_bridge_without_false_queue(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
+            control_path = Path(tmpdir) / "localos_music_control.json"
+            payload = {
+                "source": "localos-music-player",
+                "library": [
+                    {
+                        "id": "track-2",
+                        "title": "Waving Through A Window",
+                        "artist": "Dear Evan Hansen",
+                        "relativePath": "localFiles/mp3/Dear Evan Hansen - Waving Through A Window.mp3",
+                    }
+                ],
+            }
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
+                 patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path), \
+                 patch("jarvis.tools._localos_music_play_via_chrome", return_value={
+                     "status": "unavailable",
+                     "error": "chrome_direct_not_available",
+                 }):
+                store_localos_music_snapshot(payload)
+                result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
+
+        self.assertEqual(result["status"], "not_queued")
+        self.assertEqual(result["localos_bridge_status"], "unknown")
+        self.assertEqual(result["playback_confirmation"], "bridge_not_polling")
+        self.assertFalse(control_path.exists())
+        self.assertIn("Local OS Music is not connected", result["reply"])
+
     def test_localos_music_play_tells_user_when_bridge_did_not_poll(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
             control_path = Path(tmpdir) / "localos_music_control.json"
             payload = {
                 "source": "localos-music-player",
+                "jarvisControlBridgeVersion": 2,
+                "jarvisControlPollingActive": True,
                 "library": [
                     {
                         "id": "track-2",
