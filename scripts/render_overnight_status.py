@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.353 makes MacBook Air offload diagnostics fast and honest: before waiting on SSH, it checks the local Tailscale transport and reports `Tailscale is stopped` without changing network settings.",
     "Jarvis 0.1.352 carries bounded email date ranges such as `past_month` from the user's prompt into the Apple Mail read path, so `emails from Ms. Sharpay in the past month` no longer becomes an unbounded recent-inbox search.",
     "Jarvis 0.1.351 makes Calendar failures actionable: it distinguishes a missing cache, a permission/open failure, an empty cache, and a Calendar schema parse drift instead of only saying the cache is unavailable.",
     "Jarvis 0.1.350 routes obvious named music-play requests through LocalOS before fast chat in both preview and streaming execution, so voice-loop commands like `Play Waving Through a Window` no longer get echoed back as conversation.",
@@ -114,7 +115,8 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 551/551, Swift self-test passed, no-prompt live verifier passed 12/12, and Jarvis 0.1.352 build 352 launched from bundled app resources.",
+    "Current verification: Python safety suite passed 553/553 after the Tailnet/offload fix; Swift and live-app verification are rerun after each bundle rebuild.",
+    "Live remote-worker probe now returns in about 0.1s with `tailnet_stopped` when Tailscale is stopped, and model-test planning tells Leo the real reason before asking for any local fallback.",
     "Voice-loop QA now sends `suppress_audio_actions: true`, and server/tool tests prove this suppresses LocalOS music side effects for automation while normal user play commands remain executable.",
     "Focused LocalOS tests now prove stale player snapshots still refuse when Chrome-direct LocalOS control is unavailable, and succeed only when the LocalOS page confirms the direct `playTrackById` command.",
     "Overnight no-permission voice suite passed for Teams assignment planning, Waving Through a Window recovery, Activity Monitor RAM, Codex strong-confirmation, Gemma 3 4B model-test planning, and Chrome-session migration.",
@@ -212,7 +214,7 @@ TRY_ITEMS = [
 RISK_ITEMS = [
     "Jarvis 0.1.346 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
     "The LocalOS music page likely needs a reload to pick up the new playback-state bridge; Jarvis now reports that honestly as `bridge_not_polling`, but live audible playback was not triggered while Leo was asleep.",
-    "MacBook Air remote-worker probing currently reaches the SSH target but does not return the expected worker response, so Jarvis should ask before running model tests locally.",
+    "MacBook Air remote-worker probing currently cannot proceed because Tailscale is stopped on this Mac; Jarvis now detects that quickly and should ask before running model tests locally.",
     "Groq works as Jarvis's fast conversation model, but the scored middle-model comparison showed it should not be trusted for safety-sensitive planning without stronger prompting or a safer model layer.",
     "GPT-OSS 20B Cloud still returned partial comparison runs and should not be treated as a dependable middle model yet.",
     "Gemma4 31B Cloud did not confirm audio understanding through Ollama; it answered text prompts well, but native audio input remains unproven.",

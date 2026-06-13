@@ -4419,6 +4419,31 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("BatchMode=yes", run_mock.call_args.args[0])
         self.assertIn("No user files were read", result["reply"])
 
+    def test_remote_worker_status_fast_fails_when_tailscale_is_stopped(self):
+        def find_executable(name: str) -> str | None:
+            return {
+                "ssh": "/usr/bin/ssh",
+                "tailscale": "/usr/local/bin/tailscale",
+            }.get(name)
+
+        completed = subprocess.CompletedProcess(
+            args=["tailscale", "status"],
+            returncode=1,
+            stdout="Tailscale is stopped.\n",
+            stderr="",
+        )
+        with patch("jarvis.tools._find_executable", side_effect=find_executable), \
+             patch("jarvis.tools.subprocess.run", return_value=completed) as run_mock:
+            result = remote_worker_status()
+
+        self.assertEqual(result["tool"], "diagnostics.remote_worker")
+        self.assertEqual(result["status"], "tailnet_stopped")
+        self.assertFalse(result["read_private_content"])
+        self.assertFalse(result["changed_remote_state"])
+        self.assertEqual(result["tailscale"]["status"], "stopped")
+        self.assertNotIn("BatchMode=yes", run_mock.call_args.args[0])
+        self.assertIn("did not try to start Tailscale", result["reply"])
+
     def test_elevation_status_describes_routing_ladder_without_model_call(self):
         result = elevation_status()
 
@@ -4583,6 +4608,20 @@ Pages occupied by compressor:             10.
         self.assertNotIn("Gemma 3.4B", repaired["reply"])
         self.assertEqual(canonical["model"], "Gemma 3 4B")
         self.assertEqual(hyphenated["model"], "Gemma 3 4B")
+
+    def test_model_test_plan_names_stopped_tailscale_before_local_fallback(self):
+        remote = {
+            "status": "tailnet_stopped",
+            "target": "hongyi@100.72.212.85",
+            "tailscale": {"status": "stopped"},
+        }
+        with patch("jarvis.tools.remote_worker_status", return_value=remote):
+            result = model_test_plan("Gemma 3 4B")
+
+        self.assertEqual(result["preferred_lane"], "ask_before_local")
+        self.assertEqual(result["remote_worker"]["tailscale_status"], "stopped")
+        self.assertIn("Tailscale is stopped", result["reply"])
+        self.assertIn("ask before running Gemma 3 4B on this Mac", result["reply"])
 
     def test_model_test_preview_preserves_dictated_model_name(self):
         result = Planner().preview("Test the Gemma 3 4B model for me.")

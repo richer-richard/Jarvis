@@ -8488,6 +8488,7 @@ def safety_status() -> dict[str, Any]:
 def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
     """Return bounded Tailscale MacBook Air readiness without reading user files."""
     ssh = _find_executable("ssh")
+    tailscale = _tailscale_transport_status(probe=probe)
     base: dict[str, Any] = {
         "tool": "diagnostics.remote_worker",
         "executed": bool(probe and ssh),
@@ -8498,6 +8499,7 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
         "user": REMOTE_WORKER_USER,
         "tailnet_transport": "ssh_over_tailscale",
         "ssh_path": ssh,
+        "tailscale": tailscale,
         "allowed_probe": "hostname, sw_vers, uname -m, hw.memsize, CPU brand, codex command path/version",
         "recommended_roles": [
             "overnight model benchmarks",
@@ -8523,6 +8525,15 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
             **base,
             "status": "planned",
             "reply": f"Remote worker status: MacBook Air helper is configured as {REMOTE_WORKER_SSH_TARGET}, but this was a plan-only check.",
+        }
+    if tailscale.get("status") == "stopped":
+        return {
+            **base,
+            "status": "tailnet_stopped",
+            "reply": (
+                "Remote worker status: Tailscale is stopped on this Mac, so I cannot reach the MacBook Air helper. "
+                "I did not try to start Tailscale or change network settings."
+            ),
         }
 
     remote_script = (
@@ -8628,6 +8639,57 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
     }
 
 
+def _tailscale_transport_status(*, probe: bool) -> dict[str, Any]:
+    tailscale = _find_executable("tailscale")
+    base: dict[str, Any] = {
+        "available": False,
+        "path": tailscale,
+        "checked": False,
+        "status": "not_checked",
+        "changed_network_state": False,
+    }
+    if not probe:
+        return base
+    if not tailscale or Path(tailscale).name != "tailscale":
+        return {
+            **base,
+            "status": "not_found",
+        }
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            [tailscale, "status"],
+            shell=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            **base,
+            **_duration_fields(started),
+            "available": True,
+            "checked": True,
+            "status": "probe_error",
+            "error": str(error),
+        }
+    output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+    status = "running" if completed.returncode == 0 else "unavailable"
+    if "tailscale is stopped" in output.casefold():
+        status = "stopped"
+    return {
+        **base,
+        **_duration_fields(started),
+        "available": True,
+        "checked": True,
+        "status": status,
+        "returncode": completed.returncode,
+        "summary": _text_tail(output, 240),
+    }
+
+
 def model_test_plan(model_name: str | None = None, *, prompt: str | None = None) -> dict[str, Any]:
     """Plan a model test without loading heavy local models on Leo's Mac."""
     extracted_model = _clean_model_name(_extract_model_name_from_text(prompt or ""))
@@ -8644,7 +8706,12 @@ def model_test_plan(model_name: str | None = None, *, prompt: str | None = None)
         reply = f"I will test {clean_model} on the MacBook Air first, not on this Mac."
     else:
         lane = "ask_before_local"
-        if heavy:
+        if remote.get("status") == "tailnet_stopped":
+            reply = (
+                f"Tailscale is stopped, so I cannot reach the MacBook Air right now. "
+                f"I should ask before running {clean_model} on this Mac."
+            )
+        elif heavy:
             reply = f"{clean_model} may be too heavy for this 16 GB Mac, and I cannot reach the MacBook Air right now. I should ask before running it locally."
         else:
             reply = f"I cannot reach the MacBook Air right now. I should ask before running {clean_model} on this Mac, even if it looks small enough for a bounded test."
@@ -8665,6 +8732,11 @@ def model_test_plan(model_name: str | None = None, *, prompt: str | None = None)
             "memory_gb": remote.get("memory_gb"),
             "codex_cli_available": remote.get("codex_cli_available"),
             "duration_human": remote.get("duration_human"),
+            "tailscale_status": (
+                remote.get("tailscale", {}).get("status")
+                if isinstance(remote.get("tailscale"), dict)
+                else None
+            ),
         },
         "local_guardrail": "Prefer the MacBook Air for model tests. If the remote helper is unavailable, ask before loading any named model on Leo's 16 GB Mac.",
         "next_steps": [
