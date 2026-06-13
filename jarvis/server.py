@@ -34,6 +34,8 @@ from .self_check import run_self_checks
 from .tools import (
     codex_activity_snapshot,
     localos_music_pending_control,
+    reset_audio_actions_suppressed,
+    set_audio_actions_suppressed,
     store_localos_music_snapshot,
     outlook_visible_text_summary,
     prewarm_tts_async,
@@ -73,49 +75,55 @@ class JarvisServer:
         history: list[dict[str, str]] | None = None,
         *,
         suppress_speech: bool = False,
+        suppress_audio_actions: bool = False,
     ) -> dict[str, Any]:
-        with self._mode_lock:
-            is_paused = self.paused
-        if is_paused:
-            assessment = classify_command(command).to_dict()
-            assessment["decision"] = "paused"
-            assessment["reasons"] = [*assessment.get("reasons", []), "Jarvis command execution is paused."]
-            data = self._paused_result(command, assessment)
+        audio_token = set_audio_actions_suppressed(suppress_audio_actions)
+        try:
+            with self._mode_lock:
+                is_paused = self.paused
+            if is_paused:
+                assessment = classify_command(command).to_dict()
+                assessment["decision"] = "paused"
+                assessment["reasons"] = [*assessment.get("reasons", []), "Jarvis command execution is paused."]
+                data = self._paused_result(command, assessment)
+                event = self.audit.record(
+                    command=command,
+                    risk_level=int(assessment["risk_level"]),
+                    risk_label=str(assessment["risk_label"]),
+                    tool=data["tool"],
+                    decision="paused",
+                    summary=data["summary"],
+                    details={
+                        "executed": False,
+                        "mode": self.mode(),
+                        "result": data["result"],
+                    },
+                )
+                data["audit_event_id"] = event.id
+                _attach_auto_speech(data, reason="final", suppress=suppress_speech)
+                return data
+
+            planned = self.planner.handle(command, history=history, use_model_router=True)
+            data = planned.to_dict()
             event = self.audit.record(
                 command=command,
-                risk_level=int(assessment["risk_level"]),
-                risk_label=str(assessment["risk_label"]),
+                risk_level=int(data["assessment"]["risk_level"]),
+                risk_label=str(data["assessment"]["risk_label"]),
                 tool=data["tool"],
-                decision="paused",
+                decision=str(data["assessment"]["decision"]),
                 summary=data["summary"],
                 details={
-                    "executed": False,
-                    "mode": self.mode(),
-                    "result": data["result"],
+                    "executed": data["executed"],
+                    "result": _audit_safe_result(data["tool"], data["result"]),
+                    "confirmation": data.get("confirmation"),
+                    "suppress_audio_actions": bool(suppress_audio_actions),
                 },
             )
             data["audit_event_id"] = event.id
             _attach_auto_speech(data, reason="final", suppress=suppress_speech)
             return data
-
-        planned = self.planner.handle(command, history=history, use_model_router=True)
-        data = planned.to_dict()
-        event = self.audit.record(
-            command=command,
-            risk_level=int(data["assessment"]["risk_level"]),
-            risk_label=str(data["assessment"]["risk_label"]),
-            tool=data["tool"],
-            decision=str(data["assessment"]["decision"]),
-            summary=data["summary"],
-            details={
-                "executed": data["executed"],
-                "result": _audit_safe_result(data["tool"], data["result"]),
-                "confirmation": data.get("confirmation"),
-            },
-        )
-        data["audit_event_id"] = event.id
-        _attach_auto_speech(data, reason="final", suppress=suppress_speech)
-        return data
+        finally:
+            reset_audio_actions_suppressed(audio_token)
 
     def stream_command(
         self,
@@ -123,11 +131,38 @@ class JarvisServer:
         history: list[dict[str, str]] | None = None,
         *,
         suppress_speech: bool = False,
+        suppress_audio_actions: bool = False,
+    ):
+        audio_token = set_audio_actions_suppressed(suppress_audio_actions)
+        try:
+            yield from self._stream_command_inner(
+                command,
+                history=history,
+                suppress_speech=suppress_speech,
+                suppress_audio_actions=suppress_audio_actions,
+            )
+        finally:
+            reset_audio_actions_suppressed(audio_token)
+
+    def _stream_command_inner(
+        self,
+        command: str,
+        history: list[dict[str, str]] | None = None,
+        *,
+        suppress_speech: bool = False,
+        suppress_audio_actions: bool = False,
     ):
         with self._mode_lock:
             is_paused = self.paused
         if is_paused:
-            yield {"event": "final", "data": self.command(command, suppress_speech=suppress_speech)}
+            yield {
+                "event": "final",
+                "data": self.command(
+                    command,
+                    suppress_speech=suppress_speech,
+                    suppress_audio_actions=suppress_audio_actions,
+                ),
+            }
             return
 
         preview = self.planner.preview(command, use_model_router=False, history=history).to_dict()
@@ -149,7 +184,15 @@ class JarvisServer:
                         "speech": speech,
                     },
                 }
-            yield {"event": "final", "data": self.command(command, history=history, suppress_speech=suppress_speech)}
+            yield {
+                "event": "final",
+                "data": self.command(
+                    command,
+                    history=history,
+                    suppress_speech=suppress_speech,
+                    suppress_audio_actions=suppress_audio_actions,
+                ),
+            }
             return
 
         assessment = classify_command(command).to_dict()
@@ -1027,6 +1070,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 command = str(payload.get("command", ""))
                 history = _conversation_history_from_payload(payload, current_command=command)
                 suppress_speech = _payload_suppresses_speech(payload)
+                suppress_audio_actions = _payload_suppresses_audio_actions(payload)
             except RequestBodyTooLarge:
                 self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
                 return
@@ -1036,7 +1080,14 @@ class RequestHandler(BaseHTTPRequestHandler):
             except (TypeError, ValueError, UnicodeDecodeError) as exc:
                 self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            self._send_event_stream(STATE.stream_command(command, history=history, suppress_speech=suppress_speech))
+            self._send_event_stream(
+                STATE.stream_command(
+                    command,
+                    history=history,
+                    suppress_speech=suppress_speech,
+                    suppress_audio_actions=suppress_audio_actions,
+                )
+            )
             return
         if route.path != "/api/command":
             self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
@@ -1046,6 +1097,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             command = str(payload.get("command", ""))
             history = _conversation_history_from_payload(payload, current_command=command)
             suppress_speech = _payload_suppresses_speech(payload)
+            suppress_audio_actions = _payload_suppresses_audio_actions(payload)
         except RequestBodyTooLarge:
             self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
@@ -1055,7 +1107,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError, UnicodeDecodeError) as exc:
             self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
             return
-        self._send_json(STATE.command(command, history=history, suppress_speech=suppress_speech))
+        self._send_json(
+            STATE.command(
+                command,
+                history=history,
+                suppress_speech=suppress_speech,
+                suppress_audio_actions=suppress_audio_actions,
+            )
+        )
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -1216,6 +1275,10 @@ def _bounded_int(raw: str, *, default: int, minimum: int, maximum: int) -> int:
 
 def _payload_suppresses_speech(payload: dict[str, Any]) -> bool:
     return payload.get("suppress_speech") is True or payload.get("speak") is False
+
+
+def _payload_suppresses_audio_actions(payload: dict[str, Any]) -> bool:
+    return payload.get("suppress_audio_actions") is True or payload.get("suppress_audio") is True
 
 
 def _optional_float(raw: Any) -> float | None:

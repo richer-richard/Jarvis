@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 import ctypes
 import ctypes.util
+import contextvars
 import difflib
 import hashlib
 import html
@@ -120,6 +121,10 @@ PIPER_WORKER_ACTIVE_ID: str | None = None
 PIPER_WORKER_SPEECH_EVENTS: dict[str, dict[str, Any]] = {}
 PIPER_WORKER_EVENT_LOG: list[dict[str, Any]] = []
 PIPER_WORKER_EVENT_LOG_LIMIT = 30
+AUDIO_ACTIONS_SUPPRESSED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "jarvis_audio_actions_suppressed",
+    default=False,
+)
 CODEX_JOBS: dict[str, dict[str, Any]] = {}
 CODEX_JOBS_LOCK = threading.Lock()
 CODEX_JOBS_LOADED = False
@@ -144,6 +149,18 @@ APP_SEARCH_DIRS = [
     Path("/System/Applications/Utilities"),
     Path.home() / "Applications",
 ]
+
+
+def set_audio_actions_suppressed(suppressed: bool) -> contextvars.Token[bool]:
+    return AUDIO_ACTIONS_SUPPRESSED.set(bool(suppressed))
+
+
+def reset_audio_actions_suppressed(token: contextvars.Token[bool]) -> None:
+    AUDIO_ACTIONS_SUPPRESSED.reset(token)
+
+
+def audio_actions_are_suppressed() -> bool:
+    return bool(AUDIO_ACTIONS_SUPPRESSED.get())
 LOCALOS_ROOT = PROJECT_ROOT.parent / "localOSroot"
 LOCALOS_SHELL_PATH = LOCALOS_ROOT / "localOS" / "index.html"
 LOCALOS_MUSIC_PLAYER_PATH = LOCALOS_ROOT / "localOS" / "localFiles" / "HTMLfiles" / "!musicPlayer.html"
@@ -2999,6 +3016,24 @@ def localos_music_play(
             "source_tool": source_result.get("tool"),
             "source_status": source_result.get("status"),
             "reply": reply,
+            **_duration_fields(started_at),
+        }
+
+    if audio_actions_are_suppressed():
+        return {
+            **base,
+            "status": "audio_suppressed",
+            "executed": False,
+            "available": True,
+            "source_tool": source_result.get("tool"),
+            "source_status": source_result.get("status"),
+            "selected_track": selected,
+            "playback_confirmation": "suppressed",
+            "control_lane": "none_suppressed_for_verification",
+            "reply": (
+                f"I found {_localos_music_track_phrase([selected])}. "
+                "Audio actions are suppressed for this verification run."
+            ),
             **_duration_fields(started_at),
         }
 

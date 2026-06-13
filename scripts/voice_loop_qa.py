@@ -1052,7 +1052,7 @@ def stream_command_events(
     timeout: float,
     suppress_speech: bool = True,
 ) -> list[dict[str, Any]]:
-    payload = {"command": command, "suppress_speech": True}
+    payload = {"command": command, "suppress_speech": True, "suppress_audio_actions": True}
     if not suppress_speech:
         payload["suppress_speech"] = False
     request = urllib.request.Request(

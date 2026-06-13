@@ -1608,6 +1608,40 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Playing Waving Through A Window by Dear Evan Hansen in Local OS", result["reply"])
         direct_mock.assert_called_once()
 
+    def test_localos_music_play_suppresses_audio_actions_after_selecting_track(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
+            control_path = Path(tmpdir) / "localos_music_control.json"
+            payload = {
+                "source": "localos-music-player",
+                "library": [
+                    {
+                        "id": "track-2",
+                        "title": "Waving Through A Window",
+                        "artist": "Dear Evan Hansen",
+                        "relativePath": "localFiles/mp3/Dear Evan Hansen - Waving Through A Window.mp3",
+                    }
+                ],
+            }
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
+                 patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path), \
+                 patch("jarvis.tools._localos_music_playback_confirmation") as confirm_mock, \
+                 patch("jarvis.tools._localos_music_play_via_chrome") as direct_mock:
+                store_localos_music_snapshot(payload)
+                token = jarvis_tools.set_audio_actions_suppressed(True)
+                try:
+                    result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
+                finally:
+                    jarvis_tools.reset_audio_actions_suppressed(token)
+
+        self.assertEqual(result["status"], "audio_suppressed")
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["playback_confirmation"], "suppressed")
+        self.assertEqual(result["selected_track"]["id"], "track-2")
+        self.assertFalse(control_path.exists())
+        confirm_mock.assert_not_called()
+        direct_mock.assert_not_called()
+
     def test_localos_music_chrome_direct_helper_marks_localos_page_command_and_confirms(self):
         delimiter = jarvis_tools.BROWSER_FIELD_DELIMITER
         direct_json = json.dumps({
@@ -6856,6 +6890,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("--stt-file-self-test", script_source)
         self.assertIn("/api/command", script_source)
         self.assertIn('"suppress_speech": True', script_source)
+        self.assertIn('"suppress_audio_actions": True', script_source)
         self.assertIn("detect_wake_command", script_source)
         self.assertIn("faster_whisper", script_source)
         self.assertIn("LOCAL_STT_PYTHON", script_source)
@@ -10581,6 +10616,49 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(final["result"]["action"], "conversation.greeting")
         self.assertEqual(final["speech"]["reason"], "final")
         self.assertEqual(final["speech"]["status"], "suppressed_by_request")
+
+    def test_server_scopes_suppressed_audio_actions_to_one_command(self):
+        def fake_handle(command, **kwargs):
+            suppressed = jarvis_tools.audio_actions_are_suppressed()
+            return PlannedResult(
+                command=command,
+                tool="localos.music_play",
+                summary="Audio guard checked.",
+                assessment=classify_command(command).to_dict(),
+                result={
+                    "tool": "localos.music_play",
+                    "status": "audio_suppressed" if suppressed else "queued",
+                    "executed": not suppressed,
+                    "reply": "Music guard checked.",
+                },
+                executed=not suppressed,
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch.object(server.planner, "handle", side_effect=fake_handle) as handle_mock:
+                guarded = server.command(
+                    "Play Waving Through a Window.",
+                    suppress_speech=True,
+                    suppress_audio_actions=True,
+                )
+                normal = server.command(
+                    "Play Waving Through a Window.",
+                    suppress_speech=True,
+                    suppress_audio_actions=False,
+                )
+            events = server.audit.recent(2)
+
+        self.assertEqual(
+            handle_mock.call_args_list[0].kwargs,
+            {"history": None, "use_model_router": True},
+        )
+        self.assertEqual(guarded["result"]["status"], "audio_suppressed")
+        self.assertEqual(normal["result"]["status"], "queued")
+        self.assertEqual(handle_mock.call_count, 2)
+        self.assertTrue(events[0]["details"]["suppress_audio_actions"])
+        self.assertFalse(events[1]["details"]["suppress_audio_actions"])
 
     def test_stream_command_yields_tool_status_before_email_final(self):
         fake_result = {
