@@ -102,7 +102,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 528/528, Swift self-test passed, and Jarvis 0.1.340 build 340 launched from bundled app resources.",
+    "Current verification: Python safety suite passed 531/531, Swift self-test passed, and Jarvis 0.1.340 build 340 launched from bundled app resources.",
     "Live closed-loop voice QA now passes for the safe example prompts: Teams Music assignment planning, Activity Monitor RAM, Calendar fast-fail, Codex strong-confirmation, Teams bookmark, and Gemma 3 4B model-test planning.",
     "The Gemma model-test voice loop now keeps the visible reply as `Gemma 3 4B`, routes to `models.test_plan`, and matches spoken output with 1.0 similarity.",
     "The Codex Default-chat prompt voice loop now routes to `policy.strong_confirmation` and says `Command requires strong confirmation and was not executed` instead of sending anything or showing chat-status diagnostics.",
@@ -115,8 +115,8 @@ PROOF_ITEMS = [
     "Jarvis's own GPT-OSS 120B Cloud adapter produced the 少先队 email-style spoken summary in 3.9s after the visible-output budget change.",
     "Voice-loop QA passed for RAM usage, model-test planning, browser session strategy, and Calendar fast-fail behavior with speech suppressed.",
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
-    "Jarvis checkpoint commit `69961de` records the browser/session and music-recovery hardening; the branch is 11 commits ahead of origin and has not been pushed while Leo is asleep.",
-    "Python safety suite: 528/528 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, and voice-QA work.",
+    "Jarvis checkpoint commits `69961de` and `6df22cb` record the browser/session, music-recovery, and model-scoring hardening; the branch is 12 commits ahead of origin and has not been pushed while Leo is asleep.",
+    "Python safety suite: 531/531 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
