@@ -21,6 +21,8 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.361 keeps ambiguous contact candidate names out of the spoken email summary; names stay in diagnostics while Jarvis simply asks Leo to confirm the contact.",
+    "Jarvis 0.1.360 stops ambiguous sender aliases before slow mailbox scans: prompts like `emails from Ms. Sharpay` now ask for contact confirmation instead of searching for the nickname as a literal sender.",
     "Jarvis 0.1.359 fixes closed-loop voice QA report collisions: simultaneous spoken-command probes now write unique run folders instead of overwriting each other's synthesized command audio.",
     "Jarvis 0.1.358 makes the Chrome-authenticated browsing boundary explicit: existing Chrome logins are not migrated into WebKit; signed-in sites use a visible Chrome handoff while Jarvis keeps its browser/status panel open.",
     "Jarvis 0.1.357 routes explicit contact-inference prompts such as `who is Ms. Sharpay from email` directly to the bounded local sender-metadata tool, avoiding a slow model-router detour.",

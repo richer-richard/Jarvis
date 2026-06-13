@@ -1676,6 +1676,16 @@ class Planner:
                     executed=False,
                     confirmation=None,
                 )
+            contact_confirmation = _email_contact_confirmation_result(email_request)
+            if contact_confirmation is not None:
+                return self._result(
+                    text,
+                    "outlook.visible_summary",
+                    "Need contact confirmation before reading email.",
+                    assessment,
+                    contact_confirmation,
+                    True,
+                )
             result = outlook_read_only_check(
                 sender_query=email_request.get("resolved_sender_query") or sender_query,
                 selection=selection,
@@ -3103,6 +3113,43 @@ def email_request_metadata(
         ),
         "selection_rule": selection or "unread_first_then_newest_if_none_unread",
         "spoken_status": email_request_status_text(text, safe_entities),
+    }
+
+
+def _email_contact_confirmation_result(email_request: dict[str, Any]) -> dict[str, Any] | None:
+    sender_query = _clean_optional_entity(email_request.get("sender_query"))
+    lookup = email_request.get("contact_alias_lookup")
+    if not sender_query or not isinstance(lookup, dict):
+        return None
+    status = str(lookup.get("status") or "")
+    if status not in {"needs_confirmation", "ambiguous"}:
+        return None
+    candidates = lookup.get("candidates") if isinstance(lookup.get("candidates"), list) else []
+    candidate_names = [
+        str(item.get("display_name") or item.get("name") or "").strip()
+        for item in candidates
+        if isinstance(item, dict) and str(item.get("display_name") or item.get("name") or "").strip()
+    ][:3]
+    candidate_phrase = " I found possible matches." if candidate_names else ""
+    return {
+        "tool": "outlook.visible_summary",
+        "status": "needs_contact_confirmation",
+        "executed": True,
+        "read_email_content": False,
+        "read_private_metadata": bool(lookup.get("read_private_metadata")),
+        "mail_search_skipped": True,
+        "sender_query": sender_query,
+        "resolved_sender_query": email_request.get("resolved_sender_query"),
+        "selection": email_request.get("selection"),
+        "contact_alias_lookup": lookup,
+        "candidate_names": candidate_names,
+        "date_range": email_request.get("date_range"),
+        "date_range_source": email_request.get("date_range_source"),
+        "recommended_tool": "contacts.infer",
+        "reply": (
+            f"I do not know who {sender_query} means yet."
+            f"{candidate_phrase} Please confirm the contact first, then I can summarize those emails."
+        ),
     }
 
 
