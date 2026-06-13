@@ -21,6 +21,9 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.340 tightens the browser/session boundary: Chrome login migration routes to `browser.session_strategy`, authenticated URLs are marked as Chrome-session lanes in the Swift browser panel, and Jarvis keeps WebKit for ordinary pages.",
+    "The model comparison script now matches the live Jarvis Groq request headers and scores answer quality, so fast-but-wrong model replies no longer look successful just because they returned text.",
+    "LocalOS music bridge recovery now returns exact player/shell recovery metadata while keeping the spoken reply simple and path-free.",
     "Jarvis 0.1.339 preserves dictated model handles such as `Gemma 3 4B` instead of turning them into misleading names like `Gemma 3.4B`.",
     "Codex action requests such as `open Codex and send a prompt called test in the Default chat` now require strong confirmation instead of being downgraded to harmless Codex chat-status diagnostics.",
     "Jarvis 0.1.337 makes dictated Chrome bookmark requests more forgiving: if STT hears `my team's bookmark` as `my team s bookmark`, Jarvis still finds the Teams bookmark instead of saying no match.",
@@ -99,7 +102,7 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 527/527, Swift self-test passed, and Jarvis 0.1.339 build 339 launched from bundled app resources.",
+    "Current verification: Python safety suite passed 528/528, Swift self-test passed, and Jarvis 0.1.340 build 340 launched from bundled app resources.",
     "Live closed-loop voice QA now passes for the safe example prompts: Teams Music assignment planning, Activity Monitor RAM, Calendar fast-fail, Codex strong-confirmation, Teams bookmark, and Gemma 3 4B model-test planning.",
     "The Gemma model-test voice loop now keeps the visible reply as `Gemma 3 4B`, routes to `models.test_plan`, and matches spoken output with 1.0 similarity.",
     "The Codex Default-chat prompt voice loop now routes to `policy.strong_confirmation` and says `Command requires strong confirmation and was not executed` instead of sending anything or showing chat-status diagnostics.",
@@ -108,12 +111,12 @@ PROOF_ITEMS = [
     "Focused browser-lane tests now prove Teams URLs choose `chrome_authenticated`, ordinary URLs choose `jarvis_webkit`, and the Swift shell opens Chrome when `open_chrome_to_reuse_login` is set.",
     "Live suppressed Teams-assignment probe returned `teams.assignment` with `preferred_browser_lane=chrome_authenticated`, `visible_browser_lane=jarvis_webkit_panel`, and `copied_chrome_cookies=false`.",
     "Live suppressed Calendar probe returned in 0.0s with `cache_unavailable`, replacing the previous 12-second timeout behavior.",
-    "Cloud-first model comparison report showed GPT-OSS 120B Cloud completed, Gemma4 31B Cloud completed fastest on text, GPT-OSS 20B Cloud remained partial due empty visible replies, and Gemma4 31B did not confirm audio input through Ollama.",
+    "Latest scored cloud-first model comparison: GPT-OSS 120B Cloud scored 5/5, Gemma4 31B Cloud scored 5/5 and was fastest on text, GPT-OSS 20B Cloud was accurate on completed answers but still partial, and Groq Llama 70B was fast but failed safety/math/tool-shape checks.",
     "Jarvis's own GPT-OSS 120B Cloud adapter produced the 少先队 email-style spoken summary in 3.9s after the visible-output budget change.",
     "Voice-loop QA passed for RAM usage, model-test planning, browser session strategy, and Calendar fast-fail behavior with speech suppressed.",
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
-    "Jarvis checkpoint commit `ad0fccb` records the browser, voice, model, Calendar, Teams-plan, and test updates in the Jarvis repo.",
-    "Python safety suite: 464/464 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, retry-first latency, and voice-QA work.",
+    "Jarvis checkpoint commit `69961de` records the browser/session and music-recovery hardening; the branch is 11 commits ahead of origin and has not been pushed while Leo is asleep.",
+    "Python safety suite: 528/528 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
@@ -189,11 +192,11 @@ TRY_ITEMS = [
 ]
 
 RISK_ITEMS = [
-    "Jarvis 0.1.339 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
+    "Jarvis 0.1.340 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
     "The LocalOS music page likely needs a reload to pick up the new playback-state bridge; Jarvis now reports that honestly as `bridge_not_polling`, but live audible playback was not triggered while Leo was asleep.",
     "MacBook Air remote-worker probing currently reaches the SSH target but does not return the expected worker response, so Jarvis should ask before running model tests locally.",
-    "Groq returned HTTP 403 during the latest cloud model comparison, so the current reliable cloud lanes are Ollama Cloud GPT-OSS 120B and Gemma4 31B.",
-    "GPT-OSS 20B Cloud returned empty visible replies in the latest comparison and should not be treated as a dependable middle model yet.",
+    "Groq works as Jarvis's fast conversation model, but the scored middle-model comparison showed it should not be trusted for safety-sensitive planning without stronger prompting or a safer model layer.",
+    "GPT-OSS 20B Cloud still returned partial comparison runs and should not be treated as a dependable middle model yet.",
     "Gemma4 31B Cloud did not confirm audio understanding through Ollama; it answered text prompts well, but native audio input remains unproven.",
     "Real microphone pickup, false wakes, and room-noise reliability still need Leo testing.",
     "The summon popout's code-level rectangle and stray-line causes are fixed, but Leo should do the final human-eye check on the real Stage Manager desktop.",

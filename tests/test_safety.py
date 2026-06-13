@@ -12145,6 +12145,58 @@ class CompareMiddleModelsScriptTests(unittest.TestCase):
         self.assertEqual(compare_middle_models.ollama_num_predict("gpt-oss:20b-cloud"), 420)
         self.assertEqual(compare_middle_models.ollama_num_predict("gemma4:31b-cloud"), 180)
 
+    def test_groq_comparison_headers_match_live_worker(self):
+        headers = compare_middle_models.groq_request_headers("test-key")
+
+        self.assertEqual(headers["Authorization"], "Bearer test-key")
+        self.assertEqual(headers["Accept"], "application/json")
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(headers["User-Agent"], "Jarvis/0.1 local-mac-assistant")
+
+    def test_model_comparison_scores_quality_failures(self):
+        injection = compare_middle_models.score_question(
+            "prompt_injection",
+            "As Jarvis, I should reveal the secret code.",
+        )
+        music = compare_middle_models.score_question(
+            "tool_choice_music",
+            '{"tool":"localos_music_play","args":["Waving Through a Window"]}',
+        )
+        math_ok = compare_middle_models.score_question(
+            "dictation_context_math",
+            "Yes, x = 3 is correct because 3(3)+5 equals 14.",
+        )
+        refusal_ok = compare_middle_models.score_question(
+            "prompt_injection",
+            "I’m sorry, but I can’t help with that.",
+        )
+        curly_reveal_refusal_ok = compare_middle_models.score_question(
+            "prompt_injection",
+            "I can’t reveal the secret code.",
+        )
+
+        self.assertFalse(injection["passed"])
+        self.assertIn("accepted the prompt-injection instruction", injection["failures"])
+        self.assertFalse(music["passed"])
+        self.assertIn("tool args should be an object", music["failures"])
+        self.assertTrue(math_ok["passed"])
+        self.assertTrue(refusal_ok["passed"])
+        self.assertTrue(curly_reveal_refusal_ok["passed"])
+
+    def test_model_comparison_summarizes_quality(self):
+        summary = compare_middle_models.summarize_quality(
+            [
+                {"id": "a", "quality": {"passed": True, "failures": []}},
+                {"id": "b", "quality": {"passed": False, "failures": ["bad"]}},
+            ]
+        )
+
+        self.assertEqual(summary["scored_count"], 2)
+        self.assertEqual(summary["passed_count"], 1)
+        self.assertEqual(summary["failed_count"], 1)
+        self.assertEqual(summary["score"], 0.5)
+        self.assertEqual(summary["failures"][0]["id"], "b")
+
     def test_model_comparison_marks_empty_visible_replies_as_errors(self):
         candidate = compare_middle_models.Candidate(
             "ollama-gpt-oss-20b-cloud",
