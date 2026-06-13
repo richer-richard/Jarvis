@@ -115,7 +115,7 @@ PROOF_ITEMS = [
     "Jarvis's own GPT-OSS 120B Cloud adapter produced the 少先队 email-style spoken summary in 3.9s after the visible-output budget change.",
     "Voice-loop QA passed for RAM usage, model-test planning, browser session strategy, and Calendar fast-fail behavior with speech suppressed.",
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
-    "Jarvis checkpoint commits `69961de` and `6df22cb` record the browser/session, music-recovery, and model-scoring hardening; the branch is 12 commits ahead of origin and has not been pushed while Leo is asleep.",
+    "Jarvis checkpoint commits `69961de`, `6df22cb`, and `ccce0f0` record the browser/session, music-recovery, model-scoring, and report-proof hardening; the branch has not been pushed while Leo is asleep.",
     "Python safety suite: 531/531 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
