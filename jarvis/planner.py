@@ -857,6 +857,8 @@ class Planner:
             return self._result(text, "browser.read_page", "Read current Chrome page locally.", assessment, browser_read_page(), True)
         if _looks_like_browser_search_request(lower):
             return self._result(text, "browser.search_web", "Prepared browser search plan.", assessment, browser_search_plan(_extract_browser_search_query(text)), False)
+        if _looks_like_browser_session_strategy_request(lower):
+            return self._result(text, "browser.session_strategy", "Checked browser session strategy.", assessment, browser_session_strategy(text), True)
         if _looks_like_builtin_browser_plan_request(lower):
             return self._result(text, "browser.built_in_plan", "Prepared built-in browser plan.", assessment, browser_built_in_plan(text), True)
         quick_result = quick_local_control(text)
@@ -1120,6 +1122,8 @@ class Planner:
             return self._preview_result(text, "browser.read_page", assessment, True, plan={"reads": "bounded_active_chrome_page_text", "local_only": True})
         if _looks_like_browser_search_request(lower):
             return self._preview_result(text, "browser.search_web", assessment, False, plan={"query": _extract_browser_search_query(text)})
+        if _looks_like_browser_session_strategy_request(lower):
+            return self._preview_result(text, "browser.session_strategy", assessment, True, plan={"goal": text})
         if _looks_like_builtin_browser_plan_request(lower):
             return self._preview_result(text, "browser.built_in_plan", assessment, True, plan={"goal": text})
         quick_result = quick_local_control(text, execute=False)
@@ -2518,6 +2522,30 @@ def _looks_like_browser_read_page_request(lower: str) -> bool:
 def _looks_like_browser_search_request(lower: str) -> bool:
     return bool(
         re.search(r"\b(?:search the web for|web search for|google|look up online|search online for)\b", lower)
+    )
+
+
+def _looks_like_browser_session_strategy_request(lower: str) -> bool:
+    if "chrome" not in lower and "logged in" not in lower and "login" not in lower:
+        return False
+    return any(
+        phrase in lower
+        for phrase in (
+            "migrate chrome",
+            "reuse chrome",
+            "use chrome login",
+            "use my chrome login",
+            "copy chrome cookies",
+            "chrome cookies",
+            "chrome session",
+            "logged in on chrome",
+            "logged-in chrome",
+            "logged in already",
+            "login again",
+            "needing to login again",
+            "need to login again",
+            "without logging in again",
+        )
     )
 
 

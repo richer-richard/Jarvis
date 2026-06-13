@@ -1558,6 +1558,12 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["playback_confirmation"], "bridge_not_polling")
         self.assertIn("Local OS did not pick up the command", result["reply"])
         self.assertIn("Open or refresh the Local OS Music Player", result["reply"])
+        self.assertIn("bridge_recovery", result)
+        self.assertIn("player_path", result["bridge_recovery"])
+        self.assertIn("shell_path", result["bridge_recovery"])
+        self.assertIn("Open or refresh", result["bridge_recovery"]["next_step"])
+        self.assertNotIn("file://", result["reply"])
+        self.assertNotIn(str(result["bridge_recovery"]["player_path"]), result["reply"])
 
     def test_localos_music_play_summary_does_not_claim_queue_when_no_track_found(self):
         fake_result = {
@@ -1783,6 +1789,11 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('command.action !== "play_track"', source)
         self.assertIn('String(source).startsWith("mp3/")', source)
         self.assertIn("setInterval(pollJarvisMusicControl, 900)", source)
+        self.assertIn("JARVIS_MUSIC_HEARTBEAT_MS", source)
+        self.assertIn("scheduleJarvisMusicHeartbeatSnapshot", source)
+        self.assertIn('"jarvis-control-heartbeat"', source)
+        self.assertIn("publishJarvisMusicSnapshot(reason = \"music-update\", options = {})", source)
+        self.assertIn("!options.force", source)
 
     def test_shell_like_status_command_routes_to_shell(self):
         result = Planner().handle("git status")
@@ -4160,6 +4171,17 @@ Pages occupied by compressor:             10.
         self.assertFalse(result["chrome_can_be_embedded_in_jarvis"])
         self.assertEqual(result["recommended_authenticated_lane"], "chrome")
         self.assertIn("should not copy Chrome cookies", result["reply"])
+        self.assertIn("signed-in Chrome", result["spoken_summary"])
+        self.assertNotIn("session stores into Jarvis", result["spoken_summary"])
+
+    def test_chrome_login_migration_request_routes_to_session_strategy(self):
+        result = Planner().handle("can you migrate Chrome login to Jarvis browser?")
+        preview = Planner().preview("I am logged in on Chrome; can Jarvis use that without making me login again?")
+
+        self.assertEqual(result.tool, "browser.session_strategy")
+        self.assertTrue(result.executed)
+        self.assertEqual(preview.tool, "browser.session_strategy")
+        self.assertIn("signed-in Chrome", result.result["spoken_summary"])
 
     def test_browser_status_reports_live_webkit_without_cookie_migration(self):
         with patch("jarvis.tools.app_status", side_effect=[
@@ -6277,8 +6299,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn("open_chrome_to_reuse_login", model_source)
         self.assertIn('preferredOpenLane == "chrome_authenticated"', model_source)
+        self.assertIn("browserAuthenticatedLane", model_source)
+        self.assertIn("Self.isAuthenticatedBrowserURL(url)", model_source)
         self.assertIn("openURLInChrome(url, statusPrefix:", model_source)
         self.assertIn("Signed-in page: opening Chrome too", model_source)
+        self.assertIn("Signed-in site: using Chrome session", model_source)
+        self.assertIn("Signed-in site: Chrome session available", model_source)
 
     def test_swift_smoke_tests_cover_current_loop_regressions(self):
         model_source = (

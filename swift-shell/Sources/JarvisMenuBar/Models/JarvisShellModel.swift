@@ -35,6 +35,7 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var browserTargetURL: URL?
     @Published private(set) var browserTitle: String = "Jarvis Browser"
     @Published private(set) var browserStatusText: String = "Browser ready"
+    @Published private(set) var browserAuthenticatedLane: Bool = false
     @Published private(set) var messages: [ChatMessage] = [
         ChatMessage(
             role: .jarvis,
@@ -758,14 +759,21 @@ final class JarvisShellModel: ObservableObject {
             browserStatusText = "Enter a valid URL or search."
             return
         }
-        openInAppBrowser(url: url, title: "")
+        let authenticatedLane = Self.isAuthenticatedBrowserURL(url)
+        openInAppBrowser(url: url, title: "", authenticatedLane: authenticatedLane)
+        if authenticatedLane {
+            openURLInChrome(url, statusPrefix: "Opening signed-in page")
+        }
     }
 
-    func openInAppBrowser(url: URL, title: String = "") {
+    func openInAppBrowser(url: URL, title: String = "", authenticatedLane: Bool = false) {
         browserTargetURL = url
         browserAddressText = url.absoluteString
         browserTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Jarvis Browser" : title
-        browserStatusText = "Loading \(url.host ?? url.absoluteString)"
+        browserAuthenticatedLane = authenticatedLane
+        browserStatusText = authenticatedLane
+            ? "Signed-in site: using Chrome session"
+            : "Loading \(url.host ?? url.absoluteString)"
         isBrowserVisible = true
     }
 
@@ -776,7 +784,10 @@ final class JarvisShellModel: ObservableObject {
         }
         if let url {
             browserAddressText = url.absoluteString
-            browserStatusText = "Loaded \(url.host ?? url.absoluteString)"
+            browserAuthenticatedLane = Self.isAuthenticatedBrowserURL(url)
+            browserStatusText = browserAuthenticatedLane
+                ? "Signed-in site: Chrome session available"
+                : "Loaded \(url.host ?? url.absoluteString)"
         }
     }
 
@@ -795,12 +806,33 @@ final class JarvisShellModel: ObservableObject {
         guard let url = Self.normalizedBrowserURL(from: directURL ?? selectedBookmarkURL ?? "") else {
             return false
         }
-        openInAppBrowser(url: url, title: title)
-        if openChromeToReuseLogin || preferredOpenLane == "chrome_authenticated" {
+        let authenticatedLane = openChromeToReuseLogin || preferredOpenLane == "chrome_authenticated" || Self.isAuthenticatedBrowserURL(url)
+        openInAppBrowser(url: url, title: title, authenticatedLane: authenticatedLane)
+        if authenticatedLane {
             browserStatusText = "Signed-in page: opening Chrome too"
             openURLInChrome(url, statusPrefix: "Opening signed-in page")
         }
         return true
+    }
+
+    private static func isAuthenticatedBrowserURL(_ url: URL) -> Bool {
+        let host = (url.host ?? "").lowercased()
+        guard !host.isEmpty else {
+            return false
+        }
+        let authenticatedDomains: Set<String> = [
+            "accounts.google.com",
+            "classroom.google.com",
+            "drive.google.com",
+            "login.microsoftonline.com",
+            "mail.google.com",
+            "microsoft365.com",
+            "office.com",
+            "outlook.live.com",
+            "outlook.office.com",
+            "teams.microsoft.com",
+        ]
+        return authenticatedDomains.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 
     private static func normalizedBrowserURL(from input: String) -> URL? {

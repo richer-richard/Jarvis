@@ -46,7 +46,7 @@ struct JarvisBrowserPanelView: View {
                 Button {
                     model.openBrowserTargetInChrome()
                 } label: {
-                    Label("Open Chrome", systemImage: "globe")
+                    Label(model.browserAuthenticatedLane ? "Signed-In Chrome" : "Chrome", systemImage: "globe")
                 }
                 .help("Open this page in Google Chrome")
 
@@ -66,6 +66,14 @@ struct JarvisBrowserPanelView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if model.browserAuthenticatedLane {
+                    Text("Chrome Session")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.blue.opacity(0.12), in: Capsule())
+                }
             }
 
             JarvisWebView(targetURL: model.browserTargetURL, controller: browser)

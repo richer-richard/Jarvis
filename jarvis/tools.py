@@ -145,6 +145,8 @@ APP_SEARCH_DIRS = [
     Path.home() / "Applications",
 ]
 LOCALOS_ROOT = PROJECT_ROOT.parent / "localOSroot"
+LOCALOS_SHELL_PATH = LOCALOS_ROOT / "localOS" / "index.html"
+LOCALOS_MUSIC_PLAYER_PATH = LOCALOS_ROOT / "localOS" / "localFiles" / "HTMLfiles" / "!musicPlayer.html"
 LOCALOS_MUSIC_MP3_DIR = LOCALOS_ROOT / "localOS" / "localFiles" / "mp3"
 LOCALOS_MUSIC_SNAPSHOT_PATH = RUNTIME_DIR / "integrations" / "localos_music_snapshot.json"
 LOCALOS_MUSIC_CONTROL_PATH = RUNTIME_DIR / "integrations" / "localos_music_control.json"
@@ -3038,6 +3040,7 @@ def localos_music_play(
         "localos_bridge_current_track_matches": confirmation.get("current_track_matches"),
         "localos_bridge_current_track_playing": confirmation.get("current_track_playing"),
         "localos_command_error": confirmation.get("error"),
+        "bridge_recovery": _localos_music_bridge_recovery(),
         "reply": reply,
         **_duration_fields(started_at),
     }
@@ -3208,6 +3211,18 @@ def _read_localos_music_snapshot_for_tool() -> dict[str, Any]:
     if not isinstance(snapshot, dict):
         return {"status": "snapshot_invalid", "error": "snapshot_invalid"}
     return {"status": "available", "snapshot": snapshot}
+
+
+def _localos_music_bridge_recovery() -> dict[str, Any]:
+    return {
+        "player_exists": LOCALOS_MUSIC_PLAYER_PATH.exists(),
+        "shell_exists": LOCALOS_SHELL_PATH.exists(),
+        "player_path": str(LOCALOS_MUSIC_PLAYER_PATH),
+        "shell_path": str(LOCALOS_SHELL_PATH),
+        "player_file_url": LOCALOS_MUSIC_PLAYER_PATH.as_uri() if LOCALOS_MUSIC_PLAYER_PATH.exists() else "",
+        "shell_file_url": LOCALOS_SHELL_PATH.as_uri() if LOCALOS_SHELL_PATH.exists() else "",
+        "next_step": "Open or refresh the Local OS Music Player so it can poll Jarvis music commands.",
+    }
 
 
 def _localos_music_playback_confirmation(
@@ -9140,9 +9155,8 @@ def browser_session_strategy(goal: str | None = None) -> dict[str, Any]:
     clean_goal = _clean_local_field(goal)[:260]
     authenticated_examples = ["Teams", "Outlook web", "school portals", "Google Classroom", "logged-in dashboards"]
     reply = (
-        "Browser session strategy: Jarvis should not copy Chrome cookies into its WebKit browser. "
-        "For logged-in sites, Jarvis should use Chrome-backed browsing or hand the page to Chrome; "
-        "for ordinary pages, the embedded Jarvis browser is fine."
+        "I should use your signed-in Chrome for logged-in websites, and use the Jarvis browser for ordinary pages. "
+        "I should not copy Chrome cookies, passwords, or session stores into Jarvis."
     )
     return {
         "tool": "browser.session_strategy",
@@ -9166,6 +9180,7 @@ def browser_session_strategy(goal: str | None = None) -> dict[str, Any]:
         "authenticated_site_examples": authenticated_examples,
         "next_step": "Use the imported bookmark URL, but open/control it through Chrome when the site depends on Leo's existing login.",
         "reply": reply,
+        "spoken_summary": "I can use your signed-in Chrome for logged-in sites, but I should not copy Chrome login data into Jarvis.",
     }
 
 
