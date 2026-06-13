@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.368 tightens LocalOS music confirmation: Chrome-direct playback can only say `playing` when LocalOS reports the requested track as current and audio is actually playing.",
     "Jarvis 0.1.367 fixes dictated Chrome-login routing: STT-shaped phrases like `chrome log and steer browser` now go to the safe Chrome-session strategy instead of accidentally importing bookmarks.",
     "Jarvis 0.1.366 fixes a LocalOS Chrome-direct false-accepted path: if Chrome rejects or fails playback, Jarvis no longer lets a delayed status update overwrite that failure as `accepted`.",
     "Jarvis 0.1.365 hardens speech interruption: the wake listener now ignores tiny transcript noise, captured-command echoes, and Jarvis's own spoken output before it calls Stop Speaking.",

@@ -3474,8 +3474,13 @@ def _localos_music_play_via_chrome(
       }} catch (error) {{}}
     }}, 700);
     const state = typeof api.getState === "function" ? api.getState() : {{}};
-    result.status = state && state.playing ? "playing" : "accepted";
-    result.playing = !!(state && state.playing);
+    const current = typeof getCurrentTrack === "function" ? getCurrentTrack() : null;
+    const currentTrackMatches = !!(current && current.id === trackId);
+    const statePlaying = !!(state && state.playing);
+    result.status = currentTrackMatches && statePlaying ? "playing" : "accepted";
+    result.playing = statePlaying;
+    result.currentTrackMatches = currentTrackMatches;
+    result.currentTrackTitle = current ? String(current.title || "") : "";
     result.trackTitle = String(track.title || "");
     result.trackArtist = String(track.artist || "");
     return JSON.stringify(result);
