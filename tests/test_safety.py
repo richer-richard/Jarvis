@@ -125,6 +125,7 @@ from jarvis.tools import (
 )
 from jarvis.wake import WakeSession, detect_wake_command, score_wake_transcript
 from scripts import (
+    compare_middle_models,
     render_overnight_status,
     repair_local_stt_model,
     smoke_conversation_context,
@@ -11334,6 +11335,95 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("bundled autostart opt-out", highlights)
         self.assertIn("bundled opt-out no-worker guard", highlights)
         self.assertNotIn("temporary app bundle", highlights)
+
+
+class CompareMiddleModelsScriptTests(unittest.TestCase):
+    def test_local_ollama_candidate_skipped_without_opt_in(self):
+        candidate = compare_middle_models.Candidate(
+            "ollama-gemma4-e4b",
+            "ollama",
+            "gemma4:e4b",
+            local_model=True,
+            expected_location="local medium",
+        )
+
+        with patch.object(compare_middle_models, "call_ollama") as call_ollama:
+            result = compare_middle_models.run_candidate(
+                candidate,
+                installed={"gemma4:e4b"},
+                timeout=1,
+                allow_local_models=False,
+                allow_local_heavy=False,
+                audio_probe=None,
+            )
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("local Ollama model skipped", result["reason"])
+        call_ollama.assert_not_called()
+
+    def test_cloud_ollama_candidate_runs_when_available(self):
+        candidate = compare_middle_models.Candidate(
+            "ollama-gpt-oss-120b-cloud",
+            "ollama",
+            "gpt-oss:120b-cloud",
+            expected_location="ollama cloud",
+        )
+
+        with patch.object(
+            compare_middle_models,
+            "call_ollama",
+            return_value={"status": "completed", "elapsed_seconds": 0.1, "reply": "ok"},
+        ) as call_ollama:
+            result = compare_middle_models.run_candidate(
+                candidate,
+                installed={"gpt-oss:120b-cloud"},
+                timeout=1,
+                allow_local_models=False,
+                allow_local_heavy=False,
+                audio_probe=None,
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(call_ollama.call_count, len(compare_middle_models.QUESTIONS))
+
+    def test_cloud_ollama_candidate_does_not_require_local_list_entry(self):
+        candidate = compare_middle_models.Candidate(
+            "ollama-gemma4-31b-cloud",
+            "ollama",
+            "gemma4:31b-cloud",
+            expected_location="ollama cloud",
+        )
+
+        with patch.object(
+            compare_middle_models,
+            "call_ollama",
+            return_value={"status": "completed", "elapsed_seconds": 0.1, "reply": "ok"},
+        ) as call_ollama:
+            result = compare_middle_models.run_candidate(
+                candidate,
+                installed=set(),
+                timeout=1,
+                allow_local_models=False,
+                allow_local_heavy=False,
+                audio_probe=None,
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(call_ollama.call_count, len(compare_middle_models.QUESTIONS))
+
+    def test_candidate_status_reports_all_question_errors(self):
+        self.assertEqual(
+            compare_middle_models.candidate_status_from_questions(
+                [{"status": "error"}, {"status": "error"}]
+            ),
+            "error",
+        )
+        self.assertEqual(
+            compare_middle_models.candidate_status_from_questions(
+                [{"status": "completed"}, {"status": "error"}]
+            ),
+            "partial",
+        )
 
 
 if __name__ == "__main__":

@@ -53,6 +53,7 @@ class Candidate:
     backend: str
     model: str
     heavy_local: bool = False
+    local_model: bool = False
     expected_location: str = "unknown"
 
 
@@ -106,6 +107,10 @@ def ollama_tags() -> set[str]:
     return {str(model.get("name") or "") for model in data.get("models", []) if isinstance(model, dict)}
 
 
+def is_ollama_cloud_model(model: str) -> bool:
+    return model.endswith("-cloud")
+
+
 def ollama_ps() -> list[dict[str, Any]]:
     try:
         completed = subprocess.run(
@@ -120,6 +125,47 @@ def ollama_ps() -> list[dict[str, Any]]:
         return []
     lines = [line for line in completed.stdout.splitlines() if line.strip()]
     return [{"raw": line} for line in lines]
+
+
+def stop_ollama_model(model: str) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            ["ollama", "stop", model],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=12,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "model": model,
+            "status": "error",
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "error": f"{type(error).__name__}: {error}",
+        }
+    return {
+        "model": model,
+        "status": "completed" if completed.returncode == 0 else "error",
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "returncode": completed.returncode,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
+
+
+def cleanup_local_ollama_candidates(candidates: list[Candidate], installed: set[str]) -> list[dict[str, Any]]:
+    cleaned = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate.backend != "ollama" or not candidate.local_model or candidate.model not in installed:
+            continue
+        if candidate.model in seen:
+            continue
+        seen.add(candidate.model)
+        cleaned.append(stop_ollama_model(candidate.model))
+    return cleaned
 
 
 def call_ollama(model: str, prompt: str, *, timeout: int) -> dict[str, Any]:
@@ -261,11 +307,23 @@ def default_ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
+def candidate_status_from_questions(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return "completed"
+    statuses = [str(result.get("status") or "") for result in results]
+    if all(status == "error" for status in statuses):
+        return "error"
+    if any(status == "error" for status in statuses):
+        return "partial"
+    return "completed"
+
+
 def run_candidate(
     candidate: Candidate,
     *,
     installed: set[str],
     timeout: int,
+    allow_local_models: bool,
     allow_local_heavy: bool,
     audio_probe: Path | None,
 ) -> dict[str, Any]:
@@ -276,11 +334,18 @@ def run_candidate(
             "reason": "GROQ_API_KEY missing",
             "questions": [],
         }
-    if candidate.backend == "ollama" and candidate.model not in installed:
+    if candidate.backend == "ollama" and candidate.model not in installed and not is_ollama_cloud_model(candidate.model):
         return {
             "candidate": candidate.__dict__,
             "status": "skipped",
             "reason": "not installed in Ollama",
+            "questions": [],
+        }
+    if candidate.backend == "ollama" and candidate.local_model and not allow_local_models:
+        return {
+            "candidate": candidate.__dict__,
+            "status": "skipped",
+            "reason": "local Ollama model skipped; pass --allow-local-models to run on this Mac",
             "questions": [],
         }
     if candidate.heavy_local and not allow_local_heavy:
@@ -307,7 +372,7 @@ def run_candidate(
         except Exception as error:
             result = {"status": "error", "error": f"{type(error).__name__}: {error}"}
         results.append({"id": question["id"], **result})
-    output = {"candidate": candidate.__dict__, "status": "completed", "questions": results}
+    output = {"candidate": candidate.__dict__, "status": candidate_status_from_questions(results), "questions": results}
     if candidate.backend == "ollama" and audio_probe and candidate.model.startswith("gemma4:"):
         output["audio_probe"] = call_ollama_audio_probe(candidate.model, audio_probe, timeout=timeout)
     return output
@@ -316,6 +381,11 @@ def run_candidate(
 def main() -> int:
     load_user_env_file()
     parser = argparse.ArgumentParser(description="Compare Jarvis middle-model candidates.")
+    parser.add_argument(
+        "--allow-local-models",
+        action="store_true",
+        help="Allow running local Ollama models on this Mac. By default, the comparison is cloud-first.",
+    )
     parser.add_argument("--allow-local-heavy", action="store_true", help="Allow running large local models such as gpt-oss:20b.")
     parser.add_argument("--audio-probe", default="", help="Optional audio file to test with audio-capable Ollama candidates such as gemma4:e4b.")
     parser.add_argument("--timeout", type=int, default=35, help="Per-question timeout in seconds.")
@@ -324,34 +394,46 @@ def main() -> int:
 
     candidates = [
         Candidate("groq-llama-3.3-70b", "groq", os.environ.get("JARVIS_GROQ_MODEL", "llama-3.3-70b-versatile"), expected_location="cloud"),
-        Candidate("ollama-qwen3-0.6b", "ollama", "qwen3:0.6b", expected_location="local light"),
-        Candidate("ollama-gemma3n-e4b", "ollama", "gemma3n:e4b", expected_location="local medium"),
+        Candidate("ollama-qwen3-0.6b", "ollama", "qwen3:0.6b", local_model=True, expected_location="local light"),
+        Candidate("ollama-gemma3n-e4b", "ollama", "gemma3n:e4b", local_model=True, expected_location="local medium"),
         Candidate("ollama-gpt-oss-120b-cloud", "ollama", "gpt-oss:120b-cloud", expected_location="ollama cloud"),
-        Candidate("ollama-gemma4-e4b", "ollama", "gemma4:e4b", expected_location="local/cloud depending on Ollama install"),
-        Candidate("ollama-gemma3-4b", "ollama", "gemma3:4b", expected_location="not installed unless Leo chooses to download"),
-        Candidate("ollama-gpt-oss-20b", "ollama", "gpt-oss:20b", heavy_local=True, expected_location="local heavy"),
+        Candidate("ollama-gpt-oss-20b-cloud", "ollama", "gpt-oss:20b-cloud", expected_location="ollama cloud"),
+        Candidate("ollama-gemma4-31b-cloud", "ollama", "gemma4:31b-cloud", expected_location="ollama cloud"),
+        Candidate("ollama-gemma4-e4b", "ollama", "gemma4:e4b", local_model=True, expected_location="local medium"),
+        Candidate("ollama-gemma3-4b", "ollama", "gemma3:4b", local_model=True, expected_location="not installed unless Leo chooses to download"),
+        Candidate("ollama-gpt-oss-20b", "ollama", "gpt-oss:20b", heavy_local=True, local_model=True, expected_location="local heavy"),
     ]
+    allow_local_models = bool(args.allow_local_models or args.allow_local_heavy)
     installed = ollama_tags()
+    local_model_cleanup_before = [] if allow_local_models else cleanup_local_ollama_candidates(candidates, installed)
+    ollama_ps_before = ollama_ps()
     started = time.time()
+    results = [
+        run_candidate(
+            candidate,
+            installed=installed,
+            timeout=args.timeout,
+            allow_local_models=allow_local_models,
+            allow_local_heavy=args.allow_local_heavy,
+            audio_probe=audio_probe,
+        )
+        for candidate in candidates
+    ]
+    local_model_cleanup_after = [] if allow_local_models else cleanup_local_ollama_candidates(candidates, installed)
+    ollama_ps_after = ollama_ps()
     report = {
-        "schema": "jarvis.model_comparison.v1",
+        "schema": "jarvis.model_comparison.v2",
         "created_at": started,
         "audio_probe": str(audio_probe) if audio_probe else "",
         "installed_ollama_models": sorted(installed),
-        "ollama_ps_before": ollama_ps(),
+        "local_model_cleanup_before": local_model_cleanup_before,
+        "ollama_ps_before": ollama_ps_before,
+        "allow_local_models": allow_local_models,
         "allow_local_heavy": bool(args.allow_local_heavy),
         "questions": QUESTIONS,
-        "results": [
-            run_candidate(
-                candidate,
-                installed=installed,
-                timeout=args.timeout,
-                allow_local_heavy=args.allow_local_heavy,
-                audio_probe=audio_probe,
-            )
-            for candidate in candidates
-        ],
-        "ollama_ps_after": ollama_ps(),
+        "results": results,
+        "local_model_cleanup_after": local_model_cleanup_after,
+        "ollama_ps_after": ollama_ps_after,
     }
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     path = RUNTIME_DIR / time.strftime("model-comparison-%Y%m%d-%H%M%S.json", time.localtime(started))
