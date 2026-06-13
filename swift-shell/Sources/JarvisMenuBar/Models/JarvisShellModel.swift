@@ -776,7 +776,7 @@ final class JarvisShellModel: ObservableObject {
         browserTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Jarvis Browser" : title
         browserAuthenticatedLane = authenticatedLane
         browserStatusText = authenticatedLane
-            ? "Signed-in site: using Chrome session"
+            ? "Chrome handoff: signed-in session stays in Chrome"
             : "Loading \(url.host ?? url.absoluteString)"
         isBrowserVisible = true
     }
@@ -790,7 +790,7 @@ final class JarvisShellModel: ObservableObject {
             browserAddressText = url.absoluteString
             browserAuthenticatedLane = Self.isAuthenticatedBrowserURL(url)
             browserStatusText = browserAuthenticatedLane
-                ? "Signed-in site: Chrome session available"
+                ? "Chrome handoff active"
                 : "Loaded \(url.host ?? url.absoluteString)"
         }
     }
@@ -813,7 +813,7 @@ final class JarvisShellModel: ObservableObject {
         let authenticatedLane = openChromeToReuseLogin || preferredOpenLane == "chrome_authenticated" || Self.isAuthenticatedBrowserURL(url)
         openInAppBrowser(url: url, title: title, authenticatedLane: authenticatedLane)
         if authenticatedLane {
-            browserStatusText = "Signed-in page: opening Chrome too"
+            browserStatusText = "Chrome handoff: opening signed-in Chrome"
             openURLInChrome(url, statusPrefix: "Opening signed-in page", authenticatedLane: true)
         }
         return true

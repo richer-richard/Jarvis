@@ -9587,6 +9587,12 @@ def browser_status() -> dict[str, Any]:
             "best_for": ["controlled tests", "non-authenticated pages", "Jarvis-owned browsing surfaces"],
             "not_best_for": ["sites where Leo is already logged in through Chrome"],
         },
+        "authenticated_handoff": {
+            "status": "implemented",
+            "real_logged_in_browser": "Google Chrome",
+            "jarvis_surface": "Jarvis WebKit panel remains visible for the target URL and status, while Chrome keeps the actual signed-in session.",
+            "copies_login_state": False,
+        },
         "copied_chrome_cookies": False,
         "can_migrate_chrome_logged_in_state": False,
         "chrome_can_be_embedded_in_jarvis": False,
@@ -9659,8 +9665,9 @@ def browser_session_strategy(goal: str | None = None) -> dict[str, Any]:
     clean_goal = _clean_local_field(goal)[:260]
     authenticated_examples = ["Teams", "Outlook web", "school portals", "Google Classroom", "logged-in dashboards"]
     reply = (
-        "I should use your signed-in Chrome for logged-in websites, and use the Jarvis browser for ordinary pages. "
-        "I should not copy Chrome cookies, passwords, or session stores into Jarvis."
+        "I cannot migrate existing Chrome logins into the Jarvis browser. I should use your signed-in Chrome for logged-in "
+        "websites, and use the Jarvis browser for ordinary pages or supervised previews. If you log in inside Jarvis later, "
+        "WebKit can remember its own session, but it will not inherit Chrome."
     )
     return {
         "tool": "browser.session_strategy",
@@ -9671,8 +9678,14 @@ def browser_session_strategy(goal: str | None = None) -> dict[str, Any]:
         "used_chrome_passwords": False,
         "can_migrate_chrome_logged_in_state": False,
         "chrome_can_be_embedded_in_jarvis": False,
+        "authenticated_handoff_available": True,
         "recommended_authenticated_lane": "chrome",
         "recommended_embedded_lane": "jarvis_webkit",
+        "authenticated_handoff": {
+            "real_logged_in_browser": "Google Chrome",
+            "jarvis_surface": "Visible Jarvis browser/status panel for the target URL; actual authenticated interaction stays in Chrome.",
+            "copies_login_state": False,
+        },
         "webkit_persistent_store": "Jarvis WebKit can remember its own future logins, but it does not inherit existing Chrome sessions.",
         "visible_user_experience": "For logged-in tasks, Jarvis should open/control Chrome and show a concise status or page summary in the Jarvis panel.",
         "goal": clean_goal,
@@ -9682,9 +9695,9 @@ def browser_session_strategy(goal: str | None = None) -> dict[str, Any]:
             "Copying session stores would bypass the browser's normal security boundary and could silently break or leak account access.",
         ],
         "authenticated_site_examples": authenticated_examples,
-        "next_step": "Use the imported bookmark URL, but open/control it through Chrome when the site depends on Leo's existing login.",
+        "next_step": "Use imported bookmark URLs, but hand authenticated sites to signed-in Chrome when they depend on Leo's existing login.",
         "reply": reply,
-        "spoken_summary": "I can use your signed-in Chrome for logged-in sites, but I should not copy Chrome login data into Jarvis.",
+        "spoken_summary": "I cannot migrate Chrome logins into Jarvis. I can use signed-in Chrome for those sites, and keep Jarvis visible as the control surface.",
     }
 
 
@@ -9950,6 +9963,7 @@ def chrome_bookmark_open_plan(query: str, limit: int | str | None = None) -> dic
         "requires_chrome_login": requires_chrome_login,
         "can_migrate_chrome_logged_in_state": False,
         "chrome_login_reused_only_in_chrome": requires_chrome_login,
+        "authenticated_handoff_available": requires_chrome_login,
         "open_chrome_to_reuse_login": requires_chrome_login,
         "read_private_content": True,
         "changed_browser_state": False,
@@ -9972,6 +9986,7 @@ def browser_open_url_plan(url: str) -> dict[str, Any]:
         "visible_browser_lane": "jarvis_webkit",
         "requires_chrome_login": requires_chrome_login,
         "can_migrate_chrome_logged_in_state": False,
+        "authenticated_handoff_available": requires_chrome_login,
         "open_chrome_to_reuse_login": bool(clean_url and requires_chrome_login),
         "reply": (
             "I should use Chrome for the signed-in version of that page."

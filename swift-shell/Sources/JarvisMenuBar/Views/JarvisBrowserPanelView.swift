@@ -46,7 +46,7 @@ struct JarvisBrowserPanelView: View {
                 Button {
                     model.openBrowserTargetInChrome()
                 } label: {
-                    Label(model.browserAuthenticatedLane ? "Signed-In Chrome" : "Chrome", systemImage: "globe")
+                    Label(model.browserAuthenticatedLane ? "Open Signed-In Chrome" : "Open Chrome", systemImage: "globe")
                 }
                 .help("Open this page in Google Chrome")
 
@@ -67,7 +67,7 @@ struct JarvisBrowserPanelView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if model.browserAuthenticatedLane {
-                    Text("Chrome Session")
+                    Text("Chrome Handoff")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.blue)
                         .padding(.horizontal, 8)

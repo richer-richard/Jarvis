@@ -4531,10 +4531,12 @@ Pages occupied by compressor:             10.
         self.assertFalse(result["used_chrome_passwords"])
         self.assertFalse(result["can_migrate_chrome_logged_in_state"])
         self.assertFalse(result["chrome_can_be_embedded_in_jarvis"])
+        self.assertTrue(result["authenticated_handoff_available"])
         self.assertEqual(result["recommended_authenticated_lane"], "chrome")
-        self.assertIn("should not copy Chrome cookies", result["reply"])
+        self.assertIn("cannot migrate existing Chrome logins", result["reply"])
         self.assertIn("signed-in Chrome", result["spoken_summary"])
-        self.assertNotIn("session stores into Jarvis", result["spoken_summary"])
+        self.assertIn("control surface", result["spoken_summary"])
+        self.assertFalse(result["authenticated_handoff"]["copies_login_state"])
 
     def test_chrome_login_migration_request_routes_to_session_strategy(self):
         result = Planner().handle("can you migrate Chrome login to Jarvis browser?")
@@ -4549,6 +4551,7 @@ Pages occupied by compressor:             10.
         self.assertFalse(already_logged_in.result["can_migrate_chrome_logged_in_state"])
         self.assertFalse(already_logged_in.result["copied_chrome_cookies"])
         self.assertEqual(already_logged_in.result["recommended_authenticated_lane"], "chrome")
+        self.assertTrue(already_logged_in.result["authenticated_handoff_available"])
 
     def test_browser_status_reports_live_webkit_without_cookie_migration(self):
         with patch("jarvis.tools.app_status", side_effect=[
@@ -4562,6 +4565,8 @@ Pages occupied by compressor:             10.
         self.assertFalse(result["copied_chrome_cookies"])
         self.assertFalse(result["can_migrate_chrome_logged_in_state"])
         self.assertEqual(result["recommended_authenticated_lane"], "chrome")
+        self.assertEqual(result["authenticated_handoff"]["real_logged_in_browser"], "Google Chrome")
+        self.assertFalse(result["authenticated_handoff"]["copies_login_state"])
         self.assertIn("WebKit browser panel is live", result["reply"])
 
     def test_browser_open_url_routes_authenticated_sites_to_chrome_lane(self):
@@ -4572,6 +4577,7 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["visible_browser_lane"], "jarvis_webkit")
         self.assertTrue(result["requires_chrome_login"])
         self.assertTrue(result["open_chrome_to_reuse_login"])
+        self.assertTrue(result["authenticated_handoff_available"])
         self.assertFalse(result["can_migrate_chrome_logged_in_state"])
 
     def test_browser_open_url_keeps_ordinary_sites_in_webkit_lane(self):
@@ -4580,6 +4586,7 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["preferred_open_lane"], "jarvis_webkit")
         self.assertFalse(result["requires_chrome_login"])
         self.assertFalse(result["open_chrome_to_reuse_login"])
+        self.assertFalse(result["authenticated_handoff_available"])
 
     def test_contact_data_remember_and_lookup_use_local_runtime_file(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
@@ -6776,11 +6783,21 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("browserAuthenticatedLane", model_source)
         self.assertIn("Self.isAuthenticatedBrowserURL(url)", model_source)
         self.assertIn("openURLInChrome(url, statusPrefix:", model_source)
-        self.assertIn("Signed-in page: opening Chrome too", model_source)
-        self.assertIn("Signed-in site: using Chrome session", model_source)
-        self.assertIn("Signed-in site: Chrome session available", model_source)
+        self.assertIn("Chrome handoff: opening signed-in Chrome", model_source)
+        self.assertIn("Chrome handoff: signed-in session stays in Chrome", model_source)
+        self.assertIn("Chrome handoff active", model_source)
         self.assertIn("Opened in signed-in Chrome", model_source)
         self.assertIn("Chrome login not confirmed", model_source)
+        view_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Views"
+            / "JarvisBrowserPanelView.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Chrome Handoff", view_source)
+        self.assertIn("Open Signed-In Chrome", view_source)
 
     def test_swift_smoke_tests_cover_current_loop_regressions(self):
         model_source = (

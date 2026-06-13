@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.358 makes the Chrome-authenticated browsing boundary explicit: existing Chrome logins are not migrated into WebKit; signed-in sites use a visible Chrome handoff while Jarvis keeps its browser/status panel open.",
     "Jarvis 0.1.357 routes explicit contact-inference prompts such as `who is Ms. Sharpay from email` directly to the bounded local sender-metadata tool, avoiding a slow model-router detour.",
     "Jarvis 0.1.356 keeps contact-alias inference responsive: unknown names such as Ms. Sharpay now default to a bounded 50-message sender-metadata scan instead of a slow 250-message scan.",
     "Jarvis 0.1.355 makes LocalOS music alias matches honest: if `Waving Through a Window` maps to the broader `Dear Evan Hansen | 2017 Tony Awards` MP3, Jarvis now says it found the closest Local OS file instead of implying an exact song title exists.",
@@ -119,8 +120,9 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 557/557 after the Tailnet/offload, streaming model-test, LocalOS alias-wording, and contact-inference latency fixes; Swift and live-app verification are rerun after each bundle rebuild.",
+    "Current verification: focused Chrome-session handoff tests pass; full safety, Swift, no-prompt, and live-app checks are rerun after each bundle rebuild.",
     "Focused contact inference timing on this Mac showed preview is instant and 50 recent Mail sender records completed in about 2.7s, while larger scans are now explicit instead of default.",
+    "Live quiet voice-loop QA passed for `Hey Jarvis, who is Ms. Sharpay from email?`, routing to `contacts.infer` with spoken-output similarity 0.988.",
     "Focused LocalOS check now reports `closest Local OS file` for the Waving Through a Window alias and still keeps audio actions suppressed in automation.",
     "Focused streaming regression now proves `test the gemma 3 4b model for me` bypasses fast chat, emits `Planning the model test now`, and returns the safe MacBook Air/local-fallback plan.",
     "Live quiet voice-loop QA passed after the fix for model offload, Chrome-login migration, Teams assignment planning, and suppressed `Play Waving Through a Window` playback.",
