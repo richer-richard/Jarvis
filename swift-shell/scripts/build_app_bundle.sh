@@ -9,8 +9,8 @@ APP_NAME="${APP_NAME:-Jarvis}"
 BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"
 CONFIGURATION="${CONFIGURATION:-debug}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/output}"
-APP_VERSION="${APP_VERSION:-0.1.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+APP_VERSION="${APP_VERSION:-0.1.335}"
+BUILD_NUMBER="${BUILD_NUMBER:-335}"
 REPLACE_APP="${REPLACE_APP:-0}"
 
 default_sign_identity() {
@@ -88,7 +88,7 @@ printf '%s\n' "$PROJECT_ROOT" > "$RESOURCES_DIR/JarvisWorkspaceRoot.txt"
 
 WORKER_DIR="$RESOURCES_DIR/JarvisWorker"
 mkdir -p "$WORKER_DIR/scripts"
-rsync -a --delete --exclude '__pycache__' "$PROJECT_ROOT/jarvis/" "$WORKER_DIR/jarvis/"
+rsync -a --delete --delete-excluded --exclude '__pycache__' "$PROJECT_ROOT/jarvis/" "$WORKER_DIR/jarvis/"
 cp "$PROJECT_ROOT/scripts/run_dashboard.py" "$WORKER_DIR/scripts/run_dashboard.py"
 
 cat > "$CONTENTS_DIR/Info.plist" <<EOF

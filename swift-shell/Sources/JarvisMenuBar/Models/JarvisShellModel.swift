@@ -30,6 +30,11 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var speechMuteText: String = "Speech On"
     @Published private(set) var summonSurface: JarvisSummonSurface = .hidden
     @Published private(set) var chatExportText: String = "Chat JSON ready"
+    @Published var browserAddressText: String = ""
+    @Published private(set) var isBrowserVisible: Bool = false
+    @Published private(set) var browserTargetURL: URL?
+    @Published private(set) var browserTitle: String = "Jarvis Browser"
+    @Published private(set) var browserStatusText: String = "Browser ready"
     @Published private(set) var messages: [ChatMessage] = [
         ChatMessage(
             role: .jarvis,
@@ -703,6 +708,107 @@ final class JarvisShellModel: ObservableObject {
         }
     }
 
+    func toggleBrowserPanel() {
+        if isBrowserVisible {
+            hideBrowser()
+        } else {
+            showBrowser()
+        }
+    }
+
+    func showBrowser() {
+        isBrowserVisible = true
+        if browserAddressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            browserStatusText = "Enter a URL or search above."
+        }
+    }
+
+    func hideBrowser() {
+        isBrowserVisible = false
+        browserStatusText = "Browser hidden"
+    }
+
+    func openBrowserTargetInChrome() {
+        guard let url = browserTargetURL ?? Self.normalizedBrowserURL(from: browserAddressText) else {
+            browserStatusText = "No browser page to open."
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        guard let chromeURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") else {
+            let opened = NSWorkspace.shared.open(url)
+            browserStatusText = opened ? "Opened in default browser" : "Could not open browser"
+            return
+        }
+        browserStatusText = "Opening in Chrome"
+        NSWorkspace.shared.open([url], withApplicationAt: chromeURL, configuration: configuration) { [weak self] _, error in
+            Task { @MainActor in
+                self?.browserStatusText = error == nil ? "Opened in Chrome" : "Could not open Chrome"
+            }
+        }
+    }
+
+    func loadBrowserAddress() {
+        let input = browserAddressText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = Self.normalizedBrowserURL(from: input) else {
+            browserStatusText = "Enter a valid URL or search."
+            return
+        }
+        openInAppBrowser(url: url, title: "")
+    }
+
+    func openInAppBrowser(url: URL, title: String = "") {
+        browserTargetURL = url
+        browserAddressText = url.absoluteString
+        browserTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Jarvis Browser" : title
+        browserStatusText = "Loading \(url.host ?? url.absoluteString)"
+        isBrowserVisible = true
+    }
+
+    func noteBrowserNavigation(title: String, url: URL?) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanTitle.isEmpty {
+            browserTitle = cleanTitle
+        }
+        if let url {
+            browserAddressText = url.absoluteString
+            browserStatusText = "Loaded \(url.host ?? url.absoluteString)"
+        }
+    }
+
+    private func openBrowserSurfaceIfNeeded(from response: CommandResponse) -> Bool {
+        guard let tool = response.tool,
+              ["browser.open_url", "browser.search_web", "browser.bookmark_open"].contains(tool),
+              let object = response.result?.objectValue else {
+            return false
+        }
+        let directURL = object["url"]?.stringValue
+        let selectedBookmarkURL = object["selected_bookmark"]?.objectValue?["url"]?.stringValue
+        let selectedBookmarkTitle = object["selected_bookmark"]?.objectValue?["title"]?.stringValue
+        let title = object["title"]?.stringValue ?? selectedBookmarkTitle ?? ""
+        guard let url = Self.normalizedBrowserURL(from: directURL ?? selectedBookmarkURL ?? "") else {
+            return false
+        }
+        openInAppBrowser(url: url, title: title)
+        return true
+    }
+
+    private static func normalizedBrowserURL(from input: String) -> URL? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if let url = URL(string: trimmed), url.scheme != nil {
+            return url
+        }
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            return URL(string: "https://\(trimmed)")
+        }
+        var components = URLComponents(string: "https://www.google.com/search")
+        components?.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+        return components?.url
+    }
+
     private static func summonSpeechHoldSeconds(for text: String, muted: Bool) -> TimeInterval {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1081,6 +1187,7 @@ final class JarvisShellModel: ObservableObject {
             resultText = render(response)
             lastCommandDiagnostics = Self.commandDiagnostics(from: response)
             captureResponseDiagnostics(response)
+            let browserSurfaceOpened = openBrowserSurfaceIfNeeded(from: response)
             let finalText = assistantReply(for: response)
             finalVisibleText = finalText
             let finalDetail = chatDetail(for: response)
@@ -1103,6 +1210,9 @@ final class JarvisShellModel: ObservableObject {
             }
             startCodexJobMonitorIfNeeded(from: response)
             updateTimerMirrorsIfNeeded(from: response)
+            if browserSurfaceOpened {
+                chatExportText = "Browser opened"
+            }
             finishSummon(finalText)
             turnEndedCleanly = true
             turnPhaseText = response.confirmation?.required == true ? "Approval" : "Done"
@@ -2168,13 +2278,21 @@ final class JarvisShellModel: ObservableObject {
         ]
     }
 
-    static func testSpeechAlignmentDiagnostics(finalVisibleText: String, textPreview: String) -> [String: Any] {
-        speechAlignmentDiagnostics(
+    static func testSpeechAlignmentDiagnostics(
+        finalVisibleText: String,
+        textPreview: String,
+        spokenText: String? = nil
+    ) -> [String: Any] {
+        var speechPayload = [
+            "status": "muted",
+            "text_preview": textPreview,
+        ]
+        if let spokenText {
+            speechPayload["spoken_text"] = spokenText
+        }
+        return speechAlignmentDiagnostics(
             finalVisibleText: finalVisibleText,
-            finalSpeech: [
-                "status": "muted",
-                "text_preview": textPreview,
-            ]
+            finalSpeech: speechPayload
         )
     }
 
@@ -2182,7 +2300,10 @@ final class JarvisShellModel: ObservableObject {
         guard let payload = finalSpeech as? [String: Any] else {
             return ""
         }
-        return payload["text_preview"] as? String ?? ""
+        return payload["spoken_text"] as? String
+            ?? payload["text"] as? String
+            ?? payload["text_preview"] as? String
+            ?? ""
     }
 
     private static func speechStatus(from finalSpeech: Any) -> String {

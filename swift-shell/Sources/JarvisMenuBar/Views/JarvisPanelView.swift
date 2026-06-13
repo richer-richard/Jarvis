@@ -12,11 +12,14 @@ struct JarvisPanelView: View {
             chatSection
             composer
             quickActions
+            if model.isBrowserVisible {
+                JarvisBrowserPanelView(model: model)
+            }
             codexActivityPanel
             readinessFooter
         }
         .padding(18)
-        .frame(minWidth: 660, minHeight: 760)
+        .frame(minWidth: 760, minHeight: model.isBrowserVisible ? 900 : 760)
         .task {
             model.refresh()
         }
@@ -107,6 +110,11 @@ struct JarvisPanelView: View {
                 model.previewSummonSurface()
             }
             .help("Preview the top-right Jarvis summon surface without starting the microphone listener.")
+            Button(model.isBrowserVisible ? "Hide Web" : "Browser") {
+                model.toggleBrowserPanel()
+            }
+            .frame(maxWidth: .infinity)
+            .help("Show or hide the interactive Jarvis browser.")
             QuickActionButton("Perms", command: "permissions status", model: model)
             QuickActionButton("Screen", command: "screenshot capability", model: model)
             QuickActionButton("Codex", command: "ask Codex to review this project", model: model)

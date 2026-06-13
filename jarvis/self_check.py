@@ -142,6 +142,10 @@ def run_self_checks() -> dict[str, Any]:
     wake_score = score_wake_transcript("hey jervis check status")
     add("wake_score_accepts_close_transcript", wake_score.detected and wake_score.command == "check status", wake_score.to_dict())
     add("planner_browser_plan_routes", planner.handle("open browser https://example.com").tool == "browser.open_url")
+    add("planner_browser_status_routes", planner.handle("browser status").tool == "browser.status")
+    add("planner_browser_builtin_plan_routes", planner.handle("plan a built in browser for Jarvis").tool == "browser.built_in_plan")
+    add("planner_browser_bookmarks_import_routes", planner.preview("import Chrome bookmarks").tool == "browser.bookmarks_import")
+    add("planner_browser_bookmarks_search_routes", planner.preview("search my bookmarks for school").tool == "browser.bookmarks_search")
     email_natural_preview = planner.preview("check my Outlook email", use_model_router=False).to_dict()
     add(
         "planner_email_natural_language_waits_for_model_tool_choice",
@@ -204,6 +208,9 @@ def run_self_checks() -> dict[str, Any]:
         "diagnostics.overnight",
         "diagnostics.final_qa",
         "diagnostics.model_context",
+        "diagnostics.memory_usage",
+        "calendar.today_schedule",
+        "models.test_plan",
         "voice.stop_speaking",
         "diagnostics.tool_catalog",
         "diagnostics.permissions",
@@ -225,6 +232,20 @@ def run_self_checks() -> dict[str, Any]:
         "quick.local_control",
         "screenshot.capability",
         "browser.open_url",
+        "browser.status",
+        "browser.current_tab",
+        "browser.read_page",
+        "browser.search_web",
+        "browser.built_in_plan",
+        "browser.session_strategy",
+        "browser.bookmarks_import",
+        "browser.bookmarks_status",
+        "browser.bookmarks_search",
+        "browser.bookmark_open",
+        "contacts.status",
+        "contacts.lookup",
+        "contacts.remember",
+        "contacts.infer",
         "outlook.visible_summary",
         "diagnostics.codex_chats",
         "codex.activity",

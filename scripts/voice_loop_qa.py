@@ -174,6 +174,24 @@ def main() -> int:
         action="store_true",
         help="Skip wake-command synthesis and audit only the exact speech payloads Jarvis would produce for --command.",
     )
+    parser.add_argument(
+        "--expect-tool",
+        action="append",
+        default=[],
+        help="Require the final Jarvis response to use this tool id. May be passed more than once.",
+    )
+    parser.add_argument(
+        "--expect-visible-contains",
+        action="append",
+        default=[],
+        help="Require the visible final reply to contain this text, case-insensitively. May be passed more than once.",
+    )
+    parser.add_argument(
+        "--expect-routed-contains",
+        action="append",
+        default=[],
+        help="Require the STT-routed command to contain this text, case-insensitively. May be passed more than once.",
+    )
     args = parser.parse_args()
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -189,6 +207,9 @@ def main() -> int:
             timeout=args.timeout,
             stt_provider=args.stt_provider,
             no_permission_prompts=args.no_permission_prompts,
+            expect_tools=args.expect_tool,
+            expect_visible_contains=args.expect_visible_contains,
+            expect_routed_contains=args.expect_routed_contains,
         )
     else:
         report = run_voice_loop(
@@ -199,6 +220,9 @@ def main() -> int:
             timeout=args.timeout,
             stt_provider=args.stt_provider,
             no_permission_prompts=args.no_permission_prompts,
+            expect_tools=args.expect_tool,
+            expect_visible_contains=args.expect_visible_contains,
+            expect_routed_contains=args.expect_routed_contains,
         )
 
     report_path = run_dir / "report.json"
@@ -238,6 +262,9 @@ def run_voice_loop(
     timeout: float,
     stt_provider: str,
     no_permission_prompts: bool = False,
+    expect_tools: list[str] | None = None,
+    expect_visible_contains: list[str] | None = None,
+    expect_routed_contains: list[str] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     command_audio = run_dir / "01-command.wav"
@@ -256,6 +283,9 @@ def run_voice_loop(
             "length_scale": length_scale,
             "stt_provider": stt_provider,
             "no_permission_prompts": no_permission_prompts,
+            "expect_tools": expect_tools or [],
+            "expect_visible_contains": expect_visible_contains or [],
+            "expect_routed_contains": expect_routed_contains or [],
         },
         "artifacts": {
             "command_audio": str(command_audio),
@@ -306,6 +336,14 @@ def run_voice_loop(
             raise RuntimeError("Jarvis stream did not return a final response.")
 
         visible_reply = extract_visible_reply(command_response)
+        expectation = evaluate_expectations(
+            command_response=command_response,
+            visible_reply=visible_reply,
+            routed_command=route["command"],
+            expect_tools=expect_tools or [],
+            expect_visible_contains=expect_visible_contains or [],
+            expect_routed_contains=expect_routed_contains or [],
+        )
         speech_audit = audit_spoken_payloads(
             speech_payloads_from_stream_events(stream_events),
             run_dir=run_dir,
@@ -343,6 +381,9 @@ def run_voice_loop(
         elif speech_audit.get("status") == "warning" and status == "passed":
             status = "warning"
             warnings.extend(str(warning) for warning in speech_audit.get("warnings", []))
+        if not expectation["passed"]:
+            status = "failed"
+            warnings.extend(expectation["failures"])
 
         report["result"] = {
             "status": status,
@@ -355,6 +396,7 @@ def run_voice_loop(
             "routed_command": route["command"],
             "command_response_tool": command_response.get("tool"),
             "visible_reply_preview": visible_reply[:500],
+            "expectation": expectation,
             "stream_event_count": len(stream_events),
             "speech_audit": speech_audit,
             "reply_tts": reply_tts,
@@ -381,6 +423,9 @@ def run_speech_audit(
     timeout: float,
     stt_provider: str,
     no_permission_prompts: bool = False,
+    expect_tools: list[str] | None = None,
+    expect_visible_contains: list[str] | None = None,
+    expect_routed_contains: list[str] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     report: dict[str, Any] = {
@@ -393,6 +438,9 @@ def run_speech_audit(
             "stt_provider": stt_provider,
             "no_permission_prompts": no_permission_prompts,
             "speech_audit_only": True,
+            "expect_tools": expect_tools or [],
+            "expect_visible_contains": expect_visible_contains or [],
+            "expect_routed_contains": expect_routed_contains or [],
         },
     }
     try:
@@ -403,6 +451,15 @@ def run_speech_audit(
             suppress_speech=True,
         )
         command_response = final_response_from_stream_events(stream_events)
+        visible_reply = extract_visible_reply(command_response) if command_response else ""
+        expectation = evaluate_expectations(
+            command_response=command_response or {},
+            visible_reply=visible_reply,
+            routed_command=command_text,
+            expect_tools=expect_tools or [],
+            expect_visible_contains=expect_visible_contains or [],
+            expect_routed_contains=expect_routed_contains or [],
+        )
         speech_audit = audit_spoken_payloads(
             speech_payloads_from_stream_events(stream_events),
             run_dir=run_dir,
@@ -411,12 +468,18 @@ def run_speech_audit(
             stt_provider=stt_provider,
             no_permission_prompts=no_permission_prompts,
         )
+        status = str(speech_audit.get("status", "failed"))
+        warnings = list(speech_audit.get("warnings", []))
+        if not expectation["passed"]:
+            status = "failed"
+            warnings.extend(expectation["failures"])
         report["result"] = {
-            "status": speech_audit.get("status", "failed"),
-            "warnings": speech_audit.get("warnings", []),
+            "status": status,
+            "warnings": warnings,
             "total_seconds": round(time.monotonic() - started, 3),
             "command_response_tool": command_response.get("tool") if command_response else "",
-            "visible_reply_preview": extract_visible_reply(command_response)[:500] if command_response else "",
+            "visible_reply_preview": visible_reply[:500],
+            "expectation": expectation,
             "stream_event_count": len(stream_events),
             "speech_audit": speech_audit,
         }
@@ -504,6 +567,40 @@ def audit_spoken_payloads(
         "leak_count": len(all_leaks),
         "leaks": all_leaks,
         "items": items,
+    }
+
+
+def evaluate_expectations(
+    *,
+    command_response: dict[str, Any],
+    visible_reply: str,
+    routed_command: str,
+    expect_tools: list[str],
+    expect_visible_contains: list[str],
+    expect_routed_contains: list[str],
+) -> dict[str, Any]:
+    actual_tool = str(command_response.get("tool") or "")
+    visible_norm = normalize_text(visible_reply)
+    routed_norm = normalize_text(routed_command)
+    failures: list[str] = []
+    clean_tools = [tool.strip() for tool in expect_tools if tool.strip()]
+    if clean_tools and actual_tool not in clean_tools:
+        failures.append(f"Expected tool {clean_tools}, got {actual_tool or '(none)'}.")
+    for needle in expect_visible_contains:
+        needle_norm = normalize_text(needle)
+        if needle_norm and needle_norm not in visible_norm:
+            failures.append(f"Visible reply did not contain {needle!r}.")
+    for needle in expect_routed_contains:
+        needle_norm = normalize_text(needle)
+        if needle_norm and needle_norm not in routed_norm:
+            failures.append(f"Routed command did not contain {needle!r}.")
+    return {
+        "passed": not failures,
+        "expected_tools": clean_tools,
+        "actual_tool": actual_tool,
+        "expect_visible_contains": [text for text in expect_visible_contains if text],
+        "expect_routed_contains": [text for text in expect_routed_contains if text],
+        "failures": failures,
     }
 
 

@@ -658,7 +658,22 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "diagnostics.email": "Checking the email setup now.",
         "screenshot.capability": "Checking the screen setup now.",
         "screen.ocr": "Preparing the screen-reading plan now.",
-        "browser.open_url": "Opening that now.",
+        "browser.open_url": "Preparing that browser action now.",
+        "browser.status": "Checking the browser setup now.",
+        "browser.current_tab": "Checking the current Chrome tab now.",
+        "browser.read_page": "Reading the current Chrome page now.",
+        "browser.search_web": "Preparing that browser search now.",
+        "browser.built_in_plan": "Planning the built-in browser now.",
+        "browser.session_strategy": "Checking browser session options now.",
+        "browser.bookmarks_import": "Importing Chrome bookmarks now.",
+        "browser.bookmarks_status": "Checking Chrome bookmarks now.",
+        "browser.bookmarks_search": "Searching Chrome bookmarks now.",
+        "browser.bookmark_open": "Opening that bookmark in Jarvis now.",
+        "calendar.today_schedule": "Checking your calendar now.",
+        "contacts.status": "Checking contact data now.",
+        "contacts.lookup": "Checking contact data now.",
+        "contacts.remember": "Updating contact data now.",
+        "contacts.infer": "Looking for that contact locally now.",
         "codex.job": "Checking with Codex now.",
         "codex.delegate": "Checking with Codex now.",
         "diagnostics.codex_chats": "Checking the Codex chats now.",
@@ -670,7 +685,9 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "diagnostics.app_identity": "Checking app identity now.",
         "diagnostics.fast_model": "Checking the model setup now.",
         "diagnostics.device": "Checking this Mac now.",
+        "diagnostics.memory_usage": "Checking memory usage now.",
         "diagnostics.memory": "Checking Jarvis memory now.",
+        "models.test_plan": "Planning the model test now.",
         "memory.daily_summary": "Checking today's memory summary now.",
         "diagnostics.model_context": "Checking the model context now.",
         "voice.stop_speaking": "Stopping my voice now.",
@@ -1477,6 +1494,66 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
         }
         safe["music_choice_details_omitted"] = True
         safe["candidate_count"] = len(result.get("candidates") or []) if isinstance(result.get("candidates"), list) else 0
+        return safe
+
+    if tool in {"browser.current_tab", "browser.read_page"}:
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key not in {"page_text", "reply", "injection_scan", "title", "url"}
+        }
+        injection_scan = result.get("injection_scan") if isinstance(result, dict) else None
+        if isinstance(injection_scan, dict):
+            findings = injection_scan.get("findings")
+            safe["injection_scan_status"] = injection_scan.get("status")
+            safe["injection_findings_count"] = len(findings) if isinstance(findings, list) else 0
+        safe["browser_private_details_omitted"] = True
+        safe["page_text_chars"] = int(result.get("page_text_chars") or 0)
+        return safe
+
+    if tool in {"browser.bookmarks_import", "browser.bookmarks_search", "browser.bookmark_open"}:
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key not in {"bookmarks", "matches", "selected_bookmark", "reply", "url", "title", "profiles", "errors"}
+        }
+        safe["bookmark_private_details_omitted"] = True
+        safe["bookmark_count"] = int(result.get("bookmark_count") or 0)
+        safe["match_count"] = len(result.get("matches") or []) if isinstance(result.get("matches"), list) else int(result.get("match_count") or 0)
+        safe["profile_count"] = int(result.get("profile_count") or 0)
+        return safe
+
+    if tool == "calendar.today_schedule":
+        events = result.get("events") if isinstance(result, dict) else None
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key not in {"events", "reply", "stdout", "stderr", "error"}
+        }
+        safe["calendar_private_details_omitted"] = True
+        safe["event_count"] = len(events) if isinstance(events, list) else int(result.get("event_count") or 0)
+        return safe
+
+    if tool in {"contacts.status", "contacts.lookup", "contacts.remember", "contacts.infer"}:
+        candidates = result.get("candidates") if isinstance(result, dict) else None
+        aliases = result.get("aliases") if isinstance(result, dict) else None
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key
+            not in {
+                "aliases",
+                "suggestions",
+                "candidates",
+                "display_name",
+                "alias",
+                "reply",
+                "path",
+            }
+        }
+        safe["contact_private_details_omitted"] = True
+        safe["alias_count"] = len(aliases) if isinstance(aliases, list) else int(result.get("alias_count") or 0)
+        safe["candidate_count"] = len(candidates) if isinstance(candidates, list) else 0
         return safe
 
     if tool != "outlook.visible_summary":

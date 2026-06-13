@@ -172,11 +172,12 @@ def call_ollama(model: str, prompt: str, *, timeout: int) -> dict[str, Any]:
     payload = {
         "model": model,
         "stream": False,
-        "messages": [{"role": "user", "content": prompt}],
-        "options": {"temperature": 0.2, "num_predict": 180},
+        "think": False,
+        "prompt": prompt,
+        "options": {"temperature": 0.2, "num_predict": ollama_num_predict(model)},
     }
     request = urllib.request.Request(
-        f"{OLLAMA_BASE_URL}/api/chat",
+        f"{OLLAMA_BASE_URL}/api/generate",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -188,14 +189,22 @@ def call_ollama(model: str, prompt: str, *, timeout: int) -> dict[str, Any]:
     return {
         "status": "completed",
         "elapsed_seconds": round(elapsed, 3),
-        "reply": str((data.get("message") or {}).get("content") or "").strip(),
+        "reply": str(data.get("response") or "").strip(),
         "raw": {
             "total_duration_ns": data.get("total_duration"),
             "load_duration_ns": data.get("load_duration"),
             "prompt_eval_count": data.get("prompt_eval_count"),
             "eval_count": data.get("eval_count"),
+            "done_reason": data.get("done_reason"),
+            "thinking_chars": len(str(data.get("thinking") or "")),
         },
     }
+
+
+def ollama_num_predict(model: str) -> int:
+    if "gpt-oss" in str(model).lower() and is_ollama_cloud_model(model):
+        return 420
+    return 180
 
 
 def call_ollama_audio_probe(model: str, audio_path: Path, *, timeout: int) -> dict[str, Any]:
@@ -311,9 +320,10 @@ def candidate_status_from_questions(results: list[dict[str, Any]]) -> str:
     if not results:
         return "completed"
     statuses = [str(result.get("status") or "") for result in results]
-    if all(status == "error" for status in statuses):
+    failed_statuses = {"error", "empty_response"}
+    if all(status in failed_statuses for status in statuses):
         return "error"
-    if any(status == "error" for status in statuses):
+    if any(status in failed_statuses for status in statuses):
         return "partial"
     return "completed"
 
@@ -371,6 +381,8 @@ def run_candidate(
             }
         except Exception as error:
             result = {"status": "error", "error": f"{type(error).__name__}: {error}"}
+        if result.get("status") == "completed" and not str(result.get("reply") or "").strip():
+            result = {**result, "status": "empty_response", "error": "Model returned no visible reply."}
         results.append({"id": question["id"], **result})
     output = {"candidate": candidate.__dict__, "status": candidate_status_from_questions(results), "questions": results}
     if candidate.backend == "ollama" and audio_probe and candidate.model.startswith("gemma4:"):

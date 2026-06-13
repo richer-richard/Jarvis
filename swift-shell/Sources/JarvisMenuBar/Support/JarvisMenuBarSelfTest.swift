@@ -118,6 +118,14 @@ enum JarvisMenuBarSelfTest {
         guard shortSpeechAlignment["preview_matches_visible_prefix"] as? Bool == false else {
             throw SelfTestError.failed("Tiny TTS preview should not match a longer visible final answer.")
         }
+        let fullSpokenAlignment = JarvisShellModel.testSpeechAlignmentDiagnostics(
+            finalVisibleText: "Hello, sir. What can I help with today?",
+            textPreview: "Hello",
+            spokenText: "Hello, sir. What can I help with today?"
+        )
+        guard fullSpokenAlignment["preview_matches_visible_prefix"] as? Bool == true else {
+            throw SelfTestError.failed("Full spoken text should override a short debug preview for speech alignment.")
+        }
         guard JarvisShellModel.shouldUseNativeHotKeyStatus("hotkey status") else {
             throw SelfTestError.failed("Hotkey status should use the native Swift hotkey snapshot.")
         }
