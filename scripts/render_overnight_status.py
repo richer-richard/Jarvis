@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.365 hardens speech interruption: the wake listener now ignores tiny transcript noise, captured-command echoes, and Jarvis's own spoken output before it calls Stop Speaking.",
     "Jarvis 0.1.364 fixes the spoken Calendar route: `check my calendar for my schedule today` now reads the Calendar schedule path instead of opening the Calendar app.",
     "Jarvis 0.1.363 speeds up stale LocalOS music recovery: Chrome-direct playback attempts are now bounded to a 4-second script window with a shorter new-tab wait instead of a long-feeling 7-second AppleEvent stall.",
     "Jarvis 0.1.362 closes the LocalOS music false-queue gap: a library snapshot is no longer enough; Jarvis now requires a live control heartbeat or Chrome-direct LocalOS confirmation before it claims playback was sent.",
@@ -127,6 +128,7 @@ SHIPPED_ITEMS = [
 
 PROOF_ITEMS = [
     "Current verification: focused Chrome-session handoff tests pass; full safety, Swift, no-prompt, and live-app checks are rerun after each bundle rebuild.",
+    "Swift self-test and Python source regression now prove short listener fragments, Calendar-answer echoes, and captured wake-command echoes do not stop Jarvis speech, while an intentional `wait stop for a second` interruption still does.",
     "Focused contact inference timing on this Mac showed preview is instant and 50 recent Mail sender records completed in about 2.7s, while larger scans are now explicit instead of default.",
     "Live quiet voice-loop QA passed for `Hey Jarvis, who is Ms. Sharpay from email?`, routing to `contacts.infer` with spoken-output similarity 0.988.",
     "Focused LocalOS check now reports `closest Local OS file` for the Waving Through a Window alias and still keeps audio actions suppressed in automation.",
@@ -156,7 +158,7 @@ PROOF_ITEMS = [
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
     "Sharpay-style email previews now include `contact_alias_lookup`, `resolved_sender_query`, and `recommended_tool: contacts.infer` when the alias is not known, while remaining planned-only; actual email execution can now infer a confident alias from recent sender metadata before searching messages.",
     "Latest local checkpoint commits record the browser/session, music-recovery, model-scoring, report-proof, voice-loop routing, LocalOS stale-bridge hardening, and contact-aware email planning; the branch has not been pushed while Leo is asleep.",
-    "Python safety suite: 561/561 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, and voice-QA work.",
+    "Python safety suite: 562/562 passed after the wake, mute, final-speech, report-route, speech-alignment, barge-in filtering, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",

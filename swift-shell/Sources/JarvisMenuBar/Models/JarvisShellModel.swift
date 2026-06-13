@@ -68,6 +68,8 @@ final class JarvisShellModel: ObservableObject {
     private var lastBargeInAt: Date?
     var onSpeechMuteStateChanged: (() -> Void)?
     private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
+    private static let speechBargeInGraceSeconds: TimeInterval = 3.5
+    private static let speechBargeInMinimumTokenCount = 4
     private static let smokeTestPrompts = [
         "hello Jarvis",
         "tell me a short joke",
@@ -364,7 +366,7 @@ final class JarvisShellModel: ObservableObject {
             recordWakeEvent("command_captured", detail: "Wake command captured.", transcript: transcript, command: command)
             lastCapturedWakeCommand = command
             lastCapturedWakeTranscript = transcript
-            bargeInGraceUntil = Date().addingTimeInterval(2.5)
+            bargeInGraceUntil = Date().addingTimeInterval(Self.speechBargeInGraceSeconds)
             clearSpeechPlaybackWindow()
             guard !isBusy else {
                 recordWakeEvent("command_held_busy", detail: "Jarvis was busy when the wake command arrived.", transcript: transcript, command: command)
@@ -499,14 +501,12 @@ final class JarvisShellModel: ObservableObject {
         if let bargeInGraceUntil, Date() < bargeInGraceUntil {
             return
         }
-        guard !Self.looksLikeWakeOrCapturedCommand(
-            cleanTranscript,
-            command: lastCapturedWakeCommand,
-            transcript: lastCapturedWakeTranscript
+        guard Self.shouldStopSpeechForBargeIn(
+            transcript: cleanTranscript,
+            spokenText: latestSpeechPreview,
+            capturedCommand: lastCapturedWakeCommand,
+            capturedTranscript: lastCapturedWakeTranscript
         ) else {
-            return
-        }
-        guard !Self.looksLikeCurrentJarvisSpeechEcho(cleanTranscript, spokenText: latestSpeechPreview) else {
             return
         }
         let now = Date()
@@ -2342,6 +2342,20 @@ final class JarvisShellModel: ObservableObject {
         )
     }
 
+    static func testShouldStopSpeechForBargeIn(
+        transcript: String,
+        spokenText: String,
+        capturedCommand: String = "",
+        capturedTranscript: String = ""
+    ) -> Bool {
+        shouldStopSpeechForBargeIn(
+            transcript: transcript,
+            spokenText: spokenText,
+            capturedCommand: capturedCommand,
+            capturedTranscript: capturedTranscript
+        )
+    }
+
     private static func speechTextPreview(from finalSpeech: Any) -> String {
         guard let payload = finalSpeech as? [String: Any] else {
             return ""
@@ -2381,7 +2395,7 @@ final class JarvisShellModel: ObservableObject {
         if heard.contains(spokenPrefix) && spokenPrefix.count >= 12 {
             return true
         }
-        return speechEchoTokenOverlap(heard, spoken) >= 0.6
+        return speechEchoTokenOverlap(heard, spoken) >= 0.5
     }
 
     private static func speechEchoTokenOverlap(_ heard: String, _ spoken: String) -> Double {
@@ -2404,6 +2418,62 @@ final class JarvisShellModel: ObservableObject {
         }
         return normalizedSpeechTextsMatch(heard, normalizeSpeechCheckText(command))
             || normalizedSpeechTextsMatch(heard, normalizeSpeechCheckText(capturedTranscript))
+    }
+
+    private static func shouldStopSpeechForBargeIn(
+        transcript: String,
+        spokenText: String,
+        capturedCommand: String,
+        capturedTranscript: String
+    ) -> Bool {
+        let cleanTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTranscript.isEmpty else {
+            return false
+        }
+        guard !looksLikeWakeOrCapturedCommand(
+            cleanTranscript,
+            command: capturedCommand,
+            transcript: capturedTranscript
+        ) else {
+            return false
+        }
+        guard !looksLikeCurrentJarvisSpeechEcho(cleanTranscript, spokenText: spokenText) else {
+            return false
+        }
+        return looksLikeIntentionalSpeechBargeIn(cleanTranscript)
+    }
+
+    private static func looksLikeIntentionalSpeechBargeIn(_ transcript: String) -> Bool {
+        let normalized = normalizeSpeechCheckText(transcript)
+        guard !normalized.isEmpty else {
+            return false
+        }
+        let explicitPhrases = [
+            "stop",
+            "stop talking",
+            "shut up",
+            "be quiet",
+            "quiet",
+            "pause",
+            "cancel",
+            "wait",
+            "hold on",
+            "one second",
+        ]
+        if explicitPhrases.contains(where: { phrase in
+            normalized == phrase || normalized.contains(" \(phrase) ") || normalized.hasPrefix("\(phrase) ") || normalized.hasSuffix(" \(phrase)")
+        }) {
+            return true
+        }
+        let tokens = normalized.split(separator: " ").map(String.init)
+        guard tokens.count >= speechBargeInMinimumTokenCount, normalized.count >= 14 else {
+            return false
+        }
+        let fillerTokens: Set<String> = [
+            "a", "an", "and", "the", "to", "of", "in", "on", "it", "is", "was", "were", "um", "uh",
+        ]
+        let contentTokens = tokens.filter { !fillerTokens.contains($0) }
+        return contentTokens.count >= 3
     }
 
     private static func normalizedSpeechTextsMatch(_ lhs: String, _ rhs: String) -> Bool {

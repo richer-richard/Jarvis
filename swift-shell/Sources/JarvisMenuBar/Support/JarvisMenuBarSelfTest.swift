@@ -126,6 +126,32 @@ enum JarvisMenuBarSelfTest {
         guard fullSpokenAlignment["preview_matches_visible_prefix"] as? Bool == true else {
             throw SelfTestError.failed("Full spoken text should override a short debug preview for speech alignment.")
         }
+        guard !JarvisShellModel.testShouldStopSpeechForBargeIn(
+            transcript: "Hello",
+            spokenText: "Hello, sir. What can I help with today?"
+        ) else {
+            throw SelfTestError.failed("A tiny listener fragment must not stop Jarvis speech.")
+        }
+        guard !JarvisShellModel.testShouldStopSpeechForBargeIn(
+            transcript: "the local calendar cache exists",
+            spokenText: "The local Calendar cache exists, but Jarvis cannot open it yet."
+        ) else {
+            throw SelfTestError.failed("Recognized Jarvis echo must not stop Jarvis speech.")
+        }
+        guard !JarvisShellModel.testShouldStopSpeechForBargeIn(
+            transcript: "open Microsoft Outlook",
+            spokenText: "Opened Microsoft Outlook.",
+            capturedCommand: "open Microsoft Outlook",
+            capturedTranscript: "Hey Jarvis open Microsoft Outlook"
+        ) else {
+            throw SelfTestError.failed("Captured wake command echo must not stop Jarvis speech.")
+        }
+        guard JarvisShellModel.testShouldStopSpeechForBargeIn(
+            transcript: "wait stop for a second",
+            spokenText: "Here is the summary of your email."
+        ) else {
+            throw SelfTestError.failed("An intentional interruption should stop Jarvis speech.")
+        }
         guard JarvisShellModel.shouldUseNativeHotKeyStatus("hotkey status") else {
             throw SelfTestError.failed("Hotkey status should use the native Swift hotkey snapshot.")
         }

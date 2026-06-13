@@ -7121,13 +7121,16 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("lastCapturedWakeCommand", model_source)
         self.assertIn("lastCapturedWakeTranscript", model_source)
         self.assertIn("bargeInGraceUntil", model_source)
-        self.assertIn("bargeInGraceUntil = Date().addingTimeInterval(2.5)", model_source)
+        self.assertIn("speechBargeInGraceSeconds", model_source)
+        self.assertIn("bargeInGraceUntil = Date().addingTimeInterval(Self.speechBargeInGraceSeconds)", model_source)
         self.assertIn("handleSpeechBargeInIfNeeded(transcript:", model_source)
+        self.assertIn("shouldStopSpeechForBargeIn", model_source)
+        self.assertIn("looksLikeIntentionalSpeechBargeIn", model_source)
         self.assertIn("looksLikeCurrentJarvisSpeechEcho", model_source)
         self.assertIn("spoken.contains(heard)", model_source)
         self.assertIn("speechEchoTokenOverlap", model_source)
         self.assertIn("heardTokens.count >= 2", model_source)
-        self.assertIn(">= 0.6", model_source)
+        self.assertIn(">= 0.5", model_source)
         self.assertIn("looksLikeWakeOrCapturedCommand", model_source)
         self.assertIn("normalizedSpeechTextsMatch", model_source)
         self.assertIn('"speech_barge_in"', model_source)
@@ -7135,6 +7138,33 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("clearSpeechPlaybackWindow()", model_source)
         self.assertNotIn("notePotentialSpeech(text: statusText)", model_source)
         self.assertNotIn("toggleSpeechMuted()", model_source[model_source.index("handleSpeechBargeInIfNeeded"):])
+
+    def test_swift_speech_barge_in_filters_short_noise_and_echoes(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        selftest_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Support"
+            / "JarvisMenuBarSelfTest.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("private static let speechBargeInMinimumTokenCount = 4", model_source)
+        self.assertIn("guard tokens.count >= speechBargeInMinimumTokenCount", model_source)
+        self.assertIn("return looksLikeIntentionalSpeechBargeIn(cleanTranscript)", model_source)
+        self.assertIn("testShouldStopSpeechForBargeIn", model_source)
+        self.assertIn('"A tiny listener fragment must not stop Jarvis speech."', selftest_source)
+        self.assertIn('"Recognized Jarvis echo must not stop Jarvis speech."', selftest_source)
+        self.assertIn('"Captured wake command echo must not stop Jarvis speech."', selftest_source)
+        self.assertIn('"An intentional interruption should stop Jarvis speech."', selftest_source)
 
     def test_swift_menu_bar_icon_left_click_opens_panel(self):
         app_source = (
