@@ -962,6 +962,16 @@ class Planner:
         math_check = _math_followup_check(text, history)
         if math_check is not None:
             return self._result(text, "conversation.math_check", "Checked the arithmetic answer locally.", assessment, math_check, True)
+        model_test_name = _extract_model_name_for_test_plan(text)
+        if model_test_name is not None:
+            return self._result(
+                text,
+                "models.test_plan",
+                "Prepared safe model test plan.",
+                assessment,
+                model_test_plan(model_test_name, prompt=text),
+                True,
+            )
         return self._first_model_result(text, assessment, history=history)
 
     def _first_model_result(
@@ -1250,6 +1260,15 @@ class Planner:
         math_check = _math_followup_check(text, history)
         if math_check is not None:
             return self._preview_result(text, "conversation.math_check", assessment, True, plan={**math_check, "planned_only": True})
+        model_test_name = _extract_model_name_for_test_plan(text)
+        if model_test_name is not None:
+            return self._preview_result(
+                text,
+                "models.test_plan",
+                assessment,
+                True,
+                plan={"model_name": model_test_name, "deterministic_preview": True},
+            )
         if use_model_router:
             intent = select_tool_intent(text, NATURAL_LANGUAGE_TOOL_SPECS)
             routed = self._handle_model_intent(text, assessment, intent, execute=False, history=history)

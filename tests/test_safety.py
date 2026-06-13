@@ -4626,11 +4626,15 @@ Pages occupied by compressor:             10.
     def test_model_test_preview_preserves_dictated_model_name(self):
         result = Planner().preview("Test the Gemma 3 4B model for me.")
         stt_artifact = Planner().preview("Test the Gemma 3-4 B-model for me.")
+        lowercase_stt = Planner().preview("test the gemma 3 4b model for me")
 
         self.assertEqual(result.tool, "models.test_plan")
         self.assertEqual(result.result["plan"]["model_name"], "Gemma 3 4B")
         self.assertEqual(stt_artifact.tool, "models.test_plan")
         self.assertEqual(stt_artifact.result["plan"]["model_name"], "Gemma 3-4 B")
+        self.assertEqual(lowercase_stt.tool, "models.test_plan")
+        self.assertEqual(lowercase_stt.result["plan"]["model_name"], "gemma 3 4b")
+        self.assertTrue(lowercase_stt.result["plan"]["deterministic_preview"])
 
     def test_calendar_schedule_parses_events_without_changing_calendar(self):
         stdout = "EVENT\tSchool\tMath class\t2026-06-13 09:00\t2026-06-13 09:45\tRoom 207\tfalse\n"
@@ -10840,6 +10844,27 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(final["result"]["action"], "conversation.greeting")
         self.assertEqual(final["speech"]["reason"], "final")
         self.assertEqual(final["speech"]["status"], "suppressed_by_request")
+
+    def test_stream_command_routes_lowercase_model_test_before_fast_chat(self):
+        remote = {
+            "status": "tailnet_stopped",
+            "target": "hongyi@100.72.212.85",
+            "tailscale": {"status": "stopped"},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.tools.remote_worker_status", return_value=remote), \
+                 patch("jarvis.server.stream_fast_local_chat_events") as stream_mock:
+                events = list(server.stream_command("test the gemma 3 4b model for me", suppress_speech=True))
+
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["tool"], "models.test_plan")
+        self.assertEqual(events[0]["data"]["text"], "Planning the model test now.")
+        self.assertEqual(events[-1]["data"]["tool"], "models.test_plan")
+        self.assertEqual(events[-1]["data"]["result"]["model"], "Gemma 3 4B")
+        self.assertIn("Tailscale is stopped", events[-1]["data"]["result"]["reply"])
+        stream_mock.assert_not_called()
 
     def test_server_scopes_suppressed_audio_actions_to_one_command(self):
         def fake_handle(command, **kwargs):

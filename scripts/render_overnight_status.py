@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.354 fixes a streaming-only voice bug: lowercase STT text like `test the gemma 3 4b model for me` now routes to `models.test_plan` before fast chat can answer casually.",
     "Jarvis 0.1.353 makes MacBook Air offload diagnostics fast and honest: before waiting on SSH, it checks the local Tailscale transport and reports `Tailscale is stopped` without changing network settings.",
     "Jarvis 0.1.352 carries bounded email date ranges such as `past_month` from the user's prompt into the Apple Mail read path, so `emails from Ms. Sharpay in the past month` no longer becomes an unbounded recent-inbox search.",
     "Jarvis 0.1.351 makes Calendar failures actionable: it distinguishes a missing cache, a permission/open failure, an empty cache, and a Calendar schema parse drift instead of only saying the cache is unavailable.",
@@ -115,7 +116,9 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 553/553 after the Tailnet/offload fix; Swift and live-app verification are rerun after each bundle rebuild.",
+    "Current verification: Python safety suite passed 554/554 after the Tailnet/offload and streaming model-test fixes; Swift and live-app verification are rerun after each bundle rebuild.",
+    "Focused streaming regression now proves `test the gemma 3 4b model for me` bypasses fast chat, emits `Planning the model test now`, and returns the safe MacBook Air/local-fallback plan.",
+    "Live quiet voice-loop QA passed after the fix for model offload, Chrome-login migration, Teams assignment planning, and suppressed `Play Waving Through a Window` playback.",
     "Live remote-worker probe now returns in about 0.1s with `tailnet_stopped` when Tailscale is stopped, and model-test planning tells Leo the real reason before asking for any local fallback.",
     "Voice-loop QA now sends `suppress_audio_actions: true`, and server/tool tests prove this suppresses LocalOS music side effects for automation while normal user play commands remain executable.",
     "Focused LocalOS tests now prove stale player snapshots still refuse when Chrome-direct LocalOS control is unavailable, and succeed only when the LocalOS page confirms the direct `playTrackById` command.",
