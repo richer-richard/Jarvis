@@ -4590,6 +4590,45 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["status"], "cache_unavailable")
         self.assertEqual(result["source"], "calendar_sqlite_cache")
         self.assertIn("quickly", result["reply"])
+        self.assertFalse(result["cache_diagnostics"]["exists"])
+        run_mock.assert_not_called()
+
+    def test_calendar_schedule_explains_cache_permission_denied(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "Calendar.sqlitedb"
+            db_path.write_bytes(b"not opened")
+
+            with patch("jarvis.tools.CALENDAR_SQLITE_DB_PATH", db_path), \
+                 patch("jarvis.tools.sqlite3.connect", side_effect=sqlite3.OperationalError("unable to open database file")), \
+                 patch.dict(os.environ, {"JARVIS_CALENDAR_APPLESCRIPT_FALLBACK": ""}), \
+                 patch("jarvis.tools.subprocess.run") as run_mock:
+                result = calendar_today_schedule("2026-06-13")
+
+        self.assertEqual(result["status"], "cache_unavailable")
+        self.assertTrue(result["cache_diagnostics"]["exists"])
+        self.assertFalse(result["cache_diagnostics"]["connect_ok"])
+        self.assertIn("cannot open it yet", result["reply"])
+        run_mock.assert_not_called()
+
+    def test_calendar_schedule_explains_cache_parse_drift(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "Calendar.sqlitedb"
+            connection = sqlite3.connect(db_path)
+            connection.execute("create table OccurrenceCache (day real)")
+            day_seconds = jarvis_tools._calendar_local_day_apple_seconds(jarvis_tools._calendar_target_date("2026-06-13"))
+            connection.execute("insert into OccurrenceCache values (?)", (day_seconds,))
+            connection.commit()
+            connection.close()
+
+            with patch("jarvis.tools.CALENDAR_SQLITE_DB_PATH", db_path), \
+                 patch.dict(os.environ, {"JARVIS_CALENDAR_APPLESCRIPT_FALLBACK": ""}), \
+                 patch("jarvis.tools.subprocess.run") as run_mock:
+                result = calendar_today_schedule("2026-06-13")
+
+        self.assertEqual(result["status"], "cache_unavailable")
+        self.assertTrue(result["cache_diagnostics"]["connect_ok"])
+        self.assertEqual(result["cache_diagnostics"]["today_cache_rows"], 1)
+        self.assertIn("could not parse", result["reply"])
         run_mock.assert_not_called()
 
     def test_calendar_schedule_prefers_local_sqlite_cache(self):

@@ -4387,6 +4387,15 @@ def calendar_today_schedule(date_iso: str | None = None) -> dict[str, Any]:
         return sqlite_result
 
     if not _calendar_applescript_fallback_enabled():
+        diagnostics = _calendar_cache_diagnostics(target_date)
+        if not diagnostics.get("exists"):
+            reply = "I could not find the local Calendar cache quickly."
+        elif not diagnostics.get("connect_ok"):
+            reply = "The local Calendar cache exists, but Jarvis cannot open it yet. Full Disk Access may need to be refreshed, then Jarvis reopened."
+        elif diagnostics.get("today_cache_rows") == 0:
+            reply = "The local Calendar cache is readable, but it has no cached events for today."
+        else:
+            reply = "The local Calendar cache has entries, but Jarvis could not parse this Calendar cache format yet."
         return {
             "tool": "calendar.today_schedule",
             "executed": True,
@@ -4397,7 +4406,8 @@ def calendar_today_schedule(date_iso: str | None = None) -> dict[str, Any]:
             "date": target_date.isoformat(),
             "events": [],
             "event_count": 0,
-            "reply": "I could not read Calendar quickly. The local Calendar cache is unavailable to Jarvis.",
+            "cache_diagnostics": diagnostics,
+            "reply": reply,
             **_duration_fields(started_at),
         }
 
@@ -4517,6 +4527,55 @@ def _calendar_today_schedule_from_sqlite(
 
 def _calendar_applescript_fallback_enabled() -> bool:
     return str(os.environ.get("JARVIS_CALENDAR_APPLESCRIPT_FALLBACK", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _calendar_cache_diagnostics(target_date: datetime) -> dict[str, Any]:
+    db_path = CALENDAR_SQLITE_DB_PATH
+    diagnostics: dict[str, Any] = {
+        "path": str(db_path),
+        "exists": False,
+        "is_file": False,
+        "can_stat": False,
+        "connect_ok": False,
+        "schema_ok": False,
+        "today_cache_rows": None,
+        "error": "",
+    }
+    try:
+        diagnostics["exists"] = db_path.exists()
+        diagnostics["is_file"] = db_path.is_file()
+        if diagnostics["exists"]:
+            diagnostics["size_bytes"] = db_path.stat().st_size
+            diagnostics["can_stat"] = True
+    except OSError as error:
+        diagnostics["error"] = f"{type(error).__name__}: {error}"
+        return diagnostics
+    if not diagnostics["exists"] or not diagnostics["is_file"]:
+        return diagnostics
+
+    try:
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error as error:
+        diagnostics["error"] = f"{type(error).__name__}: {error}"
+        return diagnostics
+    try:
+        day_seconds = _calendar_local_day_apple_seconds(target_date)
+        diagnostics["schema_ok"] = bool(
+            connection.execute(
+                "select 1 from sqlite_master where type='table' and name='OccurrenceCache'"
+            ).fetchone()
+        )
+        row = connection.execute(
+            "select count(*) from OccurrenceCache where abs(day - ?) < 1",
+            (day_seconds,),
+        ).fetchone()
+        diagnostics["today_cache_rows"] = int(row[0]) if row else 0
+        diagnostics["connect_ok"] = True
+    except sqlite3.Error as error:
+        diagnostics["error"] = f"{type(error).__name__}: {error}"
+    finally:
+        connection.close()
+    return diagnostics
 
 
 def _calendar_events_from_sqlite(target_date: datetime) -> list[dict[str, Any]] | None:
