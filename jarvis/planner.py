@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .safety import DANGEROUS_SHELL_TOKENS, READ_ONLY_SHELL_COMMANDS, VERSION_ONLY_SHELL_COMMANDS, classify_command
@@ -768,6 +768,16 @@ class Planner:
             return self._result(text, "diagnostics.fast_model", "Read local fast-model status.", assessment, fast_model_status(), True)
         if _looks_like_memory_usage_request(lower):
             return self._result(text, "diagnostics.memory_usage", "Read local memory usage.", assessment, memory_usage_status(), True)
+        if _looks_like_calendar_schedule_request(lower):
+            date_iso = _extract_calendar_schedule_date_iso(text)
+            return self._result(
+                text,
+                "calendar.today_schedule",
+                "Read local Calendar schedule.",
+                assessment,
+                calendar_today_schedule(date_iso),
+                True,
+            )
         if _looks_like_device_status(lower):
             if use_model_router:
                 return self._first_model_result(text, assessment, history=history)
@@ -1106,6 +1116,14 @@ class Planner:
             return self._preview_result(text, "browser.search_web", assessment, False, plan={"query": _extract_browser_search_query(text)})
         if lower.startswith("find ") or (lower.startswith("search ") and not _looks_like_browser_search_request(lower)):
             return self._preview_result(text, "files.search", assessment, True)
+        if _looks_like_calendar_schedule_request(lower):
+            return self._preview_result(
+                text,
+                "calendar.today_schedule",
+                assessment,
+                True,
+                plan={"date_iso": _extract_calendar_schedule_date_iso(text)},
+            )
         if _looks_like_wake_audition_status(lower):
             return self._preview_result(text, "voice.wake_audition", assessment, True)
         if _looks_like_wake_debug_request(lower):
@@ -3410,6 +3428,33 @@ def _extract_app_name(text: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip()
+
+
+def _looks_like_calendar_schedule_request(lower: str) -> bool:
+    if re.search(r"\b(open|launch|start|focus|switch to|activate|bring forward|quit|close)\s+(?:my\s+|the\s+)?calendar\b", lower):
+        return False
+    has_calendar = re.search(r"\bcalendar\b", lower) is not None
+    has_schedule_word = re.search(r"\b(schedule|agenda|events?|appointments?|classes?)\b", lower) is not None
+    has_read_verb = re.search(r"\b(check|read|show|tell|summari[sz]e|what(?:'s| is)|what do i have|look at|look in)\b", lower) is not None
+    if has_calendar and (has_read_verb or has_schedule_word):
+        return True
+    return bool(
+        has_schedule_word
+        and re.search(r"\b(today|tomorrow|this morning|this afternoon|tonight)\b", lower)
+        and has_read_verb
+    )
+
+
+def _extract_calendar_schedule_date_iso(text: str) -> str:
+    cleaned = str(text or "")
+    match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", cleaned)
+    if match:
+        return match.group(1)
+    lower = cleaned.lower()
+    today = datetime.now().astimezone().date()
+    if re.search(r"\btomorrow\b", lower):
+        return (today + timedelta(days=1)).isoformat()
+    return today.isoformat()
 
 
 def _looks_like_app_control_request(text: str, lower: str) -> bool:

@@ -4397,6 +4397,42 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result.result["planned_only"])
         self.assertEqual(result.result["plan"]["date_iso"], "2026-06-13")
 
+    def test_calendar_schedule_phrase_routes_before_app_open(self):
+        fake_result = {
+            "tool": "calendar.today_schedule",
+            "status": "cache_unavailable",
+            "executed": True,
+            "reply": "I could not find the local Calendar cache quickly.",
+        }
+        with patch("jarvis.planner.calendar_today_schedule", return_value=fake_result) as calendar_mock, \
+             patch("jarvis.planner.app_open") as app_open_mock, \
+             patch("jarvis.planner.run_fast_local_chat") as fast_chat_mock:
+            result = Planner().handle("Check my calendar for my schedule today.")
+
+        self.assertEqual(result.tool, "calendar.today_schedule")
+        self.assertTrue(result.executed)
+        self.assertEqual(result.result["reply"], fake_result["reply"])
+        self.assertRegex(calendar_mock.call_args.args[0], r"^20\d{2}-\d{2}-\d{2}$")
+        app_open_mock.assert_not_called()
+        fast_chat_mock.assert_not_called()
+
+    def test_plain_open_calendar_still_opens_calendar_app(self):
+        fake_result = {
+            "tool": "app.open",
+            "status": "opened",
+            "executed": True,
+            "app": "Calendar",
+            "reply": "Opened Calendar.",
+        }
+        with patch("jarvis.planner.app_open", return_value=fake_result) as app_open_mock, \
+             patch("jarvis.planner.calendar_today_schedule") as calendar_mock:
+            result = Planner().handle("Open Calendar.", use_model_router=False)
+
+        self.assertEqual(result.tool, "app.open")
+        self.assertEqual(result.result["app"], "Calendar")
+        app_open_mock.assert_called_once_with("Calendar")
+        calendar_mock.assert_not_called()
+
     def test_codex_send_prompt_request_is_not_downgraded_to_chat_status(self):
         command = "open Codex and send a prompt called test in the Default chat"
         result = Planner().handle(command)
