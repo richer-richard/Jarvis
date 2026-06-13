@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.370 turns the Teams browser lane into a usable next step: Teams assignment plans can carry the imported Teams bookmark into the visible Jarvis browser/Chrome handoff, and `what's on this page?` now reads a concise local page digest instead of raw page text.",
     "Jarvis 0.1.369 improves dictated contact aliases: if STT hears `Ms. Sharpay` as `his Sharpay`, contact lookup still resolves the same local alias before email search.",
     "Jarvis 0.1.368 tightens LocalOS music confirmation: Chrome-direct playback can only say `playing` when LocalOS reports the requested track as current and audio is actually playing.",
     "Jarvis 0.1.367 fixes dictated Chrome-login routing: STT-shaped phrases like `chrome log and steer browser` now go to the safe Chrome-session strategy instead of accidentally importing bookmarks.",
@@ -152,7 +153,8 @@ PROOF_ITEMS = [
     "Live suppressed `Play Waving Through a Window` now returns `Local OS Music is not connected right now` and leaves the LocalOS command queue expired instead of starting or claiming audio.",
     "Focused browser-lane tests now prove Teams URLs choose `chrome_authenticated`, ordinary URLs choose `jarvis_webkit`, and the Swift shell opens Chrome when `open_chrome_to_reuse_login` is set.",
     "Real Chrome session proof: opening `https://teams.microsoft.com/v2/` in Leo's Chrome reused the existing Microsoft login and landed on `Teams and Channels | General | Microsoft Teams` at `https://teams.cloud.microsoft/`, not a login screen.",
-    "Live suppressed Teams-assignment probe returned `teams.assignment` with `preferred_browser_lane=chrome_authenticated`, `visible_browser_lane=jarvis_webkit_panel`, and `copied_chrome_cookies=false`.",
+    "Live suppressed Teams-assignment probe on Jarvis 0.1.370 returned `teams.assignment` with `browser_target_available=true`, `preferred_browser_lane=chrome_authenticated`, `open_chrome_to_reuse_login=true`, and `copied_chrome_cookies=false`.",
+    "Live suppressed `What's on this page?` probe on Jarvis 0.1.370 routed to `browser.read_page`; Chrome page text reading is correctly blocked with `automation_not_allowed` until macOS Automation permission is granted for Jarvis controlling Chrome.",
     "Live suppressed Calendar probe returned in 0.0s with `cache_unavailable`, replacing the previous 12-second timeout behavior.",
     "Latest scored cloud-first model comparison: GPT-OSS 120B Cloud scored 5/5, Gemma4 31B Cloud scored 5/5 and was fastest on text, GPT-OSS 20B Cloud returned empty visible replies, and bare Groq Llama 70B was fast but failed safety/math/tool-shape checks without Jarvis's wrapper.",
     "Gemma4 31B Cloud did not confirm audio input through Ollama on `/Users/leoxu/Desktop/Hello.mp3`; it answered `CANNOT_HEAR_AUDIO` through the audio field and rejected the MP3 through the image field.",
@@ -163,7 +165,7 @@ PROOF_ITEMS = [
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
     "Sharpay-style email previews now include `contact_alias_lookup`, `resolved_sender_query`, and `recommended_tool: contacts.infer` when the alias is not known, while remaining planned-only; actual email execution can now infer a confident alias from recent sender metadata before searching messages.",
     "Latest local checkpoint commits record the browser/session, music-recovery, model-scoring, report-proof, voice-loop routing, LocalOS stale-bridge hardening, and contact-aware email planning; the branch has not been pushed while Leo is asleep.",
-    "Python safety suite: 563/563 passed after the wake, mute, final-speech, report-route, speech-alignment, barge-in filtering, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, contact-dictation aliases, and voice-QA work.",
+    "Python safety suite: 566/566 passed after the wake, mute, final-speech, report-route, speech-alignment, barge-in filtering, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, page-digest, Teams browser-target, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, contact-dictation aliases, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
@@ -240,6 +242,7 @@ TRY_ITEMS = [
 
 RISK_ITEMS = [
     "Jarvis 0.1.346 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
+    "Chrome active-page reading now routes correctly, but the live app currently gets `automation_not_allowed` from macOS when it tries to read Chrome page text; Leo may need to grant Jarvis Automation access to Google Chrome before Teams-page summaries work.",
     "The LocalOS music page likely needs a reload or active Chrome tab to pick up the playback-state bridge; Jarvis now reports missing/stale bridge status honestly, but live audible playback was not triggered while Leo was asleep.",
     "MacBook Air remote-worker probing currently cannot proceed because Tailscale is stopped on this Mac; Jarvis now detects that quickly and should ask before running model tests locally.",
     "Groq works as Jarvis's fast conversation model, but the scored middle-model comparison showed it should not be trusted for safety-sensitive planning without stronger prompting or a safer model layer.",
@@ -250,7 +253,7 @@ RISK_ITEMS = [
     "Browser loopback noise trials are useful but not a perfect model of a real room.",
     "Speech Recognition permission can still block the native listener until macOS grants it to the current Jarvis bundle.",
     "Local-only faster-whisper STT now works for file-based QA, but tiny.en still mishears some technical words and is not good enough as the final live dictation model.",
-    "The full safe verifier was not rerun after the no-permission instruction because some verifier paths can touch microphone or Speech permission; the report keeps the latest 97/97 artifact and the safer live subset separate.",
+    "The full safe verifier was rerun and passed, but real microphone wake quality is still a human-room test, not something the verifier can prove from files alone.",
     "The current wake phrase is experimental; it is not yet personalized to Leo's voice.",
     "Very technical diagnostics are still intentionally speech-silent so Jarvis does not read backend internals aloud.",
     "GitHub main still preserves the older small-tree history; the full Jarvis folder is published on the overnight branch and should be promoted deliberately.",
@@ -956,7 +959,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 563/563 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 566/566 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

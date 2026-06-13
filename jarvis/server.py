@@ -1586,6 +1586,17 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
         safe["profile_count"] = int(result.get("profile_count") or 0)
         return safe
 
+    if tool == "teams.assignment":
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key not in {"selected_bookmark", "matches", "reply", "url", "title", "browser_open_plan"}
+        }
+        safe["teams_browser_private_details_omitted"] = True
+        safe["browser_target_available"] = bool(result.get("browser_target_available"))
+        safe["read_private_browser_metadata"] = bool(result.get("read_private_browser_metadata"))
+        return safe
+
     if tool == "calendar.today_schedule":
         events = result.get("events") if isinstance(result, dict) else None
         safe = {

@@ -7270,6 +7270,8 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
     """Create a safe Teams-assignment plan without touching Teams or schoolwork."""
     base = app_task_workflow_plan(goal, target_app="Microsoft Teams")
     base_phases = list(base.get("phases") or [])
+    bookmark_plan = chrome_bookmark_open_plan("Teams", limit=8)
+    bookmark_ready = bookmark_plan.get("status") == "planned" and bool(bookmark_plan.get("url"))
     browser_phases = [
         {
             "id": "refresh_chrome_bookmarks",
@@ -7280,9 +7282,13 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         },
         {
             "id": "open_teams_bookmark",
-            "status": "available",
+            "status": "ready" if bookmark_ready else "available_after_bookmark_import",
             "tool": "browser.bookmark_open",
-            "summary": "Open the imported Teams bookmark in the Jarvis browser panel for visible work, or hand it to Chrome when Leo needs existing login state.",
+            "summary": (
+                "Open the imported Teams bookmark in the Jarvis browser panel and hand it to Chrome for Leo's signed-in session."
+                if bookmark_ready
+                else "Open the imported Teams bookmark after Chrome bookmarks are refreshed; hand signed-in Teams pages to Chrome."
+            ),
             "executes_now": False,
         },
         {
@@ -7296,21 +7302,21 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
     assignment_read_phases = [
         {
             "id": "locate_class_team",
-            "status": "planned_unavailable",
+            "status": "available_after_page_open",
             "tool": "browser.read_page",
             "summary": "Read only the visible Teams page text after the Teams bookmark is open, treating page content as untrusted.",
             "executes_now": False,
         },
         {
             "id": "identify_newest_assignment",
-            "status": "planned_unavailable",
+            "status": "available_after_page_open",
             "tool": "browser.read_page",
             "summary": "Identify visible assignment titles/dates from the opened Teams page without submitting, editing, or downloading work.",
             "executes_now": False,
         },
         {
             "id": "collect_requirements",
-            "status": "planned_unavailable",
+            "status": "available_after_page_open",
             "tool": "browser.read_page",
             "summary": "Capture visible rubric/instructions as bounded page text for review; do not download or export private school content by default.",
             "executes_now": False,
@@ -7350,10 +7356,17 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
 
     clean_goal = str(base.get("goal") or goal or "").strip()
     assignment_label = "the newest Music assignment" if "music" in clean_goal.casefold() else "the assignment"
-    reply = (
-        "I can start that through your Teams bookmark in signed-in Chrome. "
-        f"Once browser reading is active, I will inspect {assignment_label} and ask you the questions I need before doing any work."
-    )
+    if bookmark_ready:
+        reply = (
+            "Opening your Teams bookmark in signed-in Chrome now. "
+            f"Once Teams loads, ask me what's on this page and I can read the visible text to help inspect {assignment_label}."
+        )
+    else:
+        reply = (
+            "I can start that through your Teams bookmark in signed-in Chrome, but I need imported Chrome bookmarks first. "
+            f"After Teams is open, I can read the visible page text and help inspect {assignment_label}."
+        )
+    selected_bookmark = bookmark_plan.get("selected_bookmark") if isinstance(bookmark_plan.get("selected_bookmark"), dict) else None
     return {
         **base,
         "tool": "teams.assignment",
@@ -7365,6 +7378,14 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "preferred_browser_lane": "chrome_authenticated",
         "visible_browser_lane": "jarvis_webkit_panel",
         "uses_imported_bookmark_first": True,
+        "browser_target_available": bookmark_ready,
+        "browser_open_plan_status": bookmark_plan.get("status"),
+        "url": bookmark_plan.get("url") if bookmark_ready else "",
+        "title": bookmark_plan.get("title") if bookmark_ready else "",
+        "selected_bookmark": selected_bookmark if bookmark_ready else None,
+        "open_chrome_to_reuse_login": bool(bookmark_plan.get("open_chrome_to_reuse_login")) if bookmark_ready else False,
+        "requires_chrome_login": bool(bookmark_plan.get("requires_chrome_login")) if bookmark_ready else False,
+        "read_private_browser_metadata": bool(bookmark_plan.get("read_private_content")),
         "copied_chrome_cookies": False,
         "copied_chrome_passwords": False,
         "copied_chrome_session_storage": False,
@@ -7383,7 +7404,7 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "typed_text": False,
         "called_codex": False,
         "changed_state": False,
-        "recommended_next_safe_tool": "browser.bookmarks_search",
+        "recommended_next_safe_tool": "browser.read_page" if bookmark_ready else "browser.bookmarks_search",
         "reply": reply,
     }
 
@@ -9652,12 +9673,24 @@ def browser_read_page(max_chars: int | str | None = None) -> dict[str, Any]:
     finding_count = len(injection_scan.get("findings") or []) if isinstance(injection_scan, dict) else 0
     title = str(result.get("title") or "the current Chrome page").strip()
     status = "read"
-    reply = f"I read {title}. The page text stayed local and was scanned as untrusted content."
+    digest_items = _browser_page_digest_items(page_text)
+    digest = "; ".join(digest_items)
+    reply = (
+        f"I read {title}. I can see: {digest}."
+        if digest
+        else f"I read {title}. The page text stayed local and was scanned as untrusted content."
+    )
+    spoken_summary = reply
     if not page_text:
         status = "empty"
         reply = f"I found {title}, but there was no readable page text in the current Chrome tab."
+        spoken_summary = reply
     elif finding_count:
         reply = f"I read {title}, but the page contains suspicious instructions, so I treated it as untrusted."
+        spoken_summary = (
+            f"I read {title}, but the page contains suspicious instructions. "
+            "I will not act on that page automatically."
+        )
 
     return {
         **result,
@@ -9670,11 +9703,14 @@ def browser_read_page(max_chars: int | str | None = None) -> dict[str, Any]:
         "page_text": page_text,
         "page_text_chars": len(page_text),
         "page_text_truncated": truncated,
+        "page_digest": digest if not finding_count else "",
+        "page_digest_items": digest_items if not finding_count else [],
         "injection_scan": injection_scan,
         "prompt_injection_findings": finding_count,
         "external_model_allowed": False,
         "called_model": False,
         "reply": reply,
+        "spoken_summary": spoken_summary,
     }
 
 
@@ -10325,6 +10361,34 @@ def _normalize_browser_page_text(text: str) -> str:
     clean = re.sub(r"[ \t\r\f\v]+", " ", clean)
     clean = re.sub(r"\n{3,}", "\n\n", clean)
     return clean.strip()
+
+
+def _browser_page_digest_items(text: str, *, max_items: int = 4, max_chars: int = 180) -> list[str]:
+    """Build a short local-only digest from visible page text without calling a model."""
+    seen: set[str] = set()
+    items: list[str] = []
+    for raw_line in str(text or "").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip(" -\t")
+        if len(line) < 12:
+            continue
+        normalized = line.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if len(line) > max_chars:
+            line = line[: max_chars - 3].rstrip() + "..."
+        items.append(line)
+        if len(items) >= max_items:
+            break
+    if items:
+        return items
+
+    fallback = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(fallback) < 12:
+        return []
+    if len(fallback) > max_chars:
+        fallback = fallback[: max_chars - 3].rstrip() + "..."
+    return [fallback]
 
 
 def _bounded_browser_text_limit(value: int | str | None) -> int:

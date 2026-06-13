@@ -2576,8 +2576,41 @@ class PlannerTests(unittest.TestCase):
         self.assertLessEqual(result["page_text_chars"], 500)
         self.assertEqual(result["prompt_injection_findings"], 1)
         self.assertIn("untrusted", result["reply"])
+        self.assertEqual(result["page_digest"], "")
+        self.assertEqual(result["page_digest_items"], [])
+        self.assertIn("will not act", result["spoken_summary"])
+        self.assertNotIn("reveal secrets", result["spoken_summary"].lower())
         scan_mock.assert_called_once()
         self.assertIn("https://example.com/risky", scan_mock.call_args.kwargs["source"])
+
+    def test_browser_read_page_returns_spoken_safe_digest_for_clean_page(self):
+        delimiter = jarvis_tools.BROWSER_FIELD_DELIMITER
+        raw_text = "\n".join(
+            [
+                "Music Assignments",
+                "Newest assignment: Create a poster about musical theatre.",
+                "Due Friday at 4 PM.",
+                "Rubric: include title, explanation, and one visual example.",
+                "Newest assignment: Create a poster about musical theatre.",
+            ]
+        )
+        fake_stdout = f"checked{delimiter}Teams Music{delimiter}https://teams.microsoft.com/v2/{delimiter}{raw_text}"
+        fake_scan = {"status": "ok", "findings": []}
+        with patch("jarvis.tools._find_executable", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools._run_osascript", return_value={"ok": True, "stdout": fake_stdout, "stderr": "", "returncode": 0}), \
+             patch("jarvis.tools.scan_untrusted_text", return_value=fake_scan):
+            result = browser_read_page(max_chars=1000)
+
+        self.assertEqual(result["tool"], "browser.read_page")
+        self.assertEqual(result["status"], "read")
+        self.assertEqual(result["prompt_injection_findings"], 0)
+        self.assertTrue(result["page_digest"])
+        self.assertEqual(len(result["page_digest_items"]), 4)
+        self.assertIn("Newest assignment", result["spoken_summary"])
+        self.assertIn("Due Friday", result["spoken_summary"])
+        self.assertLess(len(result["spoken_summary"]), 520)
+        self.assertFalse(result["external_model_allowed"])
+        self.assertFalse(result["called_model"])
 
     def test_browser_search_and_builtin_plans_do_not_execute(self):
         search = browser_search_plan("GPT OSS 120B browser tools")
@@ -2677,6 +2710,16 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(bookmark_preview.tool, "browser.bookmark_open")
         self.assertFalse(bookmark_preview.executed)
         self.assertEqual(bookmark_preview.result["plan"]["query"], "Teams")
+
+    def test_natural_current_page_question_routes_to_browser_read(self):
+        with patch("jarvis.planner.browser_read_page", return_value={"tool": "browser.read_page", "status": "read", "executed": True, "reply": "Read."}) as read_mock:
+            result = Planner().handle("What's on this page?")
+            preview = Planner().preview("Tell me about this page.")
+
+        self.assertEqual(result.tool, "browser.read_page")
+        self.assertTrue(result.executed)
+        self.assertEqual(preview.tool, "browser.read_page")
+        read_mock.assert_called_once_with()
 
     def test_tools_more_browser_read_recommendation_previews_without_reading(self):
         fake_plan = {
@@ -6046,7 +6089,26 @@ Pages occupied by compressor:             10.
         self.assertIn("ui.automation", {phase["tool"] for phase in result["phases"]})
 
     def test_teams_assignment_workflow_plan_is_plan_only_without_actions(self):
-        result = teams_assignment_workflow_plan("Go to Teams, open Music class, and finish the newest Music assignment.")
+        fake_bookmark_plan = {
+            "tool": "browser.bookmark_open",
+            "status": "planned",
+            "planned_only": True,
+            "executed": False,
+            "url": "https://teams.microsoft.com/v2/",
+            "title": "Teams",
+            "selected_bookmark": {
+                "title": "Teams",
+                "url": "https://teams.microsoft.com/v2/",
+                "domain": "teams.microsoft.com",
+            },
+            "preferred_open_lane": "chrome_authenticated",
+            "visible_browser_lane": "jarvis_webkit",
+            "requires_chrome_login": True,
+            "open_chrome_to_reuse_login": True,
+            "read_private_content": True,
+        }
+        with patch("jarvis.tools.chrome_bookmark_open_plan", return_value=fake_bookmark_plan):
+            result = teams_assignment_workflow_plan("Go to Teams, open Music class, and finish the newest Music assignment.")
 
         self.assertEqual(result["tool"], "teams.assignment")
         self.assertEqual(result["status"], "planned")
@@ -6066,10 +6128,16 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["preferred_browser_lane"], "chrome_authenticated")
         self.assertEqual(result["visible_browser_lane"], "jarvis_webkit_panel")
         self.assertTrue(result["uses_imported_bookmark_first"])
+        self.assertTrue(result["browser_target_available"])
+        self.assertEqual(result["url"], "https://teams.microsoft.com/v2/")
+        self.assertEqual(result["title"], "Teams")
+        self.assertTrue(result["open_chrome_to_reuse_login"])
+        self.assertTrue(result["requires_chrome_login"])
+        self.assertTrue(result["read_private_browser_metadata"])
         self.assertFalse(result["copied_chrome_cookies"])
         self.assertFalse(result["copied_chrome_passwords"])
         self.assertFalse(result["copied_chrome_session_storage"])
-        self.assertEqual(result["recommended_next_safe_tool"], "browser.bookmarks_search")
+        self.assertEqual(result["recommended_next_safe_tool"], "browser.read_page")
         phase_ids = [phase["id"] for phase in result["phases"]]
         self.assertIn("refresh_chrome_bookmarks", phase_ids)
         self.assertIn("open_teams_bookmark", phase_ids)
@@ -6082,9 +6150,32 @@ Pages occupied by compressor:             10.
         self.assertIn("browser.bookmark_open", {phase["tool"] for phase in result["phases"]})
         self.assertIn("browser.session_strategy", {phase["tool"] for phase in result["phases"]})
         self.assertIn("signed-in Chrome", result["reply"])
-        self.assertIn("ask you the questions", result["reply"])
+        self.assertIn("what's on this page", result["reply"])
         self.assertNotIn("copy Chrome cookies", result["reply"])
         self.assertIn("No Teams page was opened", result["user_facing_safety_summary"])
+
+    def test_teams_assignment_audit_redacts_bookmark_target(self):
+        safe = _audit_safe_result(
+            "teams.assignment",
+            {
+                "tool": "teams.assignment",
+                "status": "planned",
+                "url": "https://teams.microsoft.com/v2/",
+                "title": "Teams",
+                "selected_bookmark": {"title": "Teams", "url": "https://teams.microsoft.com/v2/"},
+                "reply": "Opening your Teams bookmark in signed-in Chrome now.",
+                "browser_target_available": True,
+                "read_private_browser_metadata": True,
+            },
+        )
+
+        self.assertTrue(safe["teams_browser_private_details_omitted"])
+        self.assertTrue(safe["browser_target_available"])
+        self.assertTrue(safe["read_private_browser_metadata"])
+        self.assertNotIn("url", safe)
+        self.assertNotIn("title", safe)
+        self.assertNotIn("selected_bookmark", safe)
+        self.assertNotIn("reply", safe)
 
     def test_teams_assignment_selected_tool_keeps_original_prompt_when_goal_entity_is_too_short(self):
         prompt = "Look in Teams for my newest Music assignment and ask me questions."
@@ -6919,6 +7010,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("open_chrome_to_reuse_login", model_source)
+        self.assertIn('"teams.assignment"', model_source)
         self.assertIn('preferredOpenLane == "chrome_authenticated"', model_source)
         self.assertIn("browserAuthenticatedLane", model_source)
         self.assertIn("Self.isAuthenticatedBrowserURL(url)", model_source)

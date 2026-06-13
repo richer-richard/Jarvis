@@ -2681,8 +2681,13 @@ def _looks_like_browser_read_page_request(lower: str) -> bool:
             "read current page",
             "summarize this page",
             "summarize the current page",
+            "summarize this website",
             "summarize current webpage",
             "what does this page say",
+            "what is on this page",
+            "what's on this page",
+            "tell me about this page",
+            "read this website",
             "inspect this webpage",
             "inspect the current webpage",
         )

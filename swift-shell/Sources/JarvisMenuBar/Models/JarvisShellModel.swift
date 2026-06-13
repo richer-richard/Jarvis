@@ -797,7 +797,7 @@ final class JarvisShellModel: ObservableObject {
 
     private func openBrowserSurfaceIfNeeded(from response: CommandResponse) -> Bool {
         guard let tool = response.tool,
-              ["browser.open_url", "browser.search_web", "browser.bookmark_open"].contains(tool),
+              ["browser.open_url", "browser.search_web", "browser.bookmark_open", "teams.assignment"].contains(tool),
               let object = response.result?.objectValue else {
             return false
         }
