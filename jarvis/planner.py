@@ -1564,7 +1564,11 @@ class Planner:
                     executed=False,
                     confirmation=None,
                 )
-            result = outlook_read_only_check(sender_query=sender_query, selection=selection, original_prompt=text)
+            result = outlook_read_only_check(
+                sender_query=email_request.get("resolved_sender_query") or sender_query,
+                selection=selection,
+                original_prompt=text,
+            )
             summary = "Checked read-only email summary." if result.get("status") == "checked" else "Tried read-only email summary."
             return self._result(text, "outlook.visible_summary", summary, assessment, result, True)
         if selected_tool == "screenshot.capability":
@@ -2898,8 +2902,29 @@ def email_request_metadata(text: str, entities: dict[str, Any] | None = None) ->
     prompt_selection = _extract_email_selection_constraint(text)
     selection = entity_selection or structured_selection or prompt_selection
     sender_query = _clean_optional_entity(safe_entities.get("sender_query")) or _extract_email_sender_constraint(text)
+    resolved_sender_query = sender_query
+    contact_alias_lookup: dict[str, Any] | None = None
+    if sender_query:
+        lookup = contact_data_lookup(sender_query)
+        if lookup.get("status") == "found":
+            resolved_sender_query = _clean_optional_entity(lookup.get("display_name")) or sender_query
+            contact_alias_lookup = {
+                "status": "found",
+                "alias": lookup.get("alias") or sender_query,
+                "display_name": resolved_sender_query,
+                "source": lookup.get("source"),
+            }
+        else:
+            contact_alias_lookup = {
+                "status": "not_found",
+                "alias": sender_query,
+                "recommended_tool": "contacts.infer",
+                "read_email_content": False,
+            }
     return {
         "sender_query": sender_query,
+        "resolved_sender_query": resolved_sender_query,
+        "contact_alias_lookup": contact_alias_lookup,
         "selection": selection,
         "selection_source": (
             "model_entities"
@@ -2922,6 +2947,8 @@ def email_request_preview_plan(text: str, entities: dict[str, Any] | None = None
             "planned_only": True,
             "would_read_email_content_if_run": True,
             "sender_query": metadata["sender_query"],
+            "resolved_sender_query": metadata["resolved_sender_query"],
+            "contact_alias_lookup": metadata["contact_alias_lookup"],
             "selection": metadata["selection"],
             "selection_source": metadata["selection_source"],
             "selection_rule": metadata["selection_rule"],

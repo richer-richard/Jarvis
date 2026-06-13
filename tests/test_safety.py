@@ -3779,6 +3779,7 @@ class PlannerTests(unittest.TestCase):
             "executed": True,
         }
         with patch("jarvis.planner.run_fast_local_chat", return_value=tool_request), \
+             patch("jarvis.planner.contact_data_lookup", return_value={"status": "not_found", "alias": "Sharpay"}), \
              patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock:
             result = Planner().handle("Could you specifically check my email for the newest mail from Sharpay?")
 
@@ -3800,12 +3801,40 @@ class PlannerTests(unittest.TestCase):
             "executed": True,
         }
         with patch("jarvis.planner.run_fast_local_chat", return_value=tool_request), \
+             patch("jarvis.planner.contact_data_lookup", return_value={"status": "not_found", "alias": "Sharpay"}), \
              patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock:
             Planner().handle("Could you specifically check my email for the newest mail from Sharpay?")
 
         kwargs = mail_mock.call_args.kwargs
         self.assertEqual(kwargs["sender_query"], "Sharpay")
         self.assertEqual(kwargs["selection"], "latest")
+
+    def test_email_sender_alias_resolves_before_mail_search(self):
+        fake_result = {"status": "no_matching_messages", "messages": [], "message_count": 0}
+        lookup = {
+            "tool": "contacts.lookup",
+            "status": "found",
+            "alias": "Ms Sharpay",
+            "display_name": "Ms Darbus",
+            "source": "leo",
+        }
+        with patch("jarvis.planner.contact_data_lookup", return_value=lookup) as lookup_mock, \
+             patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock:
+            result = Planner().handle_selected_tool(
+                "Summarize all the emails from Ms Sharpay in the past month.",
+                "outlook.visible_summary",
+                {"sender_query": "Ms Sharpay", "selection": "latest"},
+            )
+            preview = Planner().preview("Summarize all the emails from Ms Sharpay in the past month.")
+
+        self.assertEqual(result.tool, "outlook.visible_summary")
+        lookup_mock.assert_called()
+        kwargs = mail_mock.call_args.kwargs
+        self.assertEqual(kwargs["sender_query"], "Ms Darbus")
+        self.assertIn("Ms Sharpay", kwargs["original_prompt"])
+        self.assertEqual(preview.result["plan"]["sender_query"], "Ms Sharpay")
+        self.assertEqual(preview.result["plan"]["resolved_sender_query"], "Ms Darbus")
+        self.assertEqual(preview.result["plan"]["contact_alias_lookup"]["status"], "found")
 
     def test_email_selection_falls_back_to_original_prompt_for_second_email(self):
         fake_result = {"status": "checked", "messages": [], "message_count": 0}
