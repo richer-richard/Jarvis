@@ -117,6 +117,7 @@ PROOF_ITEMS = [
     "Focused LocalOS tests now prove stale player snapshots return `bridge_not_polling` and tell Leo to open or refresh the Local OS Music Player instead of making a false audible-playback claim.",
     "Live suppressed `Play Waving Through a Window` now returns `Local OS Music is not connected right now` and leaves the LocalOS command queue expired instead of starting or claiming audio.",
     "Focused browser-lane tests now prove Teams URLs choose `chrome_authenticated`, ordinary URLs choose `jarvis_webkit`, and the Swift shell opens Chrome when `open_chrome_to_reuse_login` is set.",
+    "Real Chrome session proof: opening `https://teams.microsoft.com/v2/` in Leo's Chrome reused the existing Microsoft login and landed on `Teams and Channels | General | Microsoft Teams` at `https://teams.cloud.microsoft/`, not a login screen.",
     "Live suppressed Teams-assignment probe returned `teams.assignment` with `preferred_browser_lane=chrome_authenticated`, `visible_browser_lane=jarvis_webkit_panel`, and `copied_chrome_cookies=false`.",
     "Live suppressed Calendar probe returned in 0.0s with `cache_unavailable`, replacing the previous 12-second timeout behavior.",
     "Latest scored cloud-first model comparison: GPT-OSS 120B Cloud scored 5/5, Gemma4 31B Cloud scored 5/5 and was fastest on text, GPT-OSS 20B Cloud was accurate on completed answers but still partial, and Groq Llama 70B was fast but failed safety/math/tool-shape checks.",
