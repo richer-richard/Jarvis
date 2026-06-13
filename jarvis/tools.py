@@ -154,6 +154,7 @@ LOCALOS_MUSIC_SNAPSHOT_MAX_TRACKS = 25
 LOCALOS_MUSIC_LIBRARY_MAX_TRACKS = 500
 LOCALOS_MUSIC_DEFAULT_LIMIT = 10
 LOCALOS_MUSIC_CONTROL_TTL_SECONDS = 90
+LOCALOS_MUSIC_BRIDGE_STALE_SECONDS = 15
 BROWSER_FIELD_DELIMITER = "\n---JARVIS_BROWSER_FIELD---\n"
 BROWSER_PAGE_TEXT_LIMIT = 6000
 CHROME_USER_DATA_DIR = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
@@ -3000,6 +3001,28 @@ def localos_music_play(
             **_duration_fields(started_at),
         }
 
+    bridge_liveness = _localos_music_bridge_liveness()
+    if bridge_liveness.get("status") in {"stale", "not_polling"}:
+        return {
+            **base,
+            "status": "not_queued",
+            "available": True,
+            "source_tool": source_result.get("tool"),
+            "source_status": source_result.get("status"),
+            "selected_track": selected,
+            "playback_confirmation": "bridge_not_polling",
+            "localos_bridge_version": bridge_liveness.get("bridge_version"),
+            "localos_bridge_polling_active": bridge_liveness.get("polling_active"),
+            "localos_bridge_snapshot_age_seconds": bridge_liveness.get("snapshot_age_seconds"),
+            "localos_command_error": bridge_liveness.get("error"),
+            "bridge_recovery": _localos_music_bridge_recovery(),
+            "reply": (
+                f"I found {_localos_music_track_phrase([selected])}, but Local OS Music is not connected right now. "
+                "Open or refresh the Local OS Music Player, then try again."
+            ),
+            **_duration_fields(started_at),
+        }
+
     command = _queue_localos_music_control("play_track", selected, user_request=user_request or query or "")
     confirmation = _localos_music_playback_confirmation(command, selected)
     confirmation_status = str(confirmation.get("status") or "unconfirmed")
@@ -3222,6 +3245,46 @@ def _localos_music_bridge_recovery() -> dict[str, Any]:
         "player_file_url": LOCALOS_MUSIC_PLAYER_PATH.as_uri() if LOCALOS_MUSIC_PLAYER_PATH.exists() else "",
         "shell_file_url": LOCALOS_SHELL_PATH.as_uri() if LOCALOS_SHELL_PATH.exists() else "",
         "next_step": "Open or refresh the Local OS Music Player so it can poll Jarvis music commands.",
+    }
+
+
+def _localos_music_bridge_liveness() -> dict[str, Any]:
+    snapshot_result = _read_localos_music_snapshot_for_tool()
+    snapshot = snapshot_result.get("snapshot") if isinstance(snapshot_result.get("snapshot"), dict) else {}
+    bridge_version = _safe_int(snapshot.get("jarvis_control_bridge_version")) if snapshot else None
+    received_at = _safe_float(snapshot.get("received_at")) if snapshot else None
+    snapshot_age_seconds = round(max(0.0, time.time() - received_at), 3) if received_at is not None else None
+    polling_active = bool(snapshot.get("jarvis_control_polling_active")) if snapshot else False
+    if not bridge_version:
+        return {
+            "status": "unknown",
+            "bridge_version": bridge_version,
+            "polling_active": polling_active,
+            "snapshot_age_seconds": snapshot_age_seconds,
+            "error": snapshot_result.get("error") or "bridge_status_missing",
+        }
+    if snapshot_age_seconds is not None and snapshot_age_seconds > LOCALOS_MUSIC_BRIDGE_STALE_SECONDS:
+        return {
+            "status": "stale",
+            "bridge_version": bridge_version,
+            "polling_active": polling_active,
+            "snapshot_age_seconds": snapshot_age_seconds,
+            "error": "localos_music_window_not_polling_or_not_refreshed",
+        }
+    if not polling_active:
+        return {
+            "status": "not_polling",
+            "bridge_version": bridge_version,
+            "polling_active": polling_active,
+            "snapshot_age_seconds": snapshot_age_seconds,
+            "error": "localos_music_window_not_polling_or_not_refreshed",
+        }
+    return {
+        "status": "live",
+        "bridge_version": bridge_version,
+        "polling_active": polling_active,
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "error": "",
     }
 
 

@@ -1529,6 +1529,38 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(confirmation["snapshot_after_command"])
         self.assertEqual(confirmation["error"], "localos_music_window_not_polling_or_not_refreshed")
 
+    def test_localos_music_play_refuses_to_queue_when_bridge_snapshot_is_stale(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
+            control_path = Path(tmpdir) / "localos_music_control.json"
+            snapshot_path.write_text(json.dumps({
+                "schema": "jarvis.localos.music.snapshot.v1",
+                "source": "localos-music-player",
+                "received_at": time.time() - 60,
+                "all_songs_count": 1,
+                "library_count": 1,
+                "library": [
+                    {
+                        "id": "track-2",
+                        "title": "Waving Through A Window",
+                        "artist": "Dear Evan Hansen",
+                        "relative_path": "localFiles/mp3/Dear Evan Hansen - Waving Through A Window.mp3",
+                    }
+                ],
+                "jarvis_control_bridge_version": 2,
+                "jarvis_control_polling_active": True,
+                "jarvis_control_status": {"bridge_version": 2, "polling_active": True},
+            }), encoding="utf-8")
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
+                 patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path):
+                result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
+
+        self.assertEqual(result["status"], "not_queued")
+        self.assertEqual(result["playback_confirmation"], "bridge_not_polling")
+        self.assertFalse(control_path.exists())
+        self.assertIn("Local OS Music is not connected", result["reply"])
+        self.assertIn("Open or refresh the Local OS Music Player", result["reply"])
+
     def test_localos_music_play_tells_user_when_bridge_did_not_poll(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"

@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.342 refuses to queue LocalOS music playback when the LocalOS Music Player heartbeat is stale, so it no longer claims a song is playing when the player is not connected.",
     "Jarvis 0.1.341 fixes the overnight voice-loop routing gaps: natural `look in Teams...newest Music assignment` prompts now route to the safe Teams plan, Activity Monitor RAM prompts route to memory usage, and dictated `Gemma 3-4 B-model` is repaired to `Gemma 3 4B`.",
     "Jarvis 0.1.340 tightens the browser/session boundary: Chrome login migration routes to `browser.session_strategy`, authenticated URLs are marked as Chrome-session lanes in the Swift browser panel, and Jarvis keeps WebKit for ordinary pages.",
     "The model comparison script now matches the live Jarvis Groq request headers and scores answer quality, so fast-but-wrong model replies no longer look successful just because they returned text.",
@@ -103,12 +104,13 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
-    "Current verification: Python safety suite passed 534/534, Swift self-test passed, and Jarvis 0.1.341 build 341 launched from bundled app resources.",
+    "Current verification: Python safety suite passed 535/535, Swift self-test passed, and Jarvis 0.1.342 build 342 launched from bundled app resources.",
     "Live closed-loop voice QA now passes for the safe example prompts: natural Teams Music assignment planning, Activity Monitor RAM, Codex strong-confirmation, Teams bookmark, browser session strategy, and Gemma 3 4B model-test planning.",
     "The Gemma model-test voice loop now survives local STT hearing `Gemma 3-4 B-model`, repairs the visible reply to `Gemma 3 4B`, routes to `models.test_plan`, and matches spoken output with 1.0 similarity.",
     "The Codex Default-chat prompt voice loop now routes to `policy.strong_confirmation` and says `Command requires strong confirmation and was not executed` instead of sending anything or showing chat-status diagnostics.",
     "Live closed-loop voice QA passed for `Hey Jarvis, open my Teams bookmark`: local STT heard `my team's bookmark`, Jarvis routed `open my team s bookmark`, selected `browser.bookmark_open`, and the spoken reply matched the visible reply with 0.995 similarity.",
     "Focused LocalOS tests now prove stale player snapshots return `bridge_not_polling` and tell Leo to open or refresh the Local OS Music Player instead of making a false audible-playback claim.",
+    "Live suppressed `Play Waving Through a Window` now returns `Local OS Music is not connected right now` and leaves the LocalOS command queue expired instead of starting or claiming audio.",
     "Focused browser-lane tests now prove Teams URLs choose `chrome_authenticated`, ordinary URLs choose `jarvis_webkit`, and the Swift shell opens Chrome when `open_chrome_to_reuse_login` is set.",
     "Live suppressed Teams-assignment probe returned `teams.assignment` with `preferred_browser_lane=chrome_authenticated`, `visible_browser_lane=jarvis_webkit_panel`, and `copied_chrome_cookies=false`.",
     "Live suppressed Calendar probe returned in 0.0s with `cache_unavailable`, replacing the previous 12-second timeout behavior.",
@@ -116,8 +118,8 @@ PROOF_ITEMS = [
     "Jarvis's own GPT-OSS 120B Cloud adapter produced the 少先队 email-style spoken summary in 3.9s after the visible-output budget change.",
     "Voice-loop QA passed for natural Teams assignment planning, RAM usage, model-test planning, browser session strategy, and Calendar fast-fail behavior with speech suppressed.",
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
-    "Latest local checkpoint commits record the browser/session, music-recovery, model-scoring, report-proof, and voice-loop routing hardening; the branch has not been pushed while Leo is asleep.",
-    "Python safety suite: 534/534 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, and voice-QA work.",
+    "Latest local checkpoint commits record the browser/session, music-recovery, model-scoring, report-proof, voice-loop routing, and LocalOS stale-bridge hardening; the branch has not been pushed while Leo is asleep.",
+    "Python safety suite: 535/535 passed after the wake, mute, final-speech, report-route, speech-alignment, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, music-bridge, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
@@ -193,7 +195,7 @@ TRY_ITEMS = [
 ]
 
 RISK_ITEMS = [
-    "Jarvis 0.1.341 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
+    "Jarvis 0.1.342 cannot yet read Calendar from the live app identity; it now fails fast, but Leo may need to grant the current Jarvis/Python app identity Calendar or Full Disk access for actual schedules.",
     "The LocalOS music page likely needs a reload to pick up the new playback-state bridge; Jarvis now reports that honestly as `bridge_not_polling`, but live audible playback was not triggered while Leo was asleep.",
     "MacBook Air remote-worker probing currently reaches the SSH target but does not return the expected worker response, so Jarvis should ask before running model tests locally.",
     "Groq works as Jarvis's fast conversation model, but the scored middle-model comparison showed it should not be trusted for safety-sensitive planning without stronger prompting or a safer model layer.",
