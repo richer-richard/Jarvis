@@ -40,6 +40,7 @@ from .tools import (
     git_remote_status,
     launch_status,
     localos_music_choose_from_your_pick,
+    localos_music_play,
     latest_latency_status,
     localos_music_recommendations,
     localos_music_search,
@@ -111,6 +112,20 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": [],
     },
     {
+        "tool": "localos.music_play",
+        "description": "Play a named song or a chosen Your Pick song through the Local OS Music Player. Use when the user asks to play, queue, start, or listen to music; Jarvis only queues the command and LocalOS plays the audio.",
+        "entities": ["query", "from_your_pick", "limit"],
+        "entity_details": {
+            "query": "Song title, artist, or phrase to search for. Leave empty when from_your_pick is true.",
+            "from_your_pick": "True when Leo asks to play something from Your Pick or recommended songs.",
+            "limit": "Optional number of candidates to search or choose from, default 10.",
+        },
+        "examples": [
+            'Playing that through Local OS now. \\tool({"tool":"localos.music_play","entities":{"query":"Waving Through A Window","limit":5}})',
+            'Choosing something from Your Pick now. \\tool({"tool":"localos.music_play","entities":{"from_your_pick":true,"limit":12}})',
+        ],
+    },
+    {
         "tool": "localos.music_recommendations",
         "description": "Read Leo's Local OS Music Player Your Pick recommended songs snapshot. Use only when the user asks for Recommended Songs, Your Pick, music picks, or local music recommendations. Do not use this for a named song request.",
         "entities": ["limit"],
@@ -135,7 +150,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "localos.music_search",
-        "description": "Search Leo's full Local OS Music library snapshot by title, artist, filename, or group. Use only when the user asks Jarvis to find, search for, play, queue, or look up a named song or piece of music.",
+        "description": "Search Leo's full Local OS Music library snapshot by title, artist, filename, or group. Use for find/search/look up requests; use localos.music_play for actual play, queue, start, or listen requests.",
         "entities": ["query", "limit"],
         "entity_details": {
             "query": "Song title, artist, or phrase to search for. For 'play Waving Through A Window', query should be 'Waving Through A Window'.",
@@ -993,18 +1008,26 @@ class Planner:
             return self._result(text, "diagnostics.email", "Read local email backend status without reading email content.", assessment, email_backend_status(), True)
         if selected_tool == "localos.music_recommendations":
             if _looks_like_your_pick_choice(text):
-                selected_tool = "localos.music_choose_from_your_pick"
+                selected_tool = "localos.music_play" if _looks_like_music_play_request(text) else "localos.music_choose_from_your_pick"
                 intent = {
                     **intent,
                     "selected_tool": selected_tool,
                     "rerouted_from": "localos.music_recommendations",
-                    "reroute_reason": "Generic Your Pick listening requests should be chosen from candidates by the model.",
+                    "reroute_reason": (
+                        "Generic Your Pick play requests should queue playback through Local OS."
+                        if selected_tool == "localos.music_play"
+                        else "Generic Your Pick listening requests should be chosen from candidates by the model."
+                    ),
                 }
-                entities = intent["entities"] if isinstance(intent.get("entities"), dict) else entities
+                entities = {
+                    **(intent["entities"] if isinstance(intent.get("entities"), dict) else entities),
+                    **({"from_your_pick": True} if selected_tool == "localos.music_play" else {}),
+                }
+                intent["entities"] = entities
             else:
                 search_query = _extract_music_search_query(text)
                 if search_query:
-                    selected_tool = "localos.music_search"
+                    selected_tool = "localos.music_play" if _looks_like_music_play_request(text) else "localos.music_search"
                     intent = {
                         **intent,
                         "selected_tool": selected_tool,
@@ -1013,7 +1036,11 @@ class Planner:
                             "query": search_query,
                         },
                         "rerouted_from": "localos.music_recommendations",
-                        "reroute_reason": "Named song/music requests should search the library, not summarize Your Pick.",
+                        "reroute_reason": (
+                            "Named song play requests should queue playback through Local OS."
+                            if selected_tool == "localos.music_play"
+                            else "Named song/music requests should search the library, not summarize Your Pick."
+                        ),
                     }
                     entities = intent["entities"]
                 else:
@@ -1034,8 +1061,51 @@ class Planner:
                         localos_music_recommendations(limit=limit),
                         True,
                     )
+        if selected_tool == "localos.music_play":
+            limit = _positive_entity_int(entities.get("limit"))
+            from_your_pick = _bool_entity(entities.get("from_your_pick")) or _looks_like_your_pick_choice(text)
+            query = _clean_optional_entity(entities.get("query")) or _extract_music_search_query(text)
+            if not execute:
+                return self._preview_result(
+                    text,
+                    "localos.music_play",
+                    assessment,
+                    True,
+                    plan={"intent": intent, "query": query, "from_your_pick": from_your_pick, "limit": limit},
+                )
+            play_result = localos_music_play(query=query, user_request=text, from_your_pick=from_your_pick, limit=limit)
+            return self._result(
+                text,
+                "localos.music_play",
+                "Queued Local OS Music playback." if play_result.get("status") == "queued" else "Tried Local OS Music playback.",
+                assessment,
+                play_result,
+                True,
+            )
         if selected_tool == "localos.music_choose_from_your_pick":
             limit = _positive_entity_int(entities.get("limit"))
+            if _looks_like_music_play_request(text):
+                if not execute:
+                    return self._preview_result(
+                        text,
+                        "localos.music_play",
+                        assessment,
+                        True,
+                        plan={"intent": intent, "from_your_pick": True, "limit": limit},
+                    )
+                play_result = localos_music_play(user_request=text, from_your_pick=True, limit=limit)
+                return self._result(
+                    text,
+                    "localos.music_play",
+                    (
+                        "Queued Local OS Music playback from Your Pick."
+                        if play_result.get("status") == "queued"
+                        else "Tried Local OS Music playback from Your Pick."
+                    ),
+                    assessment,
+                    play_result,
+                    True,
+                )
             if not _looks_like_your_pick_choice(text):
                 if not execute:
                     return self._preview_result(
@@ -1081,6 +1151,28 @@ class Planner:
             query = _clean_optional_entity(entities.get("query")) or _extract_music_search_query(text) or text
             if _looks_like_your_pick_choice(query) or _looks_like_your_pick_choice(text):
                 limit = _positive_entity_int(entities.get("limit"))
+                if _looks_like_music_play_request(text):
+                    if not execute:
+                        return self._preview_result(
+                            text,
+                            "localos.music_play",
+                            assessment,
+                            True,
+                            plan={"intent": intent, "from_your_pick": True, "limit": limit},
+                        )
+                    play_result = localos_music_play(user_request=text, from_your_pick=True, limit=limit)
+                    return self._result(
+                        text,
+                        "localos.music_play",
+                        (
+                            "Queued Local OS Music playback from Your Pick."
+                            if play_result.get("status") == "queued"
+                            else "Tried Local OS Music playback from Your Pick."
+                        ),
+                        assessment,
+                        play_result,
+                        True,
+                    )
                 if not execute:
                     return self._preview_result(
                         text,
@@ -1098,6 +1190,24 @@ class Planner:
                     True,
                 )
             limit = _positive_entity_int(entities.get("limit"))
+            if _looks_like_music_play_request(text):
+                if not execute:
+                    return self._preview_result(
+                        text,
+                        "localos.music_play",
+                        assessment,
+                        True,
+                        plan={"intent": intent, "query": query, "limit": limit},
+                    )
+                play_result = localos_music_play(query=query, user_request=text, limit=limit)
+                return self._result(
+                    text,
+                    "localos.music_play",
+                    "Queued Local OS Music playback." if play_result.get("status") == "queued" else "Tried Local OS Music playback.",
+                    assessment,
+                    play_result,
+                    True,
+                )
             if not execute:
                 return self._preview_result(
                     text,
@@ -1959,6 +2069,11 @@ def _looks_like_your_pick_choice(text: str) -> bool:
     return mentions_pick and asks_choice
 
 
+def _looks_like_music_play_request(text: str) -> bool:
+    lowered = re.sub(r"\s+", " ", str(text or "").lower())
+    return bool(re.search(r"\b(?:play|queue|start|put on|listen to)\b", lowered))
+
+
 def _looks_like_browser_url_request(text: str) -> bool:
     if not _extract_url(text):
         return False
@@ -1972,6 +2087,12 @@ def _clean_optional_entity(value: Any) -> str | None:
     if not text or text.lower() in {"null", "none", "unknown", "n/a"}:
         return None
     return text[:120]
+
+
+def _bool_entity(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _extract_handoff_tool_id(text: str) -> str:

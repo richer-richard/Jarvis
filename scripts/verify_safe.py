@@ -141,7 +141,16 @@ def get_json(path: str, timeout: int = 20, base_url: str = BASE_URL) -> Any:
         return json.loads(response.read().decode("utf-8"))
 
 
-def post_json(path: str, payload: dict[str, Any], timeout: int = 20, base_url: str = BASE_URL) -> Any:
+def post_json(
+    path: str,
+    payload: dict[str, Any],
+    timeout: int = 20,
+    base_url: str = BASE_URL,
+    *,
+    allow_speech: bool = False,
+) -> Any:
+    if path == "/api/command" and not allow_speech and "suppress_speech" not in payload and "speak" not in payload:
+        payload = {**payload, "suppress_speech": True}
     request = urllib.request.Request(
         f"{base_url}{path}",
         data=json.dumps(payload).encode("utf-8"),
@@ -1291,7 +1300,7 @@ def check_endpoint_speech_mute(base_url: str) -> str:
         speech = post_json("/api/speech/status", {"text": "Verifier should stay quiet."}, base_url=base_url)
         speech_status = (speech.get("speech") or {}).get("status")
         require(speech.get("executed") is False and speech_status == "muted", f"speech status was {speech}")
-        final = post_json("/api/command", {"command": "status"}, base_url=base_url)
+        final = post_json("/api/command", {"command": "status"}, base_url=base_url, allow_speech=True)
         final_speech = final.get("speech") or {}
         final_reply = (final.get("result") or {}).get("reply")
         require(final.get("tool") == "system.status", f"final speech command tool was {final.get('tool')}")

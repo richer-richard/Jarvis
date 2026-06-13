@@ -33,6 +33,7 @@ from .safety import classify_command, policy_summary
 from .self_check import run_self_checks
 from .tools import (
     codex_activity_snapshot,
+    localos_music_pending_control,
     store_localos_music_snapshot,
     outlook_visible_text_summary,
     prewarm_tts_async,
@@ -378,6 +379,7 @@ class JarvisServer:
                     "GET /api/audit",
                     "GET /api/self-check",
                     "GET /api/speech/mute",
+                    "GET /api/integrations/localos/music/control",
                     "GET /overnight-report/",
                     "GET /overnight-workboard/",
                     "HEAD /overnight-report/",
@@ -649,6 +651,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
             return f"Checking {app_name} now."
     labels = {
         "outlook.visible_summary": "Checking your email now.",
+        "localos.music_play": "Playing that through Local OS now.",
         "localos.music_recommendations": "Checking your music picks now.",
         "localos.music_choose_from_your_pick": "Choosing from Your Pick now.",
         "localos.music_search": "Looking through your music library now.",
@@ -853,6 +856,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         if route.path == "/api/speech/mute":
             self._send_json(STATE.speech_mute_status(), head_only=head_only)
+            return
+        if route.path == "/api/integrations/localos/music/control":
+            query = parse_qs(route.query)
+            since = str(query.get("since", [""])[0] or "")
+            self._send_json(localos_music_pending_control(since=since), head_only=head_only, cors=True)
             return
         if route.path == "/api/wake-audition/status":
             self._send_json(wake_audition_status(), head_only=head_only)
@@ -1067,12 +1075,19 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not head_only:
             self.wfile.write(content)
 
-    def _send_json(self, data: Any, status: HTTPStatus = HTTPStatus.OK, *, head_only: bool = False) -> None:
+    def _send_json(
+        self,
+        data: Any,
+        status: HTTPStatus = HTTPStatus.OK,
+        *,
+        head_only: bool = False,
+        cors: bool = False,
+    ) -> None:
         content = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
-        self._send_common_headers()
+        self._send_common_headers(cors=cors)
         self.end_headers()
         if not head_only:
             self.wfile.write(content)
@@ -1092,9 +1107,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
 
-    def _send_common_headers(self, *, style_src: str = "'self'") -> None:
+    def _send_common_headers(self, *, style_src: str = "'self'", cors: bool = False) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "no-store")
+        if cors:
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; "
@@ -1440,6 +1457,16 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
         }
         safe["music_match_details_omitted"] = True
         safe["match_count"] = len(result.get("matches") or []) if isinstance(result.get("matches"), list) else 0
+        return safe
+
+    if tool == "localos.music_play":
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key not in {"selected_track", "control", "reply"}
+        }
+        safe["music_play_details_omitted"] = True
+        safe["queued"] = result.get("status") == "queued"
         return safe
 
     if tool == "localos.music_choose_from_your_pick":

@@ -2211,7 +2211,20 @@ final class JarvisShellModel: ObservableObject {
         }
         let prefixLength = min(80, spoken.count)
         let spokenPrefix = String(spoken.prefix(prefixLength))
-        return heard.contains(spokenPrefix) && spokenPrefix.count >= 12
+        if heard.contains(spokenPrefix) && spokenPrefix.count >= 12 {
+            return true
+        }
+        return speechEchoTokenOverlap(heard, spoken) >= 0.6
+    }
+
+    private static func speechEchoTokenOverlap(_ heard: String, _ spoken: String) -> Double {
+        let heardTokens = heard.split(separator: " ").map(String.init)
+        let spokenTokens = Set(spoken.split(separator: " ").map(String.init))
+        guard heardTokens.count >= 2, !spokenTokens.isEmpty else {
+            return 0
+        }
+        let matched = heardTokens.filter { spokenTokens.contains($0) }.count
+        return Double(matched) / Double(heardTokens.count)
     }
 
     private static func looksLikeWakeOrCapturedCommand(_ transcript: String, command: String, transcript capturedTranscript: String) -> Bool {
