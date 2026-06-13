@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.367 fixes dictated Chrome-login routing: STT-shaped phrases like `chrome log and steer browser` now go to the safe Chrome-session strategy instead of accidentally importing bookmarks.",
     "Jarvis 0.1.366 fixes a LocalOS Chrome-direct false-accepted path: if Chrome rejects or fails playback, Jarvis no longer lets a delayed status update overwrite that failure as `accepted`.",
     "Jarvis 0.1.365 hardens speech interruption: the wake listener now ignores tiny transcript noise, captured-command echoes, and Jarvis's own spoken output before it calls Stop Speaking.",
     "Jarvis 0.1.364 fixes the spoken Calendar route: `check my calendar for my schedule today` now reads the Calendar schedule path instead of opening the Calendar app.",
@@ -953,7 +954,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 445/445 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 562/562 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",

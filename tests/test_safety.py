@@ -4649,16 +4649,24 @@ Pages occupied by compressor:             10.
         result = Planner().handle("can you migrate Chrome login to Jarvis browser?")
         preview = Planner().preview("I am logged in on Chrome; can Jarvis use that without making me login again?")
         already_logged_in = Planner().handle("Since I am already logged in to many sites on Chrome, can you migrate that to our browser?")
+        dictated_login = Planner().handle("can you migrate my chrome log and steer browser")
+        dictated_preview = Planner().preview("Hey Jarvis, can you migrate my Chrome logins to your browser?")
+        bookmarks = Planner().preview("import my Chrome bookmarks")
 
         self.assertEqual(result.tool, "browser.session_strategy")
         self.assertTrue(result.executed)
         self.assertEqual(preview.tool, "browser.session_strategy")
         self.assertEqual(already_logged_in.tool, "browser.session_strategy")
+        self.assertEqual(dictated_login.tool, "browser.session_strategy")
+        self.assertEqual(dictated_preview.tool, "browser.session_strategy")
+        self.assertEqual(bookmarks.tool, "browser.bookmarks_import")
         self.assertIn("signed-in Chrome", result.result["spoken_summary"])
         self.assertFalse(already_logged_in.result["can_migrate_chrome_logged_in_state"])
         self.assertFalse(already_logged_in.result["copied_chrome_cookies"])
         self.assertEqual(already_logged_in.result["recommended_authenticated_lane"], "chrome")
         self.assertTrue(already_logged_in.result["authenticated_handoff_available"])
+        self.assertFalse(dictated_login.result["copied_chrome_cookies"])
+        self.assertIn("cannot migrate existing Chrome logins", dictated_login.result["reply"])
 
     def test_browser_status_reports_live_webkit_without_cookie_migration(self):
         with patch("jarvis.tools.app_status", side_effect=[

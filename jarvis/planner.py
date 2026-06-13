@@ -739,6 +739,8 @@ class Planner:
                 result,
                 bool(result.get("executed")),
             )
+        if _looks_like_browser_session_strategy_request(lower):
+            return self._result(text, "browser.session_strategy", "Checked browser session strategy.", assessment, browser_session_strategy(text), True)
         if _looks_like_chrome_bookmarks_import_request(lower):
             return self._result(text, "browser.bookmarks_import", "Imported Chrome bookmarks locally.", assessment, chrome_bookmarks_import(), True)
         if _looks_like_chrome_bookmarks_status_request(lower):
@@ -751,6 +753,8 @@ class Planner:
             return self._result(text, "browser.bookmarks_search", "Searched imported Chrome bookmarks.", assessment, chrome_bookmarks_search(bookmark_search_query), True)
         if _looks_like_browser_search_request(lower):
             return self._result(text, "browser.search_web", "Prepared browser search plan.", assessment, browser_search_plan(_extract_browser_search_query(text)), False)
+        if _looks_like_builtin_browser_plan_request(lower):
+            return self._result(text, "browser.built_in_plan", "Prepared built-in browser plan.", assessment, browser_built_in_plan(text), True)
         if lower.startswith("find ") or (lower.startswith("search ") and not _looks_like_browser_search_request(lower)):
             query = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
             return self._result(text, "files.search", "Searched project files by name.", assessment, find_files(query), True)
@@ -855,6 +859,8 @@ class Planner:
             return self._result(text, "diagnostics.capabilities", "Read local Jarvis capability status.", assessment, capabilities_status(), True)
         if _looks_like_safety_status(lower):
             return self._result(text, "diagnostics.safety", "Read local Jarvis safety status.", assessment, safety_status(), True)
+        if _looks_like_browser_session_strategy_request(lower):
+            return self._result(text, "browser.session_strategy", "Checked browser session strategy.", assessment, browser_session_strategy(text), True)
         if _looks_like_chrome_bookmarks_import_request(lower):
             return self._result(text, "browser.bookmarks_import", "Imported Chrome bookmarks locally.", assessment, chrome_bookmarks_import(), True)
         if _looks_like_chrome_bookmarks_status_request(lower):
@@ -873,8 +879,6 @@ class Planner:
             return self._result(text, "browser.read_page", "Read current Chrome page locally.", assessment, browser_read_page(), True)
         if _looks_like_browser_search_request(lower):
             return self._result(text, "browser.search_web", "Prepared browser search plan.", assessment, browser_search_plan(_extract_browser_search_query(text)), False)
-        if _looks_like_browser_session_strategy_request(lower):
-            return self._result(text, "browser.session_strategy", "Checked browser session strategy.", assessment, browser_session_strategy(text), True)
         if _looks_like_builtin_browser_plan_request(lower):
             return self._result(text, "browser.built_in_plan", "Prepared built-in browser plan.", assessment, browser_built_in_plan(text), True)
         if _looks_like_your_pick_choice(text):
@@ -1102,6 +1106,8 @@ class Planner:
             )
         if _looks_like_codex_speed_status(lower):
             return self._preview_result(text, "diagnostics.codex_speed", assessment, True)
+        if _looks_like_browser_session_strategy_request(lower):
+            return self._preview_result(text, "browser.session_strategy", assessment, True, plan={"goal": text})
         if _looks_like_chrome_bookmarks_import_request(lower):
             return self._preview_result(text, "browser.bookmarks_import", assessment, True, plan={"reads": "chrome_bookmark_files", "writes": "local_jarvis_snapshot"})
         if _looks_like_chrome_bookmarks_status_request(lower):
@@ -1114,6 +1120,8 @@ class Planner:
             return self._preview_result(text, "browser.bookmarks_search", assessment, True, plan={"query": bookmark_search_query})
         if _looks_like_browser_search_request(lower):
             return self._preview_result(text, "browser.search_web", assessment, False, plan={"query": _extract_browser_search_query(text)})
+        if _looks_like_builtin_browser_plan_request(lower):
+            return self._preview_result(text, "browser.built_in_plan", assessment, True, plan={"goal": text})
         if lower.startswith("find ") or (lower.startswith("search ") and not _looks_like_browser_search_request(lower)):
             return self._preview_result(text, "files.search", assessment, True)
         if _looks_like_calendar_schedule_request(lower):
@@ -1195,6 +1203,8 @@ class Planner:
             return self._preview_result(text, "diagnostics.safety", assessment, True)
         if lower in {"status", "health", "check status", "jarvis status"}:
             return self._preview_result(text, "system.status", assessment, True)
+        if _looks_like_browser_session_strategy_request(lower):
+            return self._preview_result(text, "browser.session_strategy", assessment, True, plan={"goal": text})
         if _looks_like_chrome_bookmarks_import_request(lower):
             return self._preview_result(text, "browser.bookmarks_import", assessment, True, plan={"reads": "chrome_bookmark_files", "writes": "local_jarvis_snapshot"})
         if _looks_like_chrome_bookmarks_status_request(lower):
@@ -1213,8 +1223,6 @@ class Planner:
             return self._preview_result(text, "browser.read_page", assessment, True, plan={"reads": "bounded_active_chrome_page_text", "local_only": True})
         if _looks_like_browser_search_request(lower):
             return self._preview_result(text, "browser.search_web", assessment, False, plan={"query": _extract_browser_search_query(text)})
-        if _looks_like_browser_session_strategy_request(lower):
-            return self._preview_result(text, "browser.session_strategy", assessment, True, plan={"goal": text})
         if _looks_like_builtin_browser_plan_request(lower):
             return self._preview_result(text, "browser.built_in_plan", assessment, True, plan={"goal": text})
         if _looks_like_your_pick_choice(text):
@@ -2688,15 +2696,29 @@ def _looks_like_browser_search_request(lower: str) -> bool:
 
 
 def _looks_like_browser_session_strategy_request(lower: str) -> bool:
-    if "chrome" not in lower and "logged in" not in lower and "login" not in lower:
+    if "chrome" not in lower and "logged in" not in lower and "login" not in lower and "log in" not in lower:
         return False
     return any(
         phrase in lower
         for phrase in (
             "migrate chrome",
+            "migrate my chrome",
             "reuse chrome",
             "use chrome login",
             "use my chrome login",
+            "chrome login",
+            "chrome log in",
+            "chrome logins",
+            "chrome login state",
+            "chrome logged in state",
+            "chrome logged-in state",
+            "chrome log and steer browser",
+            "chrome log into your browser",
+            "chrome log into jarvis browser",
+            "chrome login to your browser",
+            "chrome logins to your browser",
+            "chrome login to jarvis browser",
+            "chrome logins to jarvis browser",
             "copy chrome cookies",
             "chrome cookies",
             "chrome session",
