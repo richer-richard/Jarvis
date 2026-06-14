@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.428 polishes LocalOS music replies: approximate song matches now say `closest LocalOS match` instead of `closest LocalOS file`, keeping the answer honest without sounding like filesystem debug output.",
     "Jarvis 0.1.427 makes Calendar answers more speakable: schedule summaries now use clean English course names and natural times like `8 AM`, while raw event details stay in structured diagnostics.",
     "Jarvis 0.1.426 makes Shut Up persistent: speech mute now survives worker restarts, app relaunches, and rebuilds by loading `runtime/state/speech_mute.json` on startup.",
     "Jarvis 0.1.425 makes the real app's Teams follow-up less brittle: after opening signed-in Chrome, native visible-screen OCR now retries up to four times and stops early once useful assignment/page text appears.",
@@ -171,6 +172,13 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.428 build 428 launched from bundled app resources with worker_launch_matches_bundle=true and exactly one app, one parent-bound status helper, and one worker.",
+    "Focused LocalOS music tests passed 5/5 after the 0.1.428 closest-match wording polish.",
+    "Full Python safety suite passed 621/621 after the 0.1.428 build.",
+    "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-051951.json`.",
+    "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-052733.json` after the 0.1.428 build.",
+    "Live eight-prompt speech-audit matrix passed 8/8 at `runtime/regression_prompt_matrix/20260615-052819/summary.json` on Jarvis 0.1.428 using explicit `--no-permission-prompts --stt-provider local` flags.",
+    "Live 0.1.428 music probe stayed muted and suppressed audio actions: `Play Waving Through a Window` returned `I found the closest LocalOS match...` with `jarvis_played_audio=false`.",
     "Live Jarvis 0.1.427 build 427 launched from bundled app resources with worker_launch_matches_bundle=true and exactly one app, one parent-bound status helper, and one worker.",
     "Full Python safety suite passed 621/621 after the 0.1.427 Calendar speech polish.",
     "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-045256.json`.",
@@ -927,6 +935,9 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.428", "Live app is bundled, launched, and reports Jarvis 0.1.428 build 428."),
+        ("done", "Polish LocalOS music wording", "Approximate music matches now say closest LocalOS match instead of closest LocalOS file."),
+        ("done", "Verify 0.1.428 prompt matrix", "The reusable quiet matrix passed 8/8 at runtime/regression_prompt_matrix/20260615-052819/summary.json."),
         ("done", "Ship Jarvis 0.1.427", "Live app is bundled, launched, and reports Jarvis 0.1.427 build 427."),
         ("done", "Polish Calendar speech", "Calendar summaries now strip Chinese course labels from visible/spoken replies and use natural AM/PM times."),
         ("done", "Ship Jarvis 0.1.426", "Live app is bundled, launched, and reports Jarvis 0.1.426 build 426."),

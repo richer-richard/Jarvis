@@ -1703,7 +1703,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["source_status"], "matched")
         self.assertEqual(result["selected_track"]["file_name"], "Dear Evan Hansen.mp3")
         self.assertEqual(result["selected_track"]["match_kind"], "alias")
-        self.assertIn("closest LocalOS file", result["reply"])
+        self.assertIn("closest LocalOS match", result["reply"])
         self.assertEqual(pending["status"], "available")
         self.assertEqual(pending["command"]["track"]["file_name"], "Dear Evan Hansen.mp3")
 

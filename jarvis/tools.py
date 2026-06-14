@@ -3055,7 +3055,7 @@ def localos_music_search(query: str, limit: int | str | None = None) -> dict[str
     if matches:
         first = matches[0]
         if first.get("match_kind") == "alias":
-            reply = f"I found the closest Local OS file: {_localos_music_track_phrase([first])}."
+            reply = f"I found the closest LocalOS match: {_localos_music_track_phrase([first])}."
         else:
             confidence = "strong" if first.get("score", 0) >= 85 else "possible"
             reply = f"I found {confidence} match: {_localos_music_track_phrase([first])}."
@@ -4617,7 +4617,7 @@ def _localos_music_track_phrase(tracks: list[dict[str, Any]]) -> str:
 def _localos_music_found_phrase(track: dict[str, Any]) -> str:
     phrase = _localos_music_track_phrase([track])
     if track.get("match_kind") == "alias":
-        return f"the closest LocalOS file, {phrase}"
+        return f"the closest LocalOS match, {phrase}"
     return phrase
 
 
