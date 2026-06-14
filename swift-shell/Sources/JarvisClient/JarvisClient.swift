@@ -173,6 +173,30 @@ public struct JarvisClient: Sendable {
         return try await perform(request, as: CommandResponse.self)
     }
 
+    public func stopMusic() async throws -> CommandResponse {
+        var request = URLRequest(url: commandURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = Self.quickTimeout
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["command": "stop the music", "suppress_speech": true],
+            options: []
+        )
+        return try await perform(request, as: CommandResponse.self)
+    }
+
+    public func unmuteSystemAudio() async throws -> CommandResponse {
+        var request = URLRequest(url: commandURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = Self.quickTimeout
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["command": "unmute system audio", "suppress_speech": true],
+            options: []
+        )
+        return try await perform(request, as: CommandResponse.self)
+    }
+
     private static func commandBody(command: String, history: [[String: String]]) throws -> Data {
         var payload: [String: Any] = ["command": command]
         if !history.isEmpty {

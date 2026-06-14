@@ -258,6 +258,66 @@ final class JarvisShellModel: ObservableObject {
         }
     }
 
+    func stopMusic() {
+        state = "Stopping Music"
+        chatExportText = "Stopping music..."
+        Task {
+            do {
+                _ = try await sendStopMusic()
+                state = "Ready"
+                chatExportText = "Music stop sent"
+                messages.append(ChatMessage(role: .system, text: "Jarvis sent the music stop command."))
+            } catch {
+                state = "Error"
+                chatExportText = "Music stop failed"
+                messages.append(ChatMessage(role: .jarvis, text: "I could not stop music: \(error)"))
+            }
+        }
+    }
+
+    func unmuteAudio() {
+        state = "Unmuting Audio"
+        chatExportText = "Unmuting audio..."
+        Task {
+            do {
+                _ = try await sendUnmuteAudio()
+                state = "Ready"
+                chatExportText = "Audio unmute sent"
+                messages.append(ChatMessage(role: .system, text: "Jarvis sent the system audio unmute command."))
+            } catch {
+                state = "Error"
+                chatExportText = "Audio unmute failed"
+                messages.append(ChatMessage(role: .jarvis, text: "I could not unmute audio: \(error)"))
+            }
+        }
+    }
+
+    private func sendStopMusic() async throws -> CommandResponse {
+        do {
+            return try await client.stopMusic()
+        } catch {
+            let startup = await workerSupervisor.ensureRunning()
+            workerText = startup.description
+            guard startup.isReady else {
+                throw ShellModelError.workerUnavailable(startup.description)
+            }
+            return try await client.stopMusic()
+        }
+    }
+
+    private func sendUnmuteAudio() async throws -> CommandResponse {
+        do {
+            return try await client.unmuteSystemAudio()
+        } catch {
+            let startup = await workerSupervisor.ensureRunning()
+            workerText = startup.description
+            guard startup.isReady else {
+                throw ShellModelError.workerUnavailable(startup.description)
+            }
+            return try await client.unmuteSystemAudio()
+        }
+    }
+
     private func refreshSpeechMuteStatus() async {
         do {
             applySpeechMuteResponse(try await client.speechMuteStatus())

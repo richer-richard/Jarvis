@@ -1779,6 +1779,12 @@ class PlannerTests(unittest.TestCase):
                      f"/usr/bin/afplay /usr/bin/afplay {audio_path}",
                      "",
                  ]), \
+                 patch("jarvis.tools._pause_local_music_sources", return_value={
+                     "executed": True,
+                     "ok": True,
+                     "paused": False,
+                     "surfaces": [],
+                 }), \
                  patch("jarvis.tools.os.kill") as kill_mock:
                 result = localos_music_stop()
 
@@ -1806,6 +1812,12 @@ class PlannerTests(unittest.TestCase):
             with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
                  patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path), \
                  patch("jarvis.tools._stop_localos_native_music", return_value={"was_running": False, "stopped_process": {"stopped": False}}), \
+                 patch("jarvis.tools._pause_local_music_sources", return_value={
+                     "executed": True,
+                     "ok": True,
+                     "paused": False,
+                     "surfaces": [],
+                 }), \
                  patch("jarvis.tools._localos_music_control_confirmation", return_value={
                      "status": "paused",
                      "bridge_version": 4,
@@ -1823,7 +1835,105 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(pending["status"], "available")
         self.assertEqual(pending["command"]["action"], "pause")
         self.assertNotIn("track", pending["command"])
-        self.assertEqual(result["reply"], "Stopped Jarvis music playback.")
+        self.assertEqual(result["reply"], "Stopped music playback.")
+
+    def test_localos_music_stop_uses_system_media_pause_when_bridge_is_not_polling(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            control_path = Path(tmpdir) / "localos_music_control.json"
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path), \
+                 patch("jarvis.tools._stop_localos_native_music", return_value={"was_running": False, "stopped_process": {"stopped": False}}), \
+                 patch("jarvis.tools._pause_local_music_sources", return_value={
+                     "executed": True,
+                     "ok": True,
+                     "paused": True,
+                     "surfaces": ["Google Chrome"],
+                 }), \
+                 patch("jarvis.tools._localos_music_control_confirmation", return_value={
+                     "status": "bridge_not_polling",
+                     "bridge_version": 4,
+                     "polling_active": False,
+                     "latest_command_id": "music-stop-test",
+                     "latest_command_status": "failed",
+                     "error": "localos_music_window_not_polling_or_not_refreshed",
+                 }):
+                result = localos_music_stop()
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertTrue(result["interrupted_previous"])
+        self.assertTrue(result["system_media_stop"]["paused"])
+        self.assertEqual(result["system_media_stop"]["surfaces"], ["Google Chrome"])
+        self.assertEqual(result["reply"], "Stopped music playback.")
+
+    def test_localos_music_stop_mutes_system_output_when_browser_pause_is_blocked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            control_path = Path(tmpdir) / "localos_music_control.json"
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path), \
+                 patch("jarvis.tools._stop_localos_native_music", return_value={"was_running": False, "stopped_process": {"stopped": False}}), \
+                 patch("jarvis.tools._pause_local_music_sources", return_value={
+                     "executed": True,
+                     "ok": False,
+                     "paused": False,
+                     "surfaces": [],
+                     "stderr": "Access not allowed. (-1723)",
+                 }), \
+                 patch("jarvis.tools._set_system_output_muted", return_value={
+                     "executed": True,
+                     "ok": True,
+                     "muted": True,
+                     "stderr": "",
+                     "returncode": 0,
+                 }) as mute_mock, \
+                 patch("jarvis.tools._localos_music_control_confirmation", return_value={
+                     "status": "bridge_not_polling",
+                     "bridge_version": 4,
+                     "polling_active": False,
+                     "latest_command_id": "music-stop-test",
+                     "latest_command_status": "failed",
+                     "error": "localos_music_window_not_polling_or_not_refreshed",
+                 }):
+                result = localos_music_stop()
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertTrue(result["interrupted_previous"])
+        self.assertTrue(result["system_output_mute"]["muted"])
+        self.assertEqual(result["reply"], "Stopped music playback.")
+        mute_mock.assert_called_once_with(True)
+
+    def test_localos_music_system_pause_does_not_read_browser_page_text(self):
+        with patch("jarvis.tools._run_osascript", return_value={
+            "ok": True,
+            "executed": True,
+            "stdout": "Google Chrome\nMusic",
+            "stderr": "",
+            "returncode": 0,
+        }) as script_mock:
+            result = jarvis_tools._pause_local_music_sources()
+
+        script = script_mock.call_args.args[0]
+        self.assertTrue(result["paused"])
+        self.assertEqual(result["surfaces"], ["Google Chrome", "Music"])
+        self.assertIn("execute javascript", script)
+        self.assertIn("querySelectorAll('audio,video')", script)
+        self.assertIn("LocalOSMusicPlayer.pause", script)
+        self.assertIn('tell application "Music"', script)
+        self.assertNotIn("innerText", script)
+        self.assertNotIn("outerHTML", script)
+        self.assertNotIn("document.body", script)
+
+    def test_quick_local_control_can_unmute_system_audio(self):
+        with patch("jarvis.tools._set_system_output_muted", return_value={
+            "executed": True,
+            "ok": True,
+            "muted": False,
+            "stderr": "",
+            "returncode": 0,
+        }) as mute_mock:
+            result = quick_local_control("unmute system audio")
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["action"], "audio.unmute")
+        self.assertEqual(result["reply"], "System audio unmuted.")
+        mute_mock.assert_called_once_with(False)
 
     def test_localos_music_confirmation_requires_audio_playing_flag(self):
         snapshot = {
@@ -7886,9 +7996,25 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn('"Shut Up"', helper_source)
         self.assertIn('"Keep Blabbering"', helper_source)
+        self.assertIn('"Stop Music"', helper_source)
+        self.assertIn('"Unmute Audio"', helper_source)
+        self.assertIn("musicStopMenuTitle", helper_source)
+        self.assertIn("audioUnmuteMenuTitle", helper_source)
+        self.assertIn("stopMusic", helper_source)
+        self.assertIn("unmuteAudio", helper_source)
+        self.assertIn("client.stopMusic()", helper_source)
+        self.assertIn("client.unmuteSystemAudio()", helper_source)
         self.assertIn("toggleSpeechMute", helper_source)
         self.assertIn("menuNeedsUpdate", helper_source)
         self.assertIn("toggleSpeechMuted()", model_source)
+        self.assertIn("func stopMusic()", model_source)
+        self.assertIn("func unmuteAudio()", model_source)
+        self.assertIn("private func sendStopMusic()", model_source)
+        self.assertIn("private func sendUnmuteAudio()", model_source)
+        self.assertIn("return try await client.stopMusic()", model_source)
+        self.assertIn("return try await client.unmuteSystemAudio()", model_source)
+        self.assertIn("Music stop sent", model_source)
+        self.assertIn("Audio unmute sent", model_source)
         self.assertIn("isSpeechMuted", model_source)
         self.assertIn("onSpeechMuteStateChanged", model_source)
         self.assertIn('state = target ? "Muting" : "Unmuting"', model_source)
@@ -7902,6 +8028,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
             model_source.index("let startup = await workerSupervisor.ensureRunning()"),
         )
         self.assertIn("model.onSpeechPlaybackLikelyStarted", app_source)
+        self.assertIn("Self.musicStopMenuTitle", app_source)
+        self.assertIn("Self.audioUnmuteMenuTitle", app_source)
+        self.assertIn("model.stopMusic()", app_source)
+        self.assertIn("model.unmuteAudio()", app_source)
         self.assertIn("startStatusHelper()", app_source)
         self.assertIn("private var statusHelperProcess: Process?", app_source)
         self.assertIn('JARVIS_SHOW_MAIN_STATUS_ITEM', app_source)
@@ -7973,6 +8103,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("setSpeechMuted", client_source)
         self.assertIn('appendingPathComponent("mute")', client_source)
         self.assertIn("func stopSpeaking()", client_source)
+        self.assertIn("public func stopMusic()", client_source)
+        self.assertIn("public func unmuteSystemAudio()", client_source)
+        self.assertIn('"stop the music"', client_source)
+        self.assertIn('"unmute system audio"', client_source)
         self.assertIn('"suppress_speech": true', client_source)
         self.assertIn("latestSpeechLikelyActiveUntil", model_source)
         self.assertIn("lastCapturedWakeCommand", model_source)

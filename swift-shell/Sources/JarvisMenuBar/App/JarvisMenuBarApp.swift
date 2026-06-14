@@ -369,6 +369,8 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let muteItem = NSMenuItem(title: Self.speechMuteMenuTitle(muted: model.isSpeechMuted), action: #selector(toggleSpeechMute), keyEquivalent: "")
         speechMuteItem = muteItem
         menu.addItem(muteItem)
+        menu.addItem(NSMenuItem(title: Self.musicStopMenuTitle, action: #selector(stopMusic), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: Self.audioUnmuteMenuTitle, action: #selector(unmuteAudio), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Jarvis", action: #selector(quit), keyEquivalent: "q"))
 
@@ -394,6 +396,14 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     static func wakeListenerMenuTitle(listening: Bool) -> String {
         listening ? "Stop Hey Jarvis" : "Start Hey Jarvis"
+    }
+
+    static var musicStopMenuTitle: String {
+        "Stop Music"
+    }
+
+    static var audioUnmuteMenuTitle: String {
+        "Unmute Audio"
     }
 
     static var statusItemLength: CGFloat {
@@ -519,6 +529,14 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSpeechMute() {
         model.toggleSpeechMuted()
         updateSpeechMuteMenuItem()
+    }
+
+    @objc private func stopMusic() {
+        model.stopMusic()
+    }
+
+    @objc private func unmuteAudio() {
+        model.unmuteAudio()
     }
 
     private func updateWakeListenerMenuItem() {

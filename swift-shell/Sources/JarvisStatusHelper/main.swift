@@ -41,6 +41,14 @@ struct JarvisStatusHelperApp {
             fputs("Jarvis status helper self-test failed: muted title should be Keep Blabbering.\n", stderr)
             Foundation.exit(1)
         }
+        guard JarvisStatusHelperDelegate.musicStopMenuTitle == "Stop Music" else {
+            fputs("Jarvis status helper self-test failed: music stop title changed.\n", stderr)
+            Foundation.exit(1)
+        }
+        guard JarvisStatusHelperDelegate.audioUnmuteMenuTitle == "Unmute Audio" else {
+            fputs("Jarvis status helper self-test failed: audio unmute title changed.\n", stderr)
+            Foundation.exit(1)
+        }
         guard MainAppNotification.openPanel.rawValue == "local.leo.jarvis.statusHelper.openPanel",
               MainAppNotification.runStatus.rawValue == "local.leo.jarvis.statusHelper.runStatus",
               MainAppNotification.toggleWakeListener.rawValue == "local.leo.jarvis.statusHelper.toggleWakeListener",
@@ -91,6 +99,8 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
         let muteItem = NSMenuItem(title: Self.speechMuteMenuTitle(muted: knownMuted), action: #selector(toggleSpeechMute), keyEquivalent: "")
         speechMuteItem = muteItem
         menu.addItem(muteItem)
+        menu.addItem(NSMenuItem(title: Self.musicStopMenuTitle, action: #selector(stopMusic), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: Self.audioUnmuteMenuTitle, action: #selector(unmuteAudio), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Open Panel", action: #selector(openPanel), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "Run Status", action: #selector(runStatus), keyEquivalent: "r"))
@@ -136,6 +146,18 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
                 knownMuted.toggle()
                 speechMuteItem?.title = Self.speechMuteMenuTitle(muted: knownMuted)
             }
+        }
+    }
+
+    @objc private func stopMusic() {
+        Task {
+            _ = try? await client.stopMusic()
+        }
+    }
+
+    @objc private func unmuteAudio() {
+        Task {
+            _ = try? await client.unmuteSystemAudio()
         }
     }
 
@@ -208,6 +230,14 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
 
     fileprivate static func speechMuteMenuTitle(muted: Bool) -> String {
         muted ? "Keep Blabbering" : "Shut Up"
+    }
+
+    fileprivate static var musicStopMenuTitle: String {
+        "Stop Music"
+    }
+
+    fileprivate static var audioUnmuteMenuTitle: String {
+        "Unmute Audio"
     }
 
     fileprivate static func parseArguments(_ arguments: [String]) -> (appBundlePath: String?, baseURL: URL?) {

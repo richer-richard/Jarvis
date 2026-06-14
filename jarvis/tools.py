@@ -3256,19 +3256,125 @@ def cleanup_background_audio(*, reason: str = "cleanup") -> dict[str, Any]:
     }
 
 
+def _pause_local_music_sources() -> dict[str, Any]:
+    """Pause browser and Music.app audio without reading page content."""
+    js = """
+(() => {
+  let paused = 0;
+  for (const el of document.querySelectorAll('audio,video')) {
+    try {
+      if (!el.paused) {
+        el.pause();
+        paused += 1;
+      }
+    } catch (_) {}
+  }
+  try {
+    if (window.LocalOSMusicPlayer && typeof window.LocalOSMusicPlayer.pause === 'function') {
+      window.LocalOSMusicPlayer.pause();
+      paused += 1;
+    }
+  } catch (_) {}
+  try {
+    if (typeof markJarvisMusicCommandStatus === 'function') {
+      markJarvisMusicCommandStatus('paused', { source: 'jarvis-stop-music-menu' });
+    }
+  } catch (_) {}
+  try {
+    if (typeof publishJarvisMusicSnapshot === 'function') {
+      publishJarvisMusicSnapshot('jarvis-stop-music-menu', { force: true });
+    }
+  } catch (_) {}
+  return String(paused);
+})()
+""".strip()
+    script = f"""
+set lf to ASCII character 10
+set outputLines to {{}}
+if application "Music" is running then
+    try
+        tell application "Music"
+            if player state is playing then
+                pause
+                set end of outputLines to "Music"
+            end if
+        end tell
+    end try
+end if
+if application "QuickTime Player" is running then
+    try
+        tell application "QuickTime Player" to pause every document
+        set end of outputLines to "QuickTime Player"
+    end try
+end if
+if application "Google Chrome" is running then
+    try
+        tell application "Google Chrome"
+            repeat with theWindow in windows
+                repeat with theTab in tabs of theWindow
+                    try
+                        set pausedCount to execute javascript "{_escape_applescript_string(js)}" in theTab
+                        if pausedCount is not "0" then
+                            set end of outputLines to "Google Chrome"
+                        end if
+                    end try
+                end repeat
+            end repeat
+        end tell
+    end try
+end if
+if (count of outputLines) is 0 then return "none"
+set AppleScript's text item delimiters to lf
+set joinedOutput to outputLines as text
+set AppleScript's text item delimiters to ""
+return joinedOutput
+""".strip()
+    result = _run_osascript(script, timeout=2.5)
+    stdout = str(result.get("stdout") or "").strip()
+    paused = bool(result.get("ok") and stdout and stdout != "none")
+    return {
+        "executed": bool(result.get("executed")),
+        "ok": bool(result.get("ok")),
+        "paused": paused,
+        "surfaces": sorted({line.strip() for line in stdout.splitlines() if line.strip() and line.strip() != "none"}),
+        "stderr": result.get("stderr") or "",
+        "returncode": result.get("returncode"),
+    }
+
+
+def _set_system_output_muted(muted: bool) -> dict[str, Any]:
+    script = "set volume with output muted" if muted else "set volume without output muted"
+    result = _run_osascript(script, timeout=0.8)
+    return {
+        "executed": bool(result.get("executed")),
+        "ok": bool(result.get("ok")),
+        "muted": bool(muted) if result.get("ok") else None,
+        "stderr": result.get("stderr") or "",
+        "returncode": result.get("returncode"),
+    }
+
+
 def localos_music_stop() -> dict[str, Any]:
-    """Stop Jarvis-owned LocalOS music playback across the bridge and native fallback."""
+    """Stop LocalOS music playback and nearby media sources Jarvis may have triggered."""
     started_at = time.monotonic()
     stopped_native = _stop_localos_native_music()
+    stopped_system_media = _pause_local_music_sources()
     interrupted_native = bool(stopped_native.get("was_running"))
     command = _queue_localos_music_control("pause", None, user_request="stop Jarvis music playback")
     confirmation = _localos_music_control_confirmation(command, expected_statuses={"paused", "stopped"})
     confirmation_status = str(confirmation.get("status") or "unconfirmed")
     interrupted_page = confirmation_status in {"paused", "stopped"}
-    interrupted = interrupted_native or interrupted_page
+    interrupted_system_media = bool(stopped_system_media.get("paused"))
+    system_output_mute: dict[str, Any] = {"executed": False, "ok": False, "muted": None}
+    if not (interrupted_native or interrupted_page or interrupted_system_media) and (
+        confirmation_status == "bridge_not_polling" or not stopped_system_media.get("ok")
+    ):
+        system_output_mute = _set_system_output_muted(True)
+    interrupted_system_output = bool(system_output_mute.get("ok") and system_output_mute.get("muted") is True)
+    interrupted = interrupted_native or interrupted_page or interrupted_system_media or interrupted_system_output
     status = "stopped" if interrupted else "queued" if confirmation_status in {"accepted", "unconfirmed", "bridge_not_polling"} else "idle"
     if interrupted:
-        reply = "Stopped Jarvis music playback."
+        reply = "Stopped music playback."
     elif status == "queued":
         reply = "I sent the stop command to Local OS."
     else:
@@ -3283,6 +3389,8 @@ def localos_music_stop() -> dict[str, Any]:
         "read_private_content": False,
         **stopped_native,
         "native_stop": stopped_native,
+        "system_media_stop": stopped_system_media,
+        "system_output_mute": system_output_mute,
         "control": command,
         "control_lane": "localos_polling_bridge",
         "localos_page_stop_confirmation": confirmation_status,
@@ -11546,6 +11654,19 @@ def quick_local_control(command: str, *, execute: bool = True) -> dict[str, Any]
             }
         return _run_media_control(media_action)
 
+    output_mute = _parse_system_output_mute(lower)
+    if output_mute is not None:
+        if not execute:
+            return {
+                "tool": "quick.local_control",
+                "matched": True,
+                "status": "planned",
+                "executed": False,
+                "action": "audio.mute" if output_mute else "audio.unmute",
+                "reply": "Would mute system audio." if output_mute else "Would unmute system audio.",
+            }
+        return _run_system_output_mute(output_mute)
+
     speech_text = _extract_speech_text(text)
     if speech_text is not None:
         if not execute:
@@ -16846,6 +16967,19 @@ def _parse_media_action(lower: str) -> str | None:
     return None
 
 
+def _parse_system_output_mute(lower: str) -> bool | None:
+    stripped = lower.strip()
+    if stripped in {"unmute system audio", "unmute audio", "unmute sound", "turn audio back on", "turn sound back on"}:
+        return False
+    if stripped in {"mute system audio", "mute audio", "mute sound", "mute my mac", "mute computer audio"}:
+        return True
+    if re.search(r"\b(unmute|turn back on|turn on)\s+(the\s+)?(system\s+)?(audio|sound|output)\b", lower):
+        return False
+    if re.search(r"\bmute\s+(the\s+)?(system\s+)?(audio|sound|output|computer audio|mac audio)\b", lower):
+        return True
+    return None
+
+
 def _run_media_control(action: str) -> dict[str, Any]:
     result = _run_media_key_control(action)
     method = "system_events_media_key"
@@ -16876,6 +17010,19 @@ def _run_media_key_control(action: str) -> dict[str, Any]:
     }
     script = f'tell application "System Events" to key code {key_codes[action]}'
     return _run_osascript(script, timeout=0.8)
+
+
+def _run_system_output_mute(muted: bool) -> dict[str, Any]:
+    result = _set_system_output_muted(muted)
+    return {
+        "tool": "quick.local_control",
+        "matched": True,
+        "status": "completed" if result["ok"] else "failed",
+        "executed": result["executed"],
+        "action": "audio.mute" if muted else "audio.unmute",
+        "reply": "System audio muted." if muted and result["ok"] else "System audio unmuted." if result["ok"] else "I could not change system audio mute.",
+        **result,
+    }
 
 
 def _extract_speech_text(text: str) -> str | None:
