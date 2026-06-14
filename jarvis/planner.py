@@ -784,6 +784,19 @@ class Planner:
         bookmark_search_query = _extract_chrome_bookmark_search_query(text)
         if bookmark_search_query is not None:
             return self._result(text, "browser.bookmarks_search", "Searched imported Chrome bookmarks.", assessment, chrome_bookmarks_search(bookmark_search_query), True)
+        if _looks_like_price_conversion_request(text):
+            return self._result(
+                text,
+                "commerce.price_convert",
+                "Checked public product price and currency conversion.",
+                assessment,
+                commerce_price_convert(
+                    _extract_price_product_query(text),
+                    target_currency=_extract_target_currency(text),
+                    source_country="US",
+                ),
+                True,
+            )
         if _looks_like_browser_search_request(lower):
             return self._result(text, "browser.search_web", "Prepared browser search plan.", assessment, browser_search_plan(_extract_browser_search_query(text)), False)
         if _looks_like_builtin_browser_plan_request(lower):
@@ -906,6 +919,19 @@ class Planner:
         bookmark_search_query = _extract_chrome_bookmark_search_query(text)
         if bookmark_search_query is not None:
             return self._result(text, "browser.bookmarks_search", "Searched imported Chrome bookmarks.", assessment, chrome_bookmarks_search(bookmark_search_query), True)
+        if _looks_like_price_conversion_request(text):
+            return self._result(
+                text,
+                "commerce.price_convert",
+                "Checked public product price and currency conversion.",
+                assessment,
+                commerce_price_convert(
+                    _extract_price_product_query(text),
+                    target_currency=_extract_target_currency(text),
+                    source_country="US",
+                ),
+                True,
+            )
         if _looks_like_browser_status_request(lower):
             return self._result(text, "browser.status", "Read browser bridge status.", assessment, browser_status(), True)
         if _looks_like_browser_current_tab_request(lower):
@@ -1149,6 +1175,19 @@ class Planner:
         bookmark_search_query = _extract_chrome_bookmark_search_query(text)
         if bookmark_search_query is not None:
             return self._preview_result(text, "browser.bookmarks_search", assessment, True, plan={"query": bookmark_search_query})
+        if _looks_like_price_conversion_request(text):
+            return self._preview_result(
+                text,
+                "commerce.price_convert",
+                assessment,
+                True,
+                plan={
+                    "product_query": _extract_price_product_query(text),
+                    "target_currency": _extract_target_currency(text),
+                    "source_country": "US",
+                    "deterministic_preview": True,
+                },
+            )
         if _looks_like_browser_search_request(lower):
             return self._preview_result(text, "browser.search_web", assessment, False, plan={"query": _extract_browser_search_query(text)})
         if _looks_like_builtin_browser_plan_request(lower):
@@ -1246,6 +1285,19 @@ class Planner:
         bookmark_search_query = _extract_chrome_bookmark_search_query(text)
         if bookmark_search_query is not None:
             return self._preview_result(text, "browser.bookmarks_search", assessment, True, plan={"query": bookmark_search_query})
+        if _looks_like_price_conversion_request(text):
+            return self._preview_result(
+                text,
+                "commerce.price_convert",
+                assessment,
+                True,
+                plan={
+                    "product_query": _extract_price_product_query(text),
+                    "target_currency": _extract_target_currency(text),
+                    "source_country": "US",
+                    "deterministic_preview": True,
+                },
+            )
         if _looks_like_browser_status_request(lower):
             return self._preview_result(text, "browser.status", assessment, True)
         if _looks_like_browser_current_tab_request(lower):
@@ -2910,6 +2962,15 @@ def _extract_price_product_query(text: str) -> str:
     return cleaned[:160]
 
 
+def _looks_like_price_conversion_request(text: str) -> bool:
+    lower = str(text or "").lower()
+    if not re.search(r"\b(?:price|cost|how much)\b", lower):
+        return False
+    if not re.search(r"\b(?:yuan|rmb|cny|converted?|convert|conversion)\b", lower):
+        return False
+    return bool(_extract_price_product_query(lower).strip())
+
+
 def _extract_target_currency(text: str) -> str:
     lower = str(text or "").lower()
     if re.search(r"\b(?:yuan|rmb|cny|renminbi)\b", lower):
@@ -3219,6 +3280,7 @@ def _extract_model_context_sample(text: str) -> str:
 
 def _extract_email_sender_constraint(text: str) -> str | None:
     cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = re.sub(r"(?i)\b(Ms|Mr|Mrs|Dr)\.\s+", r"\1 ", cleaned)
     match = re.search(
         r"(?i)\bfrom\s+([A-Za-z][A-Za-z0-9 ._'’\-]{0,80}?)(?:[?.,!;:]|\s+(?:about|after|before|by|in|on|regarding|that|to|with)\b|$)",
         cleaned,

@@ -1522,6 +1522,16 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("public product price", prompt)
         self.assertEqual(_stream_status_text({"tool": "commerce.price_convert"}), "Checking the price now.")
 
+    def test_magic_keyboard_price_conversion_preview_routes_without_fast_chat(self):
+        preview = Planner().preview(
+            "Jarvis, could you search up the price of the Magic Keyboard and tell me its price converted to yuan?"
+        )
+
+        self.assertEqual(preview.tool, "commerce.price_convert")
+        self.assertEqual(preview.result["plan"]["product_query"], "Magic Keyboard")
+        self.assertEqual(preview.result["plan"]["target_currency"], "CNY")
+        self.assertTrue(preview.result["plan"]["deterministic_preview"])
+
     def test_streaming_named_music_play_uses_tool_without_fast_chat(self):
         fake_result = {
             "tool": "localos.music_play",
@@ -4918,6 +4928,20 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(preview.tool, "outlook.visible_summary")
         self.assertEqual(preview.result["date_range"], "past_month")
         self.assertEqual(preview.result["date_range_source"], "original_prompt")
+        self.assertEqual(preview.result["plan"]["date_range"], "past_month")
+        infer_mock.assert_not_called()
+        mail_mock.assert_not_called()
+
+    def test_email_sender_alias_keeps_dotted_honorific_before_date_range(self):
+        with patch("jarvis.planner.contact_data_lookup", return_value={"status": "not_found", "alias": "Ms Sharpay"}), \
+             patch("jarvis.planner.contact_data_infer_from_email") as infer_mock, \
+             patch("jarvis.planner.outlook_read_only_check") as mail_mock:
+            preview = Planner().preview("Summarize all the emails from Ms. Sharpay in the past month.")
+
+        self.assertEqual(preview.tool, "outlook.visible_summary")
+        self.assertEqual(preview.result["sender_query"], "Ms Sharpay")
+        self.assertEqual(preview.result["date_range"], "past_month")
+        self.assertEqual(preview.result["plan"]["sender_query"], "Ms Sharpay")
         self.assertEqual(preview.result["plan"]["date_range"], "past_month")
         infer_mock.assert_not_called()
         mail_mock.assert_not_called()
