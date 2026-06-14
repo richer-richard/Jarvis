@@ -21,6 +21,12 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "The safety verifier now runs temporary bundle self-tests on a private local port, so verification no longer makes a temporary Jarvis fight the live Jarvis worker on `127.0.0.1:8765`.",
+    "Jarvis 0.1.416 makes the Teams assignment route honest: it opens the Teams bookmark in signed-in Chrome, but explicitly says no assignment has been inspected until a later visible page or screen read succeeds.",
+    "Jarvis 0.1.416 gives Teams page-read failures product language: `Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet` instead of leaking JavaScript or AppleScript internals.",
+    "Jarvis 0.1.416 preserves human contact aliases such as `Ms Sharpay` while still tolerating `Sharpay` and STT-shaped `his Sharpay` lookups.",
+    "Jarvis 0.1.416 quiets the wake loop: wake acknowledgement is now visible `Listening.` rather than a routine spoken `Hello sir`, so Leo can continue speaking immediately after Hey Jarvis.",
+    "Jarvis 0.1.415 passed the full eight-prompt regression matrix for Teams handoff, LocalOS music, RAM, Codex chat confirmation, Calendar, model-test planning, Ms. Sharpay contact confirmation, and Magic Keyboard yuan conversion.",
     "Jarvis 0.1.389 stops LocalOS music recovery from multiplying Chrome tabs: recent opener attempts and recent LocalOS music heartbeats now block duplicate `open Chrome` recovery calls.",
     "Jarvis 0.1.388 adds a LocalOS music recovery lane: if macOS blocks direct Chrome automation, Jarvis opens the LocalOS Music Player normally, waits for its polling bridge, then queues playback without pretending the song started early.",
     "Jarvis 0.1.387 tightens LocalOS music playback honesty: `accepted` no longer counts as played, Jarvis waits past early acceptance for real audio, and LocalOS no longer flashes a false `Playing` notification before audio starts.",
@@ -146,6 +152,12 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-010549.json` after the private-port temporary bundle fix.",
+    "Live Jarvis 0.1.416 build 416 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "Full Python safety suite passed 606/606 after the 0.1.416 Teams, browser-read, contact-memory, and wake-loop changes.",
+    "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-004114.json`.",
+    "Live eight-prompt speech-audit matrix passed 8/8 at `runtime/regression_prompt_matrix/20260615-004209/summary.json` with speech/audio actions suppressed.",
+    "Runtime hygiene after launch showed one `jarvis-menu-bar`, one `jarvis-status-helper`, one bundled worker, only `output/Jarvis.app` in active output, and no `afplay` background audio.",
     "Current verification: focused Chrome-session handoff tests pass; full safety, Swift, no-prompt, and live-app checks are rerun after each bundle rebuild.",
     "Focused LocalOS Chrome-direct regression now requires the injected control script to preserve `failed` playback status instead of rewriting it to `accepted` after the delayed snapshot publish.",
     "Swift self-test and Python source regression now prove short listener fragments, Calendar-answer echoes, and captured wake-command echoes do not stop Jarvis speech, while an intentional `wait stop for a second` interruption still does.",
@@ -809,7 +821,7 @@ def render_report(context: dict[str, Any]) -> str:
 <body>
   <header>
     <h1>Jarvis Overnight Launch Report</h1>
-    <p class="tagline">The voice loop moved from promise to first real test surface. This is the single page Leo needs tomorrow morning.</p>
+    <p class="tagline">Jarvis is now more honest, quieter on wake, and verified against Leo's real task prompts. This is the single page Leo needs tomorrow morning.</p>
     {pill_row(context, refresh_seconds=30)}
   </header>
   <main>
@@ -828,6 +840,12 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.416", "Live app is bundled, launched, and reports Jarvis 0.1.416 build 416."),
+        ("done", "Make Teams handoff honest", "Jarvis opens signed-in Chrome but no longer claims it inspected the assignment before a later page or screen read succeeds."),
+        ("done", "Hide browser internals from Teams failures", "Teams unreadable-page failures now use product language instead of JavaScript or AppleScript details."),
+        ("done", "Preserve contact aliases", "Ms Sharpay stays Ms Sharpay while Sharpay and dictated his Sharpay still resolve."),
+        ("done", "Quiet the wake greeting", "Hey Jarvis now plans a visible Listening state instead of a routine spoken Hello sir."),
+        ("done", "Verify real prompts", "The live eight-prompt speech-audit matrix passed 8/8 against the bundled app."),
         ("done", "Ship Hey Jarvis native listener", "Experimental app toggle and Speech framework pipeline are in place."),
         ("done", "Tighten fuzzy wake threshold", "Hey jervis still works, while short near-misses such as hey jars are rejected."),
         ("done", "Explain wake threshold", "Wake status now says the current 0.86 fuzzy threshold in the reply."),
@@ -873,7 +891,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Explain wake pauses visibly", "The chat now shows why Hey Jarvis paused instead of silently stopping."),
         ("done", "Add report loopback URLs", "The master report and workboard are reachable from the running Jarvis worker."),
         ("done", "Add menu report shortcut", "The menu bar can open the overnight report route directly."),
-        ("working", "Next: real-world Leo testing", "Needs actual microphone, room noise, and false-wake feedback."),
+        ("working", "Next: actual Teams page extraction", "Chrome handoff is honest; the remaining hard part is reliable visible Teams assignment reading."),
     ]
     items = "\n".join(task_item(*task) for task in tasks)
     return f"""<!doctype html>
@@ -894,8 +912,8 @@ def render_workboard(context: dict[str, Any]) -> str:
   <main>
     <section>
       <h2>Current Focus</h2>
-      <p>Jarvis {e(context["version"])} is live with experimental Hey Jarvis, menu-bar mute, menu-bar wake controls, a refreshed wake lab, broader final-answer speech, and closed-loop voice QA. The remaining work is real-world listening quality.</p>
-      <div class="meter"><div style="width: 91%"></div></div>
+      <p>Jarvis {e(context["version"])} is live with honest Teams handoff, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and an 8/8 live regression matrix. The remaining product gap is reliable authenticated-page extraction inside heavy web apps like Teams.</p>
+      <div class="meter"><div style="width: 93%"></div></div>
     </section>
     <section>
       <h2>Checklist</h2>

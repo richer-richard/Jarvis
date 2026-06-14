@@ -1182,6 +1182,63 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(sleeps, [0.5])
 
+    def test_verify_safe_temp_bundle_self_test_uses_private_port(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app_path = Path(temp_dir) / "Jarvis Verify & Test's <Local>.app"
+            contents = app_path / "Contents"
+            (contents / "MacOS").mkdir(parents=True)
+            with (contents / "Info.plist").open("wb") as handle:
+                plistlib.dump(
+                    {
+                        "CFBundleDisplayName": "Jarvis Verify & Test's <Local>",
+                        "NSMicrophoneUsageDescription": "Jarvis microphone test.",
+                        "NSSpeechRecognitionUsageDescription": "Jarvis speech test.",
+                    },
+                    handle,
+                )
+
+            run_command_calls = []
+            temp_app_calls = []
+
+            def fake_run_command(name, args, *, timeout=120, env=None, expect=None, expected_returncode=0):
+                run_command_calls.append((name, args, timeout, env, expect, expected_returncode))
+                stdout = str(app_path) if name == "temporary_app_bundle_build" else (expect or "passed")
+                return verify_safe.CheckResult(
+                    name=name,
+                    passed=True,
+                    summary="passed",
+                    returncode=0,
+                    stdout_tail=stdout,
+                    stderr_tail="",
+                    duration_seconds=0.001,
+                )
+
+            def fake_run_temp_app_command(name, args, *, timeout, expect, env=None):
+                temp_app_calls.append((name, args, timeout, expect, env))
+                return verify_safe.CheckResult(
+                    name=name,
+                    passed=True,
+                    summary="passed",
+                    returncode=0,
+                    stdout_tail=expect,
+                    stderr_tail="",
+                    duration_seconds=0.001,
+                )
+
+            results = []
+            with patch("scripts.verify_safe.run_command", side_effect=fake_run_command), \
+                 patch("scripts.verify_safe.run_temp_app_command", side_effect=fake_run_temp_app_command), \
+                 patch("scripts.verify_safe.free_local_port", side_effect=[61234, 61235]), \
+                 patch("scripts.verify_safe.wait_for_health", return_value=False):
+                verify_safe.run_bundle_checks(results, "http://127.0.0.1:8765")
+
+        self_test_call = next(call for call in temp_app_calls if call[0] == "temporary_app_self_test")
+        self.assertEqual(self_test_call[4]["JARVIS_BASE_URL"], "http://127.0.0.1:61234")
+        self.assertNotEqual(self_test_call[4]["JARVIS_BASE_URL"], "http://127.0.0.1:8765")
+        self.assertTrue(any(result.name == "temporary_app_self_test_worker_cleanup" for result in results))
+        autostart_call = next(call for call in temp_app_calls if call[0] == "temporary_app_autostart_disabled_self_test")
+        self.assertEqual(autostart_call[4]["JARVIS_BASE_URL"], "http://127.0.0.1:61235")
+
 
 class SafetyPolicyTests(unittest.TestCase):
     def test_dangerous_shell_requires_typed_confirmation(self):

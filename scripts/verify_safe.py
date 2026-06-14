@@ -810,13 +810,22 @@ def run_bundle_checks(results: list[CheckResult], base_url: str) -> None:
             expect="Permission rows: 7",
         )
     )
+    self_test_port = free_local_port()
+    self_test_base_url = f"http://127.0.0.1:{self_test_port}"
     results.append(
         run_temp_app_command(
             "temporary_app_self_test",
             [str(executable), "--self-test"],
-            env={"JARVIS_BASE_URL": base_url},
+            env={"JARVIS_BASE_URL": self_test_base_url},
             timeout=90,
             expect="Mode: pause/resume passed",
+        )
+    )
+    results.append(
+        CheckResult(
+            "temporary_app_self_test_worker_cleanup",
+            not wait_for_health(timeout=2, base_url=self_test_base_url),
+            f"port={self_test_port}",
         )
     )
     results.append(
