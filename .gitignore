@@ -18,3 +18,7 @@ output/
 
 # OS metadata
 .DS_Store
+
+# OneDrive conflict copies from synced Macs
+*-Hongyi's MacBook Air.*
+*-Hongyi’s MacBook Air.*
