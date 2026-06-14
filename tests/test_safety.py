@@ -3371,6 +3371,50 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Automation permission", result["spoken_summary"])
         self.assertIn("will not copy Chrome logins", result["spoken_summary"])
 
+    def test_browser_read_page_teams_javascript_error_uses_product_language(self):
+        delimiter = jarvis_tools.BROWSER_FIELD_DELIMITER
+        metadata_stdout = f"checked{delimiter}Teams and Channels | General | Microsoft Teams{delimiter}https://teams.cloud.microsoft/"
+        with patch("jarvis.tools._find_executable", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools._run_osascript", side_effect=[
+                 {
+                     "ok": False,
+                     "stdout": "",
+                     "stderr": "execution error: Google Chrome got an error: JavaScript execution failed.",
+                     "returncode": 1,
+                 },
+                 {"ok": True, "stdout": metadata_stdout, "stderr": "", "returncode": 0},
+             ]):
+            result = browser_read_page(max_chars=1000)
+
+        self.assertEqual(result["tool"], "browser.read_page")
+        self.assertEqual(result["status"], "teams_page_text_unavailable")
+        self.assertEqual(result["site_readability"], "teams_spa_not_reliably_readable")
+        self.assertEqual(result["title"], "Teams and Channels | General | Microsoft Teams")
+        self.assertEqual(result["domain"], "teams.cloud.microsoft")
+        self.assertFalse(result["external_model_allowed"])
+        self.assertFalse(result["called_model"])
+        self.assertIn("Teams is open in Chrome", result["reply"])
+        self.assertIn("have not inspected the assignment", result["spoken_summary"])
+        self.assertNotIn("JavaScript", result["reply"])
+        self.assertNotIn("AppleScript", result["spoken_summary"])
+
+    def test_browser_read_page_empty_teams_body_uses_product_language(self):
+        delimiter = jarvis_tools.BROWSER_FIELD_DELIMITER
+        fake_stdout = f"checked{delimiter}Microsoft Teams{delimiter}https://teams.microsoft.com/v2/{delimiter}"
+        with patch("jarvis.tools._find_executable", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools._run_osascript", return_value={"ok": True, "stdout": fake_stdout, "stderr": "", "returncode": 0}):
+            result = browser_read_page(max_chars=1000)
+
+        self.assertEqual(result["tool"], "browser.read_page")
+        self.assertEqual(result["status"], "teams_page_text_unavailable")
+        self.assertEqual(result["site_readability"], "teams_spa_not_reliably_readable")
+        self.assertEqual(result["page_text"], "")
+        self.assertEqual(result["prompt_injection_findings"], 0)
+        self.assertFalse(result["external_model_allowed"])
+        self.assertFalse(result["called_model"])
+        self.assertIn("Teams is open in Chrome", result["reply"])
+        self.assertIn("have not inspected the assignment", result["spoken_summary"])
+
     def test_browser_search_and_builtin_plans_do_not_execute(self):
         search = browser_search_plan("GPT OSS 120B browser tools")
         built_in = browser_built_in_plan("use Chrome for logged-in sites")
@@ -5744,15 +5788,22 @@ Pages occupied by compressor:             10.
              patch("jarvis.tools.CONTACT_DATA_PATH", Path(temp_dir) / "contact_aliases.json"):
             stored = contact_data_remember("Ms Sharpay", "Ms Darbus")
             found = contact_data_lookup("ms sharpay")
+            titleless_found = contact_data_lookup("Sharpay")
             stt_found = contact_data_lookup("his Sharpay")
             status = contact_data_status()
 
         self.assertEqual(stored["status"], "stored")
+        self.assertEqual(stored["alias"], "Ms Sharpay")
         self.assertEqual(found["status"], "found")
+        self.assertEqual(found["alias"], "Ms Sharpay")
         self.assertEqual(found["display_name"], "Ms Darbus")
+        self.assertEqual(titleless_found["status"], "found")
+        self.assertEqual(titleless_found["display_name"], "Ms Darbus")
         self.assertEqual(stt_found["status"], "found")
+        self.assertEqual(stt_found["alias"], "Ms Sharpay")
         self.assertEqual(stt_found["display_name"], "Ms Darbus")
         self.assertEqual(status["alias_count"], 1)
+        self.assertEqual(status["aliases"][0]["alias"], "Ms Sharpay")
 
     def test_model_test_plan_prefers_remote_worker_for_heavy_models(self):
         remote = {
@@ -6622,6 +6673,8 @@ Pages occupied by compressor:             10.
         self.assertFalse(result["changed_state"])
         phase_ids = [phase["id"] for phase in result["phases"]]
         self.assertEqual(phase_ids, ["wake", "acknowledge", "speech_to_text", "route_command", "working_status", "execute_or_preview", "respond"])
+        self.assertEqual(result["phases"][0]["visible_text"], "Listening.")
+        self.assertIsNone(result["phases"][0]["spoken_text"])
         self.assertEqual(result["phases"][1]["visible_text"], "Listening.")
         self.assertIn("voice.loop_simulation", result["current_working_surfaces"]["typed_wake_simulation"])
         self.assertIn("execute_safe_recommendation", result["phases"][3]["safe_follow_through"])
@@ -6782,8 +6835,8 @@ Pages occupied by compressor:             10.
         self.assertTrue(result.executed)
         self.assertEqual(result.result["status"], "command_previewed")
         self.assertEqual(result.result["command"], "status")
-        self.assertEqual(result.result["spoken_sequence"][0], "Hello sir.")
-        self.assertEqual(result.result["spoken_sequence"][1], "Checking Jarvis status now.")
+        self.assertEqual(result.result["visible_sequence"][0], "Listening.")
+        self.assertEqual(result.result["spoken_sequence"], ["Checking Jarvis status now."])
         self.assertFalse(result.result["recorded_audio"])
         self.assertFalse(result.result["played_audio"])
         self.assertFalse(result.result["opened_app"])
@@ -6815,7 +6868,8 @@ Pages occupied by compressor:             10.
 
         self.assertEqual(result["tool"], "voice.loop_simulation")
         self.assertEqual(result["status"], "awaiting_command")
-        self.assertEqual(result["spoken_sequence"], ["Hello sir."])
+        self.assertEqual(result["visible_sequence"], ["Listening."])
+        self.assertEqual(result["spoken_sequence"], [])
         self.assertFalse(result["recorded_audio"])
         self.assertFalse(result["played_audio"])
         self.assertFalse(result["called_model"])
@@ -7177,6 +7231,9 @@ Pages occupied by compressor:             10.
         self.assertTrue(result["open_chrome_to_reuse_login"])
         self.assertTrue(result["requires_chrome_login"])
         self.assertTrue(result["read_private_browser_metadata"])
+        self.assertFalse(result["automatic_teams_page_inspection_supported"])
+        self.assertEqual(result["teams_page_inspection_status"], "chrome_handoff_only")
+        self.assertIn("does not claim to read Teams assignments", result["teams_page_inspection_note"])
         self.assertFalse(result["copied_chrome_cookies"])
         self.assertFalse(result["copied_chrome_passwords"])
         self.assertFalse(result["copied_chrome_session_storage"])
@@ -7193,9 +7250,10 @@ Pages occupied by compressor:             10.
         self.assertIn("browser.bookmark_open", {phase["tool"] for phase in result["phases"]})
         self.assertIn("browser.session_strategy", {phase["tool"] for phase in result["phases"]})
         self.assertIn("signed-in Chrome", result["reply"])
-        self.assertIn("what's on this page", result["reply"])
+        self.assertIn("have not inspected", result["reply"])
+        self.assertNotIn("what's on this page", result["reply"])
         self.assertNotIn("copy Chrome cookies", result["reply"])
-        self.assertIn("No Teams page was opened", result["user_facing_safety_summary"])
+        self.assertIn("No Teams assignment was inspected", result["user_facing_safety_summary"])
 
     def test_teams_assignment_audit_redacts_bookmark_target(self):
         safe = _audit_safe_result(
@@ -7209,12 +7267,16 @@ Pages occupied by compressor:             10.
                 "reply": "Opening your Teams bookmark in signed-in Chrome now.",
                 "browser_target_available": True,
                 "read_private_browser_metadata": True,
+                "automatic_teams_page_inspection_supported": False,
+                "teams_page_inspection_status": "chrome_handoff_only",
             },
         )
 
         self.assertTrue(safe["teams_browser_private_details_omitted"])
         self.assertTrue(safe["browser_target_available"])
         self.assertTrue(safe["read_private_browser_metadata"])
+        self.assertFalse(safe["automatic_teams_page_inspection_supported"])
+        self.assertEqual(safe["teams_page_inspection_status"], "chrome_handoff_only")
         self.assertNotIn("url", safe)
         self.assertNotIn("title", safe)
         self.assertNotIn("selected_bookmark", safe)
@@ -7255,7 +7317,7 @@ Pages occupied by compressor:             10.
         self.assertFalse(result["changed_ui"])
         self.assertFalse(result["changed_state"])
         surface_ids = {surface["id"] for surface in result["surfaces"]}
-        self.assertIn("wake_greeting", surface_ids)
+        self.assertIn("wake_acknowledge", surface_ids)
         self.assertIn("working_status", surface_ids)
         self.assertIn("final_answer", surface_ids)
         self.assertIn("debug_trace_drawer", surface_ids)

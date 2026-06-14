@@ -6209,16 +6209,14 @@ def voice_loop_simulation(
         reply = "Voice loop simulation ignored the transcript because no Jarvis wake phrase was detected."
     elif detection.needs_followup and not command:
         status = "awaiting_command"
-        spoken_sequence.append("Hello sir.")
-        visible_sequence.append("Hello sir.")
-        stages.append({"id": "greeting", "status": "planned", "text": "Hello sir."})
+        visible_sequence.append("Listening.")
+        stages.append({"id": "wake_acknowledge", "status": "planned", "visible_text": "Listening.", "spoken_text": None})
         stages.append({"id": "command_capture", "status": "waiting_for_followup"})
-        reply = "Voice loop simulation detected the wake phrase and would answer: Hello sir."
+        reply = "Voice loop simulation detected the wake phrase and would show: Listening."
     else:
         status = "command_previewed"
-        spoken_sequence.append("Hello sir.")
-        visible_sequence.append("Hello sir.")
-        stages.append({"id": "greeting", "status": "planned", "text": "Hello sir."})
+        visible_sequence.append("Listening.")
+        stages.append({"id": "wake_acknowledge", "status": "planned", "visible_text": "Listening.", "spoken_text": None})
         stages.append({"id": "command_capture", "status": "captured", "command": command, "source": command_source})
         if route_preview is not None:
             stages.append(
@@ -6276,9 +6274,9 @@ def voice_session_plan(command: str | None = None) -> dict[str, Any]:
             "id": "wake",
             "status": "experimental",
             "trigger": "Hey Jarvis",
-            "visible_text": "Hello sir.",
-            "spoken_text": "Hello sir.",
-            "notes": "Experimental microphone wake is now available in the macOS app; typed wake simulation remains the safe deterministic test path.",
+            "visible_text": "Listening.",
+            "spoken_text": None,
+            "notes": "Experimental microphone wake is now available in the macOS app; wake acknowledgment should stay visual so Leo can keep speaking immediately.",
         },
         {
             "id": "acknowledge",
@@ -6378,9 +6376,9 @@ def ui_overlay_plan(mode: str | None = None) -> dict[str, Any]:
         cleaned_mode = "normal"
     surfaces = [
         {
-            "id": "wake_greeting",
-            "visible_text": "Hello sir.",
-            "purpose": "Immediate visible acknowledgement after the wake phrase or keyboard shortcut.",
+            "id": "wake_acknowledge",
+            "visible_text": "Listening.",
+            "purpose": "Immediate visible acknowledgement after the wake phrase or keyboard shortcut, without interrupting Leo's next words.",
             "normal_mode": True,
             "debug_mode": True,
         },
@@ -8089,23 +8087,23 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
     assignment_read_phases = [
         {
             "id": "locate_class_team",
-            "status": "available_after_page_open",
+            "status": "manual_or_future_after_page_open",
             "tool": "browser.read_page",
-            "summary": "Read only the visible Teams page text after the Teams bookmark is open, treating page content as untrusted.",
+            "summary": "After Teams is visibly open, try a bounded page or screen read only when explicitly requested; do not claim the assignment was inspected until that read succeeds.",
             "executes_now": False,
         },
         {
             "id": "identify_newest_assignment",
-            "status": "available_after_page_open",
+            "status": "manual_or_future_after_page_open",
             "tool": "browser.read_page",
-            "summary": "Identify visible assignment titles/dates from the opened Teams page without submitting, editing, or downloading work.",
+            "summary": "Identify visible assignment titles/dates only from a successful later page or screen read; Teams itself is just opened in this step.",
             "executes_now": False,
         },
         {
             "id": "collect_requirements",
-            "status": "available_after_page_open",
+            "status": "manual_or_future_after_page_open",
             "tool": "browser.read_page",
-            "summary": "Capture visible rubric/instructions as bounded page text for review; do not download or export private school content by default.",
+            "summary": "Capture visible rubric/instructions only after a later read succeeds; do not download or export private school content by default.",
             "executes_now": False,
         },
     ]
@@ -8146,12 +8144,12 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
     if bookmark_ready:
         reply = (
             "Opening your Teams bookmark in signed-in Chrome now. "
-            f"Once Teams loads, ask me what's on this page and I can read the visible text to help inspect {assignment_label}."
+            f"I can get you to Teams, but I have not inspected {assignment_label} until a later visible page or screen read succeeds."
         )
     else:
         reply = (
             "I can start that through your Teams bookmark in signed-in Chrome, but I need imported Chrome bookmarks first. "
-            f"After Teams is open, I can read the visible page text and help inspect {assignment_label}."
+            f"After Teams is open, I still need a successful visible page or screen read before I can inspect {assignment_label}."
         )
     selected_bookmark = bookmark_plan.get("selected_bookmark") if isinstance(bookmark_plan.get("selected_bookmark"), dict) else None
     return {
@@ -8173,6 +8171,11 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "open_chrome_to_reuse_login": bool(bookmark_plan.get("open_chrome_to_reuse_login")) if bookmark_ready else False,
         "requires_chrome_login": bool(bookmark_plan.get("requires_chrome_login")) if bookmark_ready else False,
         "read_private_browser_metadata": bool(bookmark_plan.get("read_private_content")),
+        "automatic_teams_page_inspection_supported": False,
+        "teams_page_inspection_status": "chrome_handoff_only" if bookmark_ready else "bookmark_needed",
+        "teams_page_inspection_note": (
+            "This build opens signed-in Teams in Chrome but does not claim to read Teams assignments until a later page or screen read succeeds."
+        ),
         "copied_chrome_cookies": False,
         "copied_chrome_passwords": False,
         "copied_chrome_session_storage": False,
@@ -8180,7 +8183,7 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "downloaded_files": False,
         "submitted_work": False,
         "changed_schoolwork": False,
-        "user_facing_safety_summary": "Plan only. No Teams page was opened, no browser session data was copied, and no schoolwork was changed.",
+        "user_facing_safety_summary": "Plan only. No Teams assignment was inspected, no browser session data was copied, and no schoolwork was changed.",
         "requires_confirmation_before_submission": True,
         "read_private_content": False,
         "opened_app": False,
@@ -9801,7 +9804,7 @@ def contact_data_status() -> dict[str, Any]:
     aliases = data.get("aliases") if isinstance(data.get("aliases"), dict) else {}
     visible_aliases = [
         {
-            "alias": str(alias),
+            "alias": _clean_local_field((entry or {}).get("alias")) or str(alias),
             "display_name": _clean_local_field((entry or {}).get("display_name")),
             "source": _clean_local_field((entry or {}).get("source")),
             "updated_at": (entry or {}).get("updated_at"),
@@ -9832,17 +9835,18 @@ def contact_data_lookup(alias: str) -> dict[str, Any]:
     clean_alias = _clean_contact_alias(alias)
     data = _load_contact_data()
     aliases = data.get("aliases") if isinstance(data.get("aliases"), dict) else {}
-    key = _contact_alias_key(clean_alias)
-    entry = aliases.get(key) if key else None
+    entry = _contact_alias_entry(clean_alias, aliases)
     if isinstance(entry, dict):
         display_name = _clean_local_field(entry.get("display_name"))
-        reply = f"Contact data: {clean_alias} means {display_name}."
+        stored_alias = _clean_local_field(entry.get("alias")) or clean_alias
+        reply = f"Contact data: {stored_alias} means {display_name}."
         return {
             "tool": "contacts.lookup",
             "executed": True,
             "status": "found",
             "read_private_content": False,
-            "alias": clean_alias,
+            "alias": stored_alias,
+            "requested_alias": clean_alias,
             "display_name": display_name,
             "source": _clean_local_field(entry.get("source")),
             "updated_at": entry.get("updated_at"),
@@ -9995,7 +9999,13 @@ def _write_contact_data(data: dict[str, Any]) -> bool:
 
 def _clean_contact_alias(value: Any) -> str:
     text = _clean_local_field(value)
-    text = re.sub(r"(?i)^(?:ms|mrs|mr|dr|teacher|miss|his)\.?\s+", "", text).strip()
+    text = re.sub(r"(?i)^his\s+", "Ms ", text).strip()
+    text = re.sub(r"(?i)^miss\s+", "Ms ", text).strip()
+    text = re.sub(r"(?i)^ms\.?\s+", "Ms ", text).strip()
+    text = re.sub(r"(?i)^mrs\.?\s+", "Mrs ", text).strip()
+    text = re.sub(r"(?i)^mr\.?\s+", "Mr ", text).strip()
+    text = re.sub(r"(?i)^dr\.?\s+", "Dr ", text).strip()
+    text = re.sub(r"(?i)^teacher\s+", "", text).strip()
     return text[:120]
 
 
@@ -10003,13 +10013,40 @@ def _contact_alias_key(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", value.lower()).strip()
 
 
+def _contact_alias_without_honorific(value: str) -> str:
+    return re.sub(r"(?i)^(?:ms|mrs|mr|dr)\s+", "", value).strip()
+
+
+def _contact_alias_entry(alias: str, aliases: dict[str, Any]) -> dict[str, Any] | None:
+    alias_key = _contact_alias_key(alias)
+    fallback_key = _contact_alias_key(_contact_alias_without_honorific(alias))
+    for key in [alias_key, fallback_key]:
+        entry = aliases.get(key) if key else None
+        if isinstance(entry, dict):
+            return entry
+    if fallback_key:
+        for stored_key, entry in aliases.items():
+            if not isinstance(entry, dict):
+                continue
+            if _contact_alias_key(_contact_alias_without_honorific(str(stored_key))) == fallback_key:
+                return entry
+    return None
+
+
 def _contact_alias_suggestions(alias: str, aliases: dict[str, Any]) -> list[dict[str, Any]]:
     alias_key = _contact_alias_key(alias)
+    alias_core_key = _contact_alias_key(_contact_alias_without_honorific(alias))
     scored: list[tuple[float, dict[str, Any]]] = []
     for key, entry in aliases.items():
         if not isinstance(entry, dict):
             continue
-        score = difflib.SequenceMatcher(None, alias_key, str(key)).ratio() if alias_key and key else 0.0
+        exact_score = difflib.SequenceMatcher(None, alias_key, str(key)).ratio() if alias_key and key else 0.0
+        core_score = (
+            difflib.SequenceMatcher(None, alias_core_key, _contact_alias_key(_contact_alias_without_honorific(str(key)))).ratio()
+            if alias_core_key and key
+            else 0.0
+        )
+        score = max(exact_score, core_score)
         if score >= 0.5:
             scored.append((score, entry))
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -10472,6 +10509,12 @@ def browser_read_page(max_chars: int | str | None = None) -> dict[str, Any]:
         status = "empty"
         reply = f"I found {title}, but there was no readable page text in the current Chrome tab."
         spoken_summary = reply
+        if _browser_is_teams_target(result.get("url"), title):
+            status = "teams_page_text_unavailable"
+            details = _browser_error_details(status, include_page_text=True)
+            result.update(details)
+            reply = _browser_error_reply(status)
+            spoken_summary = str(details.get("spoken_summary") or reply)
     elif finding_count:
         reply = f"I read {title}, but the page contains suspicious instructions, so I treated it as untrusted."
         spoken_summary = (
@@ -11313,8 +11356,13 @@ end tell
             status = "automation_not_allowed"
         elif include_page_text and ("javascript" in lower_stderr or "apple events" in lower_stderr):
             status = "chrome_javascript_unavailable"
+        fallback_tab: dict[str, Any] = {}
+        if include_page_text and status in {"chrome_javascript_unavailable", "automation_error"}:
+            fallback_tab = _chrome_active_tab_metadata(include_page_text=False)
+            if _browser_is_teams_target(fallback_tab.get("url"), fallback_tab.get("title")):
+                status = "teams_page_text_unavailable"
         details = _browser_error_details(status, include_page_text=include_page_text)
-        return {
+        result = {
             **base,
             "status": status,
             "returncode": completed.get("returncode"),
@@ -11322,6 +11370,16 @@ end tell
             "reply": _browser_error_reply(status),
             **details,
         }
+        if fallback_tab.get("status") == "checked":
+            result.update(
+                {
+                    "title": fallback_tab.get("title") or "",
+                    "url": fallback_tab.get("url") or "",
+                    "domain": fallback_tab.get("domain") or _browser_safe_domain(fallback_tab.get("url")),
+                    "fallback_tab_status": fallback_tab.get("status"),
+                }
+            )
+        return result
     fields = str(completed.get("stdout") or "").split(BROWSER_FIELD_DELIMITER)
     status = fields[0].strip() if fields else "unknown"
     if status != "checked":
@@ -11543,6 +11601,7 @@ def _browser_error_reply(status: str) -> str:
         "no_window": "Chrome is running but has no open browser window.",
         "automation_not_allowed": "macOS is blocking Jarvis from controlling Google Chrome. Grant Jarvis Automation access to Chrome, then try again.",
         "chrome_javascript_unavailable": "Chrome allowed tab metadata, but did not allow Jarvis to read page text from the active page.",
+        "teams_page_text_unavailable": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
         "osascript_not_found": "macOS AppleScript tooling is unavailable.",
     }
     return labels.get(status, "I could not read the current Chrome tab.")
@@ -11584,6 +11643,22 @@ def _browser_error_details(status: str, *, include_page_text: bool) -> dict[str,
                 "I will keep using signed-in Chrome rather than copying your login."
             ),
         }
+    if status == "teams_page_text_unavailable":
+        return {
+            **base,
+            "permission_issue": "",
+            "requires_user_action": False,
+            "site_readability": "teams_spa_not_reliably_readable",
+            "next_steps": [
+                "Keep Teams open in signed-in Chrome.",
+                "Use the visible Teams page to navigate to the assignment, then ask Jarvis to try a screen read.",
+                "Do not assume Jarvis has inspected a Teams assignment until it gives a specific assignment title or rubric text.",
+            ],
+            "spoken_summary": (
+                "Teams is open in Chrome, but I cannot reliably read the Teams page text yet. "
+                "I have not inspected the assignment."
+            ),
+        }
     if status in {"not_running", "no_window"}:
         return {
             **base,
@@ -11604,6 +11679,18 @@ def _browser_error_details(status: str, *, include_page_text: bool) -> dict[str,
 def _browser_safe_domain(url: Any) -> str:
     parsed = urllib.parse.urlparse(str(url or ""))
     return parsed.netloc[:120]
+
+
+def _browser_is_teams_target(url: Any, title: Any = "") -> bool:
+    domain = _browser_safe_domain(url).lower()
+    title_text = str(title or "").casefold()
+    return (
+        domain == "teams.microsoft.com"
+        or domain.endswith(".teams.microsoft.com")
+        or domain == "teams.cloud.microsoft"
+        or domain.endswith(".teams.cloud.microsoft")
+        or "microsoft teams" in title_text
+    )
 
 
 def _browser_domain_requires_chrome_auth(url: Any) -> bool:
