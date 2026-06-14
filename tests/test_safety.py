@@ -1903,7 +1903,7 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(confirmation["snapshot_after_command"])
         self.assertEqual(confirmation["error"], "localos_music_window_not_polling_or_not_refreshed")
 
-    def test_localos_music_play_refuses_to_queue_when_bridge_snapshot_is_stale(self):
+    def test_localos_music_play_opens_player_when_bridge_snapshot_is_stale(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
             control_path = Path(tmpdir) / "localos_music_control.json"
@@ -1930,15 +1930,22 @@ class PlannerTests(unittest.TestCase):
                  patch("jarvis.tools._localos_music_play_via_chrome", return_value={
                      "status": "unavailable",
                      "error": "chrome_direct_not_available",
-                 }):
+                 }), \
+                 patch("jarvis.tools._localos_music_open_player_for_polling", return_value={
+                     "status": "opened_unconfirmed",
+                     "opened": True,
+                     "player_url": "file:///tmp/!musicPlayer.html",
+                 }) as open_mock:
                 result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
 
         self.assertEqual(result["status"], "not_queued")
         self.assertEqual(result["playback_confirmation"], "bridge_not_polling")
         self.assertFalse(control_path.exists())
         self.assertEqual(result["chrome_direct"]["status"], "unavailable")
+        self.assertEqual(result["player_open"]["status"], "opened_unconfirmed")
         self.assertIn("Local OS Music is not connected", result["reply"])
-        self.assertIn("refresh that tab", result["reply"])
+        self.assertIn("I opened the Local OS Music Player", result["reply"])
+        open_mock.assert_called_once()
 
     def test_localos_music_play_uses_chrome_direct_when_bridge_is_stale_but_page_confirms(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2044,7 +2051,7 @@ class PlannerTests(unittest.TestCase):
                  patch("jarvis.tools.subprocess.run", return_value=completed) as run_mock, \
                  patch("jarvis.tools._localos_music_bridge_liveness", side_effect=[stale, live]), \
                  patch("jarvis.tools.time.sleep", return_value=None):
-                result = jarvis_tools._localos_music_open_player_for_polling(timeout_seconds=1.0)
+                result = jarvis_tools._localos_music_open_player_for_polling(timeout_seconds=0.0)
 
         self.assertEqual(result["status"], "live")
         self.assertTrue(result["opened"])
@@ -2079,28 +2086,38 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["error"], "localos_music_player_recently_opened")
         run_mock.assert_not_called()
 
-    def test_localos_music_open_player_for_polling_does_not_duplicate_recent_seen_tab(self):
+    def test_localos_music_open_player_for_polling_reopens_recent_seen_tab(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             player_path = Path(tmpdir) / "!musicPlayer.html"
             marker_path = Path(tmpdir) / "localos_music_player_open.json"
             player_path.write_text("<html></html>", encoding="utf-8")
+            completed = subprocess.CompletedProcess(
+                args=["/usr/bin/open"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
             with patch.object(jarvis_tools, "LOCALOS_MUSIC_PLAYER_PATH", player_path), \
                  patch.object(jarvis_tools, "LOCALOS_MUSIC_PLAYER_OPEN_MARK_PATH", marker_path), \
                  patch("jarvis.tools._find_executable", return_value="/usr/bin/open"), \
-                 patch("jarvis.tools.subprocess.run") as run_mock, \
-                 patch("jarvis.tools._localos_music_bridge_liveness", return_value={
+                 patch("jarvis.tools.subprocess.run", return_value=completed) as run_mock, \
+                 patch("jarvis.tools._localos_music_bridge_liveness", side_effect=[{
                      "status": "stale",
                      "bridge_version": 2,
                      "polling_active": True,
                      "snapshot_age_seconds": 55.0,
-                 }):
+                 }, {
+                     "status": "live",
+                     "bridge_version": 2,
+                     "polling_active": True,
+                     "snapshot_age_seconds": 0.2,
+                 }]), \
+                 patch("jarvis.tools.time.sleep", return_value=None):
                 result = jarvis_tools._localos_music_open_player_for_polling(timeout_seconds=1.0)
 
-        self.assertEqual(result["status"], "recently_seen")
-        self.assertFalse(result["opened"])
-        self.assertEqual(result["error"], "localos_music_player_recently_seen")
-        self.assertEqual(result["snapshot_age_seconds"], 55.0)
-        run_mock.assert_not_called()
+        self.assertEqual(result["status"], "live")
+        self.assertTrue(result["opened"])
+        run_mock.assert_called_once()
 
     def test_localos_music_play_recovers_from_chrome_automation_denial_by_opening_player(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2262,7 +2279,12 @@ class PlannerTests(unittest.TestCase):
                  patch("jarvis.tools._localos_music_play_via_chrome", return_value={
                      "status": "unavailable",
                      "error": "chrome_direct_not_available",
-                 }):
+                 }), \
+                 patch("jarvis.tools._localos_music_open_player_for_polling", return_value={
+                     "status": "open_failed",
+                     "opened": False,
+                     "error": "open_failed_for_test",
+                 }) as open_mock:
                 store_localos_music_snapshot(payload)
                 result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
 
@@ -2271,6 +2293,8 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["playback_confirmation"], "bridge_not_polling")
         self.assertFalse(control_path.exists())
         self.assertIn("Local OS Music is not connected", result["reply"])
+        self.assertIn("tried to open", result["reply"])
+        open_mock.assert_called_once()
 
     def test_localos_music_play_keeps_live_bridge_delay_queued(self):
         with tempfile.TemporaryDirectory() as tmpdir:

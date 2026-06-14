@@ -3380,7 +3380,7 @@ def localos_music_play(
                 "bridge_recovery": _localos_music_bridge_recovery(),
                 "reply": (
                     f"I found {_localos_music_found_phrase(selected)}, but Local OS did not start the audio. "
-                    "Open or refresh the Local OS Music Player, then try again."
+                    "I tried the Local OS player automatically; it accepted the request but has not started playback yet."
                 ),
                 **_duration_fields(started_at),
             }
@@ -3409,7 +3409,7 @@ def localos_music_play(
             elif confirmation_status == "accepted":
                 reply = (
                     f"I found {_localos_music_found_phrase(selected)}, but Local OS did not start the audio. "
-                    "Open or refresh the Local OS Music Player, then try again."
+                    "I tried the Local OS player automatically; it accepted the request but has not started playback yet."
                 )
             elif bridge_version:
                 reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS, but it has not confirmed playback yet."
@@ -3466,11 +3466,11 @@ def localos_music_play(
             "reply": (
                 f"I found {_localos_music_found_phrase(selected)}, but Local OS Music is not connected right now. "
                 + (
-                    "I already opened the Local OS Music Player; wait for it to finish connecting, then try again."
-                    if player_open.get("status") == "recently_opened"
-                    else "I recently saw the Local OS Music Player open; refresh that tab, then try again."
-                    if player_open.get("status") == "recently_seen"
-                    else "Open or refresh the Local OS Music Player, then try again."
+                    "I opened the Local OS Music Player, but it has not connected yet. Give it a moment, then try again."
+                    if player_open.get("status") in {"opened_unconfirmed", "recently_opened"}
+                    else "I tried to open the Local OS Music Player automatically, but it did not start."
+                    if player_open.get("status") in {"open_failed", "open_timeout", "unavailable"}
+                    else "I tried to reconnect Local OS Music automatically, but it did not confirm the bridge."
                 )
             ),
             **_duration_fields(started_at),
@@ -3812,21 +3812,6 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
             "liveness": current_liveness,
             **_duration_fields(started_at),
         }
-    snapshot_age = _safe_float(current_liveness.get("snapshot_age_seconds"))
-    if (
-        current_liveness.get("bridge_version")
-        and snapshot_age is not None
-        and snapshot_age <= LOCALOS_MUSIC_PLAYER_RECENT_SNAPSHOT_SECONDS
-    ):
-        return {
-            "status": "recently_seen",
-            "opened": False,
-            "error": "localos_music_player_recently_seen",
-            "snapshot_age_seconds": snapshot_age,
-            "recent_snapshot_seconds": LOCALOS_MUSIC_PLAYER_RECENT_SNAPSHOT_SECONDS,
-            "liveness": current_liveness,
-            **_duration_fields(started_at),
-        }
     if not LOCALOS_MUSIC_PLAYER_PATH.exists():
         return {
             "status": "unavailable",
@@ -3846,7 +3831,19 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
     player_url = LOCALOS_MUSIC_PLAYER_PATH.as_uri()
     recent_open = _localos_music_recent_player_open()
     if recent_open is not None:
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
         liveness = _localos_music_bridge_liveness()
+        while liveness.get("status") != "live" and time.monotonic() < deadline:
+            time.sleep(0.25)
+            liveness = _localos_music_bridge_liveness()
+        if liveness.get("status") == "live":
+            return {
+                "status": "live",
+                "opened": False,
+                "recently_opened": True,
+                "liveness": liveness,
+                **_duration_fields(started_at),
+            }
         return {
             **recent_open,
             "opened": False,
