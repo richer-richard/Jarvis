@@ -8668,6 +8668,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('executable(name: "jarvis-status-helper"', package_source)
         self.assertIn('CommandLine.arguments.contains("--self-test")', helper_source)
         self.assertIn("Jarvis status helper self-test passed", helper_source)
+
         self.assertIn('swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --product jarvis-status-helper', bundle_script)
         self.assertIn('cp "$SOURCE_STATUS_HELPER" "$MACOS_DIR/jarvis-status-helper"', bundle_script)
         self.assertIn('STATUS_HELPER_EXECUTABLE="$APP_PATH/Contents/MacOS/jarvis-status-helper"', launch_script)
@@ -8750,6 +8751,35 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("clearSpeechPlaybackWindow()", model_source)
         self.assertNotIn("notePotentialSpeech(text: statusText)", model_source)
         self.assertNotIn("toggleSpeechMuted()", model_source[model_source.index("handleSpeechBargeInIfNeeded"):])
+
+    def test_regression_prompt_matrix_script_covers_overnight_targets_quietly(self):
+        source = (PROJECT_ROOT / "scripts" / "run_regression_prompt_matrix.py").read_text(encoding="utf-8")
+
+        for case_name in [
+            "teams_assignment",
+            "music_waving",
+            "ram",
+            "codex_default",
+            "calendar_today",
+            "gemma_plan",
+            "sharpay_month",
+            "magic_keyboard_yuan",
+        ]:
+            self.assertIn(f'name="{case_name}"', source)
+        for expected_tool in [
+            "teams.assignment",
+            "localos.music_play",
+            "diagnostics.memory_usage",
+            "codex.chat_plan",
+            "calendar.today_schedule",
+            "models.test_plan",
+            "outlook.visible_summary",
+            "commerce.price_convert",
+        ]:
+            self.assertIn(f'expect_tool="{expected_tool}"', source)
+        self.assertIn("--speech-audit-only", source)
+        self.assertIn("--no-permission-prompts", source)
+        self.assertIn('"--stt-provider", "local"', source)
 
     def test_swift_speech_barge_in_filters_short_noise_and_echoes(self):
         model_source = (
