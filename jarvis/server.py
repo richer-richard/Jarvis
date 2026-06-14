@@ -838,8 +838,6 @@ def _should_auto_speak(data: dict[str, Any]) -> bool:
         "tools.deep_catalog",
     }:
         return False
-    if data.get("confirmation"):
-        return False
     result = data.get("result")
     if not isinstance(result, dict):
         return False

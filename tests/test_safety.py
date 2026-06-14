@@ -4659,6 +4659,38 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result.tool, "policy.strong_confirmation")
         self.assertFalse(result.executed)
 
+    def test_codex_default_chat_send_request_prepares_confirmed_plan(self):
+        prompt = "Open Codex and send a prompt called 'test' in the Default chat."
+        with patch("jarvis.planner.start_codex_delegate_job") as delegate_mock, \
+             patch("jarvis.planner.start_codex_continue_job") as continue_mock:
+            result = Planner().handle(prompt)
+
+        delegate_mock.assert_not_called()
+        continue_mock.assert_not_called()
+        self.assertEqual(result.tool, "codex.chat_plan")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.confirmation["kind"], "typed")
+        self.assertEqual(result.confirmation["exact_phrase"], "JARVIS APPROVE")
+        self.assertEqual(result.result["selected_chat_name"], "Default")
+        self.assertTrue(result.result["requires_typed_confirmation"])
+        self.assertFalse(result.result["called_codex"])
+        self.assertFalse(result.result["sent_prompt_to_codex"])
+        self.assertTrue(result.result["session_ids_hidden"])
+        self.assertIn("need confirmation", result.result["reply"])
+
+    def test_codex_default_chat_send_preview_chooses_chat_without_generic_wall(self):
+        prompt = "Ask Codex to send a prompt called test in the Default chat."
+        preview = Planner().preview(prompt)
+
+        self.assertEqual(preview.tool, "codex.chat_plan")
+        self.assertFalse(preview.executed)
+        self.assertEqual(preview.confirmation["kind"], "typed")
+        plan = preview.result["plan"]
+        self.assertEqual(plan["selected_chat_name"], "Default")
+        self.assertTrue(plan["requires_typed_confirmation"])
+        self.assertFalse(plan["called_codex"])
+        self.assertFalse(plan["sent_prompt_to_codex"])
+
     def test_explicit_codex_preview_bypasses_model_router(self):
         bad_intent = {"status": "completed", "selected_tool": "outlook.visible_summary", "confidence": 0.91, "entities": {}}
         with patch("jarvis.planner.select_tool_intent", return_value=bad_intent) as router_mock:
@@ -5345,10 +5377,14 @@ class PlannerTests(unittest.TestCase):
         result = Planner().handle(command)
         preview = Planner().preview(command)
 
-        self.assertEqual(result.tool, "policy.strong_confirmation")
+        self.assertEqual(result.tool, "codex.chat_plan")
         self.assertFalse(result.executed)
         self.assertTrue(result.confirmation["required"])
-        self.assertEqual(preview.tool, "policy.strong_confirmation")
+        self.assertEqual(result.result["selected_chat_name"], "Default")
+        self.assertFalse(result.result["sent_prompt_to_codex"])
+        self.assertEqual(preview.tool, "codex.chat_plan")
+        self.assertEqual(preview.result["plan"]["selected_chat_name"], "Default")
+        self.assertFalse(preview.result["plan"]["sent_prompt_to_codex"])
 
     def test_contact_tools_route_and_parse_fallback_entities(self):
         with patch("jarvis.planner.contact_data_lookup", return_value={"tool": "contacts.lookup", "status": "found", "executed": True, "reply": "Known."}) as lookup_mock:
@@ -12656,6 +12692,39 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(events[-1]["data"]["speech"]["status"], "suppressed_by_request")
         self.assertEqual(events[-1]["data"]["speech"]["reason"], "final")
         self.assertIn("Jarvis", events[-1]["data"]["result"]["reply"])
+        speak_mock.assert_not_called()
+
+    def test_stream_command_speaks_confirmation_final_reply(self):
+        command = "Open Codex and send a prompt called test in the Default chat."
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async", side_effect=lambda text, *, reason: {"spoken": True, "status": "queued", "reason": reason, "text": text}) as speak_mock:
+                events = list(server.stream_command(command))
+
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[0]["data"]["speech"]["reason"], "status")
+        self.assertEqual(events[-1]["data"]["speech"]["reason"], "final")
+        self.assertEqual(events[-1]["data"]["tool"], "codex.chat_plan")
+        self.assertEqual(events[-1]["data"]["confirmation"]["kind"], "typed")
+        self.assertIn("Default Codex chat", speak_mock.call_args_list[1].args[0])
+        self.assertIn("need confirmation", speak_mock.call_args_list[1].args[0])
+
+    def test_stream_command_suppressed_confirmation_final_has_preview(self):
+        command = "Open Codex and send a prompt called test in the Default chat."
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.speak_text_async") as speak_mock:
+                events = list(server.stream_command(command, suppress_speech=True))
+
+        self.assertEqual([event["event"] for event in events], ["status", "final"])
+        self.assertEqual(events[-1]["data"]["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(events[-1]["data"]["speech"]["reason"], "final")
+        self.assertEqual(
+            events[-1]["data"]["speech"]["text_preview"],
+            "I would use the Default Codex chat, but I need confirmation before sending anything.",
+        )
         speak_mock.assert_not_called()
 
     def test_stream_status_text_uses_app_name_when_preview_has_one(self):

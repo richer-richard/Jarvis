@@ -718,6 +718,8 @@ class Planner:
         app_quit_name = _extract_app_quit_name(text)
         if app_quit_name is not None:
             return self._app_quit_confirmation_result(text, assessment, app_quit_name)
+        if _looks_like_codex_chat_send_request(lower):
+            return self._codex_chat_send_confirmation_result(text, assessment, preview=False)
         if assessment.requires_typed_confirmation:
             return self._result(
                 text,
@@ -1110,6 +1112,8 @@ class Planner:
         app_quit_name = _extract_app_quit_name(text)
         if app_quit_name is not None:
             return self._app_quit_confirmation_result(text, assessment, app_quit_name)
+        if _looks_like_codex_chat_send_request(lower):
+            return self._codex_chat_send_confirmation_result(text, assessment, preview=True)
         if assessment.requires_typed_confirmation:
             return self._preview_result(
                 text,
@@ -2232,6 +2236,48 @@ class Planner:
                 exact_phrase=None,
                 prototype_note="Jarvis prepared the quit plan only. No app was quit.",
             ),
+        )
+
+    def _codex_chat_send_confirmation_result(self, text: str, assessment: Any, *, preview: bool) -> PlannedResult:
+        plan = codex_chat_plan(text)
+        guarded_plan = {
+            **plan,
+            "executed": False,
+            "planned_only": True,
+            "requires_typed_confirmation": True,
+            "called_codex": False,
+            "started_codex_job": False,
+            "sent_prompt_to_codex": False,
+            "confirmation_gate": "typed",
+            "reply": (
+                f"I would use the {plan.get('selected_chat_name') or plan.get('default_chat') or 'Default'} Codex chat, "
+                "but I need confirmation before sending anything."
+            ),
+        }
+        confirmation = _confirmation(
+            kind="typed",
+            title="Confirm Codex Chat Send",
+            message="Send this Jarvis-generated prompt to the selected Codex chat?",
+            exact_phrase="JARVIS APPROVE",
+            prototype_note="Jarvis chose the Codex chat and prepared the prompt only. Nothing was sent.",
+        )
+        if preview:
+            return self._preview_result(
+                text,
+                "codex.chat_plan",
+                assessment,
+                False,
+                confirmation=confirmation,
+                plan=guarded_plan,
+            )
+        return self._result(
+            text,
+            "codex.chat_plan",
+            "Prepared Codex chat send plan; confirmation required.",
+            assessment,
+            guarded_plan,
+            False,
+            confirmation=confirmation,
         )
 
 
@@ -4713,6 +4759,22 @@ def _looks_like_codex_chat_plan(lower: str) -> bool:
     )
     mutation_cues = ("change", "switch", "set ", "delete", "remove", "rename", "edit")
     return any(cue in lower for cue in plan_cues) and not any(cue in lower for cue in mutation_cues)
+
+
+def _looks_like_codex_chat_send_request(lower: str) -> bool:
+    if "codex" not in lower:
+        return False
+    status_cues = ("status", "activity", "jobs", "progress", "speed", "memory")
+    if any(cue in lower for cue in status_cues):
+        return False
+    action_cues = ("send", "type", "paste", "submit", "message", "prompt")
+    prompt_cues = ("prompt", "message", "called", "named", "saying", "say exactly", "test")
+    chat_cues = ("chat", "session", "default")
+    return (
+        any(cue in lower for cue in action_cues)
+        and any(cue in lower for cue in prompt_cues)
+        and any(cue in lower for cue in chat_cues)
+    )
 
 
 def _looks_like_codex_activity_status(lower: str) -> bool:
