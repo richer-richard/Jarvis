@@ -595,6 +595,8 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Bundle.main.bundlePath,
             "--base-url",
             model.dashboardURL.absoluteString,
+            "--parent-pid",
+            String(ProcessInfo.processInfo.processIdentifier),
         ]
         process.terminationHandler = { [weak self] terminatedProcess in
             Task { @MainActor in

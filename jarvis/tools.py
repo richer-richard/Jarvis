@@ -12273,14 +12273,15 @@ def visible_screen_text_summary(
     follow_up_questions = _visible_assignment_follow_up_questions(command, assignment_items) if assignment_items else []
     digest_items = assignment_items or _browser_page_digest_items(clean_text, max_items=5, max_chars=180)
     digest = "; ".join(digest_items)
+    digest_sentence = digest.rstrip(" .")
     if assignment_items:
-        reply = f"I read the visible Teams screen. I can see assignment-related text: {digest}."
+        reply = f"I read the visible Teams screen. I can see assignment-related text: {digest_sentence}."
         if follow_up_questions:
             reply += " Questions I need answered: " + " ".join(
                 f"{index + 1}. {question}" for index, question in enumerate(follow_up_questions)
             )
     elif digest:
-        reply = f"I read {source_label}. I can see: {digest}."
+        reply = f"I read {source_label}. I can see: {digest_sentence}."
     else:
         reply = f"I read {source_label}, but I could not condense the visible text into a useful short summary."
     return {
@@ -12329,10 +12330,23 @@ def _visible_assignment_digest_items(text: str, *, max_items: int = 6, max_chars
         "music",
         "classwork",
     }
+    schoolwork_anchors = {
+        *keywords,
+        "chart",
+        "class",
+        "document",
+        "lesson",
+        "student",
+        "students",
+        "table number",
+        "teacher",
+    }
     chrome_noise = {
         "microsoft teams",
         "activity",
+        "assignments",
         "chat",
+        "classwork",
         "teams",
         "calendar",
         "calls",
@@ -12341,26 +12355,51 @@ def _visible_assignment_digest_items(text: str, *, max_items: int = 6, max_chars
         "new chat",
         "search",
     }
+    browser_chrome_markers = [
+        "chrome file edit view history bookmarks",
+        "ask gemini",
+        "teams.cloud.microsoft",
+        "type \"with:\"",
+        "new tab",
+    ]
     raw_lines = [re.sub(r"\s+", " ", line).strip(" -\t") for line in str(text or "").splitlines()]
     lines = [line for line in raw_lines if len(line) >= 4]
     scored: list[tuple[int, int, str]] = []
     seen: set[str] = set()
     for index, line in enumerate(lines):
+        line = re.sub(
+            r"^(?:activity|assignments?|calendar|calls|chat|classwork|copilot|grades|reflect|teams)\s+",
+            "",
+            line,
+            flags=re.IGNORECASE,
+        ).strip(" -\t")
+        line = re.sub(r"^(?:[o0]llow the link)", "Follow the link", line, flags=re.IGNORECASE)
+        if len(line) < 4:
+            continue
         normalized = line.casefold()
-        if normalized in seen or normalized in chrome_noise:
+        nav_key = re.sub(r"[^a-z0-9 ]+", "", normalized).strip()
+        if normalized in seen or normalized in chrome_noise or nav_key in chrome_noise:
+            continue
+        if any(marker in normalized for marker in browser_chrome_markers):
             continue
         seen.add(normalized)
+        has_schoolwork_anchor = any(anchor in normalized for anchor in schoolwork_anchors)
         score = 0
         for keyword in keywords:
             if keyword in normalized:
                 score += 4
+        if any(anchor in normalized for anchor in ["chart", "document", "student", "students", "table number"]):
+            score += 2
         if re.search(r"\b(?:due|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)\b", normalized):
-            score += 3
+            if has_schoolwork_anchor:
+                score += 3
         if re.search(r"\b(?:create|make|write|complete|include|submit|upload|answer)\b", normalized):
-            score += 2
+            if has_schoolwork_anchor:
+                score += 2
         if re.search(r"\b(?:title|rubric|criteria|points?)\b", normalized):
-            score += 2
-        if score <= 0:
+            if has_schoolwork_anchor:
+                score += 2
+        if not has_schoolwork_anchor or score <= 0:
             continue
         scored.append((score, index, line))
 
@@ -12369,6 +12408,9 @@ def _visible_assignment_digest_items(text: str, *, max_items: int = 6, max_chars
     selected = sorted(sorted(scored, key=lambda item: (-item[0], item[1]))[:max_items], key=lambda item: item[1])
     items = []
     for _, _, line in selected:
+        line = line.rstrip(" ;")
+        if len(line) <= 40 and line.endswith(":"):
+            line = line[:-1].rstrip()
         if len(line) > max_chars:
             line = line[: max_chars - 3].rstrip() + "..."
         items.append(line)

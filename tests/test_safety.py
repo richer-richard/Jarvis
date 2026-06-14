@@ -3542,6 +3542,48 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Due Friday", result["spoken_summary"])
         self.assertNotIn("screenshot", result)
 
+    def test_native_visible_screen_read_retries_display_when_target_window_ocr_empty(self):
+        source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Support"
+            / "JarvisNativeOutlookReader.swift"
+        ).read_text()
+
+        self.assertIn("native_vision_ocr_screen_display_fallback", source)
+        self.assertIn("lines.isEmpty", source)
+        self.assertIn("lines.count <= 2", source)
+        self.assertIn("initialText.count < 80", source)
+        self.assertIn("displayLines.count > lines.count", source)
+        self.assertIn("ownerNames != nil", source)
+        self.assertIn("CGDisplayCreateImage(CGMainDisplayID())", source)
+
+    def test_status_helper_exits_when_parent_app_disappears(self):
+        app_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "App"
+            / "JarvisMenuBarApp.swift"
+        ).read_text()
+        helper_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisStatusHelper"
+            / "main.swift"
+        ).read_text()
+
+        self.assertIn("--parent-pid", app_source)
+        self.assertIn("ProcessInfo.processInfo.processIdentifier", app_source)
+        self.assertIn("parentPID", helper_source)
+        self.assertIn("startParentMonitor", helper_source)
+        self.assertIn("processExists", helper_source)
+        self.assertIn("NSApp.terminate(nil)", helper_source)
+
     def test_visible_screen_text_summary_extracts_assignment_lines_from_noisy_teams_ocr(self):
         result = visible_screen_text_summary(
             "\n".join([
@@ -3569,6 +3611,35 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Rubric", digest)
         self.assertNotIn("Activity", digest)
         self.assertEqual(result["follow_up_questions"], [])
+
+    def test_visible_screen_text_summary_ignores_browser_chrome_time_noise(self):
+        result = visible_screen_text_summary(
+            "\n".join([
+                "Chrome File Edit View History Bookmarks Profiles Tab Window Help Mon Jun 15 3:19:10 AM",
+                "can you make me something x Justin Bieber - Beauty And A x Ask Gemini",
+                "Teams and Channels | General | Microsoft Teams",
+                "Lesson 2: The Geography of Greece Group Assignment",
+                "Assignments 7 WORLD HISTORY 世界历史 7H 2025...",
+                "Instructions:",
+                "Calendar Follow the link to find the group Word document.",
+                "Each student should complete the part of the chart which matches their table number.",
+                "& Classwork",
+                "Assignments @",
+            ]),
+            command="Look in Teams for my newest Music assignment and ask me questions.",
+            diagnostics={"target_app_name": "Google Chrome", "window_title": "Microsoft Teams"},
+        )
+
+        self.assertEqual(result["status"], "checked")
+        digest = " ".join(result["assignment_digest_items"])
+        self.assertIn("Group Assignment", digest)
+        self.assertIn("Instructions", digest)
+        self.assertIn("Word document", digest)
+        self.assertNotIn("Justin Bieber", digest)
+        self.assertNotIn("Mon Jun", digest)
+        self.assertNotIn("WORLD HISTORY", digest)
+        self.assertNotIn("Classwork", digest)
+        self.assertNotIn("Assignments @", digest)
 
     def test_visible_screen_text_summary_asks_assignment_follow_up_questions_when_requested(self):
         result = visible_screen_text_summary(

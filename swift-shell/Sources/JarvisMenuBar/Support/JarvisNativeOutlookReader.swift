@@ -68,16 +68,30 @@ enum JarvisNativeOutlookReader {
         }
 
         let ownerNames = cleanTargetName?.isEmpty == false ? Set([cleanTargetName!]) : nil
-        guard let image = captureVisibleWindow(ownerNames: ownerNames) ?? CGDisplayCreateImage(CGMainDisplayID()) else {
+        guard let initialImage = captureVisibleWindow(ownerNames: ownerNames) ?? CGDisplayCreateImage(CGMainDisplayID()) else {
             throw NativeOutlookReadError.captureFailed
         }
 
-        let lines = try recognizeText(in: image)
+        var image = initialImage
+        var lines = try recognizeText(in: image)
+        var source = "native_vision_ocr_screen"
+        let initialText = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if (lines.isEmpty || lines.count <= 2 || initialText.count < 80),
+           ownerNames != nil,
+           let displayImage = CGDisplayCreateImage(CGMainDisplayID()) {
+            let displayLines = try recognizeText(in: displayImage)
+            let displayText = displayLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if displayLines.count > lines.count || displayText.count > initialText.count + 80 {
+                image = displayImage
+                lines = displayLines
+                source = "native_vision_ocr_screen_display_fallback"
+            }
+        }
         let text = String(lines.joined(separator: "\n").prefix(12_000))
         return NativeOutlookOCRResult(
             text: text,
             diagnostics: VisibleOutlookTextDiagnostics(
-                source: "native_vision_ocr_screen",
+                source: source,
                 lineCount: lines.count,
                 characterCount: text.count,
                 captureWidth: image.width,

@@ -21,6 +21,9 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.423 hardens the real Teams handoff: if targeted Chrome-window OCR returns empty or useless text, native screen reading falls back to the main display and can still summarize the visible Teams page.",
+    "Jarvis 0.1.423 cleans Teams assignment summaries by dropping browser tab/menu noise and Teams sidebar crumbs before asking follow-up questions.",
+    "Jarvis 0.1.423 fixes another duplicate-menu-bar path: the status helper now receives the main app PID and exits when that parent Jarvis app disappears.",
     "Jarvis 0.1.422 aligns the Teams assignment plan with the real native OCR follow-up: the next safe read tool is now `screen.visible_text`, not the old browser-read placeholder.",
     "Jarvis 0.1.421 polishes spoken working lines: month-long email summaries no longer say `newest email`, and Teams assignment handoff no longer exposes `assignment plan` wording.",
     "Jarvis 0.1.420 now asks useful follow-up questions after Teams assignment OCR when Leo asks for enough information to finish the assignment.",
@@ -162,6 +165,14 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.423 build 423 launched from bundled app resources with worker_launch_matches_bundle=true and exactly one app, one parent-bound status helper, and one worker.",
+    "Full Python safety suite passed 618/618 after the 0.1.423 OCR/helper hardening.",
+    "Swift menu-bar and status-helper self-tests passed after the parent-PID helper lifecycle fix.",
+    "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-032753.json`.",
+    "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-033049.json` after the 0.1.423 build.",
+    "Live eight-prompt speech-audit matrix passed 8/8 at `runtime/regression_prompt_matrix/20260615-033624/summary.json` on Jarvis 0.1.423.",
+    "Real Teams UI proof: the app ran `teams.assignment`, then `screen.visible_text` with `native_vision_ocr_screen_display_fallback`, detected assignment context, and generated follow-up questions.",
+    "Live visible-screen summary proof now keeps the assignment lines and drops Chrome/tab/sidebar noise for the Teams screen.",
     "Live Jarvis 0.1.422 build 422 launched from bundled app resources with worker_launch_matches_bundle=true.",
     "Full Python safety suite passed 615/615 after the 0.1.422 Teams OCR contract alignment.",
     "Swift command-routing self-test passed after the 0.1.422 Teams OCR contract alignment.",
@@ -887,6 +898,10 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.423", "Live app is bundled, launched, and reports Jarvis 0.1.423 build 423."),
+        ("done", "Fix Chrome OCR fallback", "Targeted Chrome-window OCR now retries the main display when the window capture is empty or too sparse."),
+        ("done", "Clean Teams assignment digest", "Visible Teams summaries now drop browser tab/menu noise and sidebar crumbs before asking follow-up questions."),
+        ("done", "Prevent orphan menu heads", "The status helper monitors the parent Jarvis PID and exits when the app disappears."),
         ("done", "Ship Jarvis 0.1.422", "Live app is bundled, launched, and reports Jarvis 0.1.422 build 422."),
         ("done", "Align Teams OCR contract", "Teams assignment metadata now recommends screen.visible_text and names the Chrome handoff plus native OCR follow-up."),
         ("done", "Ship Jarvis 0.1.421", "Live app is bundled, launched, and reports Jarvis 0.1.421 build 421."),

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import JarvisClient
 
@@ -24,6 +25,8 @@ struct JarvisStatusHelperApp {
             "/Applications/Jarvis.app",
             "--base-url",
             "http://127.0.0.1:8765",
+            "--parent-pid",
+            "12345",
         ])
         guard parsed.appBundlePath == "/Applications/Jarvis.app" else {
             fputs("Jarvis status helper self-test failed: app bundle path did not parse.\n", stderr)
@@ -31,6 +34,14 @@ struct JarvisStatusHelperApp {
         }
         guard parsed.baseURL?.absoluteString == "http://127.0.0.1:8765" else {
             fputs("Jarvis status helper self-test failed: base URL did not parse.\n", stderr)
+            Foundation.exit(1)
+        }
+        guard parsed.parentPID == 12345 else {
+            fputs("Jarvis status helper self-test failed: parent PID did not parse.\n", stderr)
+            Foundation.exit(1)
+        }
+        guard JarvisStatusHelperDelegate.processExists(ProcessInfo.processInfo.processIdentifier) else {
+            fputs("Jarvis status helper self-test failed: current process should exist.\n", stderr)
             Foundation.exit(1)
         }
         guard JarvisStatusHelperDelegate.speechMuteMenuTitle(muted: false) == "Shut Up" else {
@@ -64,9 +75,11 @@ struct JarvisStatusHelperApp {
 final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let client: JarvisClient
     private let appBundleURL: URL?
+    private let parentPID: pid_t?
     private var statusItem: NSStatusItem?
     private var speechMuteItem: NSMenuItem?
     private var knownMuted: Bool = false
+    private var parentMonitor: Timer?
 
     init(arguments: [String]) {
         let parsed = Self.parseArguments(arguments)
@@ -76,12 +89,35 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
             client = (try? JarvisClient.fromEnvironment()) ?? JarvisClient(baseURL: URL(string: "http://127.0.0.1:8765")!)
         }
         appBundleURL = parsed.appBundlePath.map(URL.init(fileURLWithPath:))
+        parentPID = parsed.parentPID
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
         refreshSpeechMuteTitle()
+        startParentMonitor()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        parentMonitor?.invalidate()
+        parentMonitor = nil
+    }
+
+    private func startParentMonitor() {
+        guard let parentPID else {
+            return
+        }
+        parentMonitor = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard self != nil else {
+                    return
+                }
+                if !Self.processExists(parentPID) {
+                    NSApp.terminate(nil)
+                }
+            }
+        }
     }
 
     private func configureStatusItem() {
@@ -240,9 +276,10 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
         "Unmute Audio"
     }
 
-    fileprivate static func parseArguments(_ arguments: [String]) -> (appBundlePath: String?, baseURL: URL?) {
+    fileprivate static func parseArguments(_ arguments: [String]) -> (appBundlePath: String?, baseURL: URL?, parentPID: pid_t?) {
         var appBundlePath: String?
         var baseURL: URL?
+        var parentPID: pid_t?
         var iterator = arguments.dropFirst().makeIterator()
         while let argument = iterator.next() {
             switch argument {
@@ -252,11 +289,26 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
                 if let value = iterator.next() {
                     baseURL = URL(string: value)
                 }
+            case "--parent-pid":
+                if let value = iterator.next(), let parsed = Int32(value), parsed > 1 {
+                    parentPID = pid_t(parsed)
+                }
             default:
                 continue
             }
         }
-        return (appBundlePath, baseURL)
+        return (appBundlePath, baseURL, parentPID)
+    }
+
+    nonisolated fileprivate static func processExists(_ pid: pid_t) -> Bool {
+        guard pid > 1 else {
+            return false
+        }
+        errno = 0
+        if kill(pid, 0) == 0 {
+            return true
+        }
+        return errno == EPERM
     }
 }
 
