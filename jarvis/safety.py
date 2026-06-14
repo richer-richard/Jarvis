@@ -34,11 +34,11 @@ RISK_LABELS = {
 }
 
 PRIVATE_READ_PATTERNS = [
-    r"\bemail\b",
+    r"\bemails?\b",
     r"\boutlook\b",
-    r"\bmail\b",
+    r"\bmails?\b",
     r"\bcalendar\b",
-    r"\bmessage\b",
+    r"\bmessages?\b",
     r"\bdocument\b",
 ]
 

@@ -1252,6 +1252,14 @@ class SafetyPolicyTests(unittest.TestCase):
         self.assertTrue(assessment.requires_confirmation)
         self.assertEqual(assessment.risk_level, 3)
 
+    def test_plural_email_summary_is_private_read_access(self):
+        assessment = classify_command("Summarize all the emails from Ms. Sharpay in the past month.")
+
+        self.assertEqual(assessment.risk_level, 2)
+        self.assertEqual(assessment.decision, "allowed_with_visible_logging")
+        self.assertFalse(assessment.requires_confirmation)
+        self.assertIn("private local app content", " ".join(assessment.reasons))
+
     def test_external_send_requires_typed_confirmation(self):
         assessment = classify_command("send an email to my teacher")
         self.assertEqual(assessment.risk_level, 4)

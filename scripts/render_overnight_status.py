@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.372 fixes private-read safety for natural plural wording: `summarize all the emails...` is now visibly logged as private email access instead of being mislabeled as local conversation.",
     "Jarvis 0.1.371 makes Chrome page-reading failures actionable: if macOS blocks Automation, Jarvis now says the exact Google Chrome permission needed, keeps the signed-in Chrome strategy, and still refuses to copy cookies or sessions into WebKit.",
     "Jarvis 0.1.370 turns the Teams browser lane into a usable next step: Teams assignment plans can carry the imported Teams bookmark into the visible Jarvis browser/Chrome handoff, and `what's on this page?` now reads a concise local page digest instead of raw page text.",
     "Jarvis 0.1.369 improves dictated contact aliases: if STT hears `Ms. Sharpay` as `his Sharpay`, contact lookup still resolves the same local alias before email search.",
@@ -166,7 +167,7 @@ PROOF_ITEMS = [
     "Chrome bookmark snapshot has 23 imported links from 3 profiles, including `teams.microsoft.com`.",
     "Sharpay-style email previews now include `contact_alias_lookup`, `resolved_sender_query`, and `recommended_tool: contacts.infer` when the alias is not known, while remaining planned-only; actual email execution can now infer a confident alias from recent sender metadata before searching messages.",
     "Latest local checkpoint commits record the browser/session, music-recovery, model-scoring, report-proof, voice-loop routing, LocalOS stale-bridge hardening, and contact-aware email planning; the branch has not been pushed while Leo is asleep.",
-    "Python safety suite: 567/567 passed after the wake, mute, final-speech, report-route, speech-alignment, barge-in filtering, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, page-digest, Teams browser-target, Chrome Automation diagnosis, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, contact-dictation aliases, and voice-QA work.",
+    "Python safety suite: 568/568 passed after the wake, mute, final-speech, report-route, speech-alignment, barge-in filtering, model-selected device/app-routing, app-specific status-line, fuzzy-wake, stale-progress, anti-flicker, muted-latency, local-STT repair, overlapping-turn, crash-monitor, fallback-hardening, quiet-command, quiet-audio automation, summon-popout, hidden-tool-call sanitization, model-scoring, browser-session, page-digest, Teams browser-target, Chrome Automation diagnosis, plural-email private-read classification, music-bridge, contact-memory, contact-inference, calendar-preview, LocalOS Chrome-direct control, contact-dictation aliases, and voice-QA work.",
     "Swift build passed for the Jarvis menu-bar app.",
     "Swift self-tests passed, including menu-bar routing labels, native wake detection, and worker checks.",
     "Swift permission-readiness self-test passed without requesting permissions; it currently reports Microphone ready and Speech Recognition not requested.",
@@ -960,7 +961,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 567/567 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, 568/568 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",
