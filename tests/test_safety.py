@@ -8813,8 +8813,14 @@ class RuntimeSurfaceTests(unittest.TestCase):
         ]:
             self.assertIn(f'expect_tool="{expected_tool}"', source)
         self.assertIn("--speech-audit-only", source)
+        self.assertIn('"--stt-provider",', source)
+        self.assertIn('choices=("auto", "apple", "local")', source)
+        self.assertIn('"--no-permission-prompts",', source)
+        self.assertIn("resolve_stt_mode(args, parser)", source)
+        self.assertIn("--stt-provider auto/apple requires --allow-apple-speech", source)
+        self.assertIn("--no-permission-prompts can only be combined with --stt-provider local", source)
         self.assertIn("--no-permission-prompts", source)
-        self.assertIn('"--stt-provider", "local"', source)
+        self.assertIn('command.extend(["--stt-provider", stt_provider])', source)
 
     def test_swift_speech_barge_in_filters_short_noise_and_echoes(self):
         model_source = (

@@ -90,7 +90,19 @@ def main() -> int:
         action="store_true",
         help="Allow voice_loop_qa.py to use Apple Speech if it is already authorized.",
     )
+    parser.add_argument(
+        "--stt-provider",
+        choices=("auto", "apple", "local"),
+        default=None,
+        help="STT provider passed to voice_loop_qa.py. Defaults to local unless --allow-apple-speech is set.",
+    )
+    parser.add_argument(
+        "--no-permission-prompts",
+        action="store_true",
+        help="Force no Apple Speech permission prompts. This is the unattended default unless --allow-apple-speech is set.",
+    )
     args = parser.parse_args()
+    stt_provider, no_permission_prompts = resolve_stt_mode(args, parser)
 
     stamp = datetime.now(BEIJING).strftime("%Y%m%d-%H%M%S")
     run_root = Path(args.output_root).resolve() / stamp
@@ -103,7 +115,8 @@ def main() -> int:
             base_url=args.base_url.rstrip("/"),
             timeout=args.timeout,
             length_scale=args.length_scale,
-            allow_apple_speech=args.allow_apple_speech,
+            stt_provider=stt_provider,
+            no_permission_prompts=no_permission_prompts,
         )
         for case in CASES
     ]
@@ -125,6 +138,24 @@ def main() -> int:
     return 0 if summary["ok"] else 1
 
 
+def resolve_stt_mode(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> tuple[str, bool]:
+    stt_provider = args.stt_provider
+    if args.no_permission_prompts:
+        if stt_provider in {"auto", "apple"}:
+            parser.error("--no-permission-prompts can only be combined with --stt-provider local")
+        stt_provider = "local"
+    elif stt_provider is None:
+        stt_provider = "auto" if args.allow_apple_speech else "local"
+
+    no_permission_prompts = stt_provider == "local"
+    if not no_permission_prompts and not args.allow_apple_speech:
+        parser.error("--stt-provider auto/apple requires --allow-apple-speech")
+    return stt_provider, no_permission_prompts
+
+
 def run_case(
     case: MatrixCase,
     *,
@@ -132,7 +163,8 @@ def run_case(
     base_url: str,
     timeout: float,
     length_scale: float,
-    allow_apple_speech: bool,
+    stt_provider: str,
+    no_permission_prompts: bool,
 ) -> dict[str, object]:
     case_root = run_root / case.name
     command = [
@@ -152,9 +184,9 @@ def run_case(
         "--expect-tool",
         case.expect_tool,
     ]
-    if not allow_apple_speech:
+    if no_permission_prompts:
         command.append("--no-permission-prompts")
-        command.extend(["--stt-provider", "local"])
+    command.extend(["--stt-provider", stt_provider])
     for expected_text in case.expect_visible_contains:
         command.extend(["--expect-visible-contains", expected_text])
 
