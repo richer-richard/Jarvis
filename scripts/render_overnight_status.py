@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.424 keeps the visible speech chip honest: the main app now syncs `/api/speech/mute` every two seconds, so `Speech On` does not stay stale after the helper or verifier mutes Jarvis.",
     "Jarvis 0.1.423 hardens the real Teams handoff: if targeted Chrome-window OCR returns empty or useless text, native screen reading falls back to the main display and can still summarize the visible Teams page.",
     "Jarvis 0.1.423 cleans Teams assignment summaries by dropping browser tab/menu noise and Teams sidebar crumbs before asking follow-up questions.",
     "Jarvis 0.1.423 fixes another duplicate-menu-bar path: the status helper now receives the main app PID and exits when that parent Jarvis app disappears.",
@@ -165,6 +166,11 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.424 build 424 launched from bundled app resources with worker_launch_matches_bundle=true and exactly one app, one parent-bound status helper, and one worker.",
+    "Full Python safety suite passed 618/618 after the 0.1.424 speech-status sync patch.",
+    "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-034959.json`.",
+    "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-035341.json` after the 0.1.424 build.",
+    "Live speech is muted after verification, and `/api/speech/mute` reports muted=true with no active speech.",
     "Live Jarvis 0.1.423 build 423 launched from bundled app resources with worker_launch_matches_bundle=true and exactly one app, one parent-bound status helper, and one worker.",
     "Full Python safety suite passed 618/618 after the 0.1.423 OCR/helper hardening.",
     "Swift menu-bar and status-helper self-tests passed after the parent-PID helper lifecycle fix.",
@@ -898,6 +904,8 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.424", "Live app is bundled, launched, and reports Jarvis 0.1.424 build 424."),
+        ("done", "Sync visible speech mute status", "The main panel now polls speech mute state and updates the Speech On/Muted chip after helper or verifier changes."),
         ("done", "Ship Jarvis 0.1.423", "Live app is bundled, launched, and reports Jarvis 0.1.423 build 423."),
         ("done", "Fix Chrome OCR fallback", "Targeted Chrome-window OCR now retries the main display when the window capture is empty or too sparse."),
         ("done", "Clean Teams assignment digest", "Visible Teams summaries now drop browser tab/menu noise and sidebar crumbs before asking follow-up questions."),

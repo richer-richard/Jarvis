@@ -51,6 +51,7 @@ final class JarvisShellModel: ObservableObject {
     private var lastCommandDiagnostics: [String: Any] = [:]
     private var monitoredCodexJobs: Set<String> = []
     private var codexActivityTask: Task<Void, Never>?
+    private var speechMuteStatusTask: Task<Void, Never>?
     private var activeTimerTasks: [String: Task<Void, Never>] = [:]
     private var wakeEventLog: [[String: String]] = []
     private var lastWakeRecoveryStatus: String = ""
@@ -69,6 +70,7 @@ final class JarvisShellModel: ObservableObject {
     var onSpeechMuteStateChanged: (() -> Void)?
     var onSpeechPlaybackLikelyStarted: (() -> Void)?
     private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
+    private static let speechMuteStatusPollNanoseconds: UInt64 = 2_000_000_000
     private static let speechBargeInGraceSeconds: TimeInterval = 3.5
     private static let speechBargeInMinimumTokenCount = 4
     private static let smokeTestPrompts = [
@@ -161,6 +163,7 @@ final class JarvisShellModel: ObservableObject {
     }
 
     func startWorkerMonitoring() {
+        startSpeechMuteStatusSync()
         workerSupervisor.startMonitoring { [weak self] status in
             guard let self else {
                 return
@@ -184,6 +187,7 @@ final class JarvisShellModel: ObservableObject {
     }
 
     func stopWorkerMonitoring() {
+        stopSpeechMuteStatusSync()
         wakeListener.stop()
         codexActivityTask?.cancel()
         codexActivityTask = nil
@@ -324,6 +328,23 @@ final class JarvisShellModel: ObservableObject {
         } catch {
             speechMuteText = Self.speechMuteText(muted: isSpeechMuted)
         }
+    }
+
+    private func startSpeechMuteStatusSync() {
+        guard speechMuteStatusTask == nil else {
+            return
+        }
+        speechMuteStatusTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshSpeechMuteStatus()
+                try? await Task.sleep(nanoseconds: Self.speechMuteStatusPollNanoseconds)
+            }
+        }
+    }
+
+    private func stopSpeechMuteStatusSync() {
+        speechMuteStatusTask?.cancel()
+        speechMuteStatusTask = nil
     }
 
     private func applySpeechMuteResponse(_ response: SpeechMuteResponse) {
