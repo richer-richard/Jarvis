@@ -21,6 +21,8 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.417 adds a concrete native visible-screen read route: explicit requests like `read the visible Teams screen` use the macOS app's Apple Vision OCR path, send extracted text only to the local worker, and keep screenshots unstored by default.",
+    "The new `screen.visible_text` route scans OCR text as untrusted content, hides private screen digest text from audit logs, and gives Leo a short spoken/visible summary instead of raw OCR dumps.",
     "The safety verifier now runs temporary bundle self-tests on a private local port, so verification no longer makes a temporary Jarvis fight the live Jarvis worker on `127.0.0.1:8765`.",
     "Jarvis 0.1.416 makes the Teams assignment route honest: it opens the Teams bookmark in signed-in Chrome, but explicitly says no assignment has been inspected until a later visible page or screen read succeeds.",
     "Jarvis 0.1.416 gives Teams page-read failures product language: `Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet` instead of leaking JavaScript or AppleScript internals.",
@@ -152,6 +154,13 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.417 build 417 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "Full Python safety suite passed 612/612 after the native visible-screen read route.",
+    "Swift command-routing self-test passed with explicit visible Teams/page reads routed to native visible-screen OCR and screen-status/mutation requests rejected.",
+    "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-013054.json`.",
+    "Live eight-prompt regression matrix passed 8/8 at `runtime/regression_prompt_matrix/20260615-013149/summary.json` with speech/audio side effects suppressed.",
+    "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-013807.json` after the 0.1.417 build.",
+    "Runtime hygiene after 0.1.417 launch showed one `jarvis-menu-bar`, one `jarvis-status-helper`, one bundled worker, and no `afplay` background audio.",
     "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-010549.json` after the private-port temporary bundle fix.",
     "Live Jarvis 0.1.416 build 416 launched from bundled app resources with worker_launch_matches_bundle=true.",
     "Full Python safety suite passed 606/606 after the 0.1.416 Teams, browser-read, contact-memory, and wake-loop changes.",
@@ -840,6 +849,10 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.417", "Live app is bundled, launched, and reports Jarvis 0.1.417 build 417."),
+        ("done", "Add native visible-screen read", "Explicit visible Teams/page reads now use Apple Vision OCR through the native app and summarize locally."),
+        ("done", "Protect visible-screen privacy", "OCR text is scanned as untrusted, screenshots are not stored, and private digest text is omitted from audit logs."),
+        ("done", "Verify 0.1.417", "Full Python suite, Swift routing self-test, no-prompt verifier, eight-prompt matrix, and full safe verifier all passed."),
         ("done", "Ship Jarvis 0.1.416", "Live app is bundled, launched, and reports Jarvis 0.1.416 build 416."),
         ("done", "Make Teams handoff honest", "Jarvis opens signed-in Chrome but no longer claims it inspected the assignment before a later page or screen read succeeds."),
         ("done", "Hide browser internals from Teams failures", "Teams unreadable-page failures now use product language instead of JavaScript or AppleScript details."),
@@ -891,7 +904,7 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("done", "Explain wake pauses visibly", "The chat now shows why Hey Jarvis paused instead of silently stopping."),
         ("done", "Add report loopback URLs", "The master report and workboard are reachable from the running Jarvis worker."),
         ("done", "Add menu report shortcut", "The menu bar can open the overnight report route directly."),
-        ("working", "Next: actual Teams page extraction", "Chrome handoff is honest; the remaining hard part is reliable visible Teams assignment reading."),
+        ("working", "Next: fuse Teams handoff plus OCR", "Opening signed-in Teams and explicit visible-page reading both work; the remaining hard part is one autonomous assignment flow."),
     ]
     items = "\n".join(task_item(*task) for task in tasks)
     return f"""<!doctype html>
@@ -912,8 +925,8 @@ def render_workboard(context: dict[str, Any]) -> str:
   <main>
     <section>
       <h2>Current Focus</h2>
-      <p>Jarvis {e(context["version"])} is live with honest Teams handoff, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and an 8/8 live regression matrix. The remaining product gap is reliable authenticated-page extraction inside heavy web apps like Teams.</p>
-      <div class="meter"><div style="width: 93%"></div></div>
+      <p>Jarvis {e(context["version"])} is live with native visible-screen OCR, honest Teams handoff, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and an 8/8 live regression matrix. The remaining product gap is fusing the Chrome handoff and OCR read into one autonomous Teams assignment workflow.</p>
+      <div class="meter"><div style="width: 95%"></div></div>
     </section>
     <section>
       <h2>Checklist</h2>

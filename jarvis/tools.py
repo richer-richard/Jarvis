@@ -1009,6 +1009,14 @@ def tool_registry() -> dict[str, Any]:
                 "description": "Future permission-gated route for reading visible app text; registered as planned so the middle planner cannot invent an invisible screen-reading tool.",
             },
             {
+                "id": "screen.visible_text",
+                "label": "Visible Screen Text",
+                "mode": "native_execute",
+                "risk": "private_read_local_only",
+                "available": True,
+                "description": "Summarizes Apple Vision OCR text captured by the native Jarvis app; screenshots are not sent to the worker or stored by default.",
+            },
+            {
                 "id": "browser.open_url",
                 "label": "Browser Open URL",
                 "mode": "plan_only",
@@ -4959,6 +4967,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "files.search", "kind": "read_only", "description": "Search project filenames."},
         {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
         {"id": "screen.ocr", "kind": "planned_private_read", "description": "Future permission-gated screen OCR/find-text route; do not capture or read the screen until enabled."},
+        {"id": "screen.visible_text", "kind": "private_read_local_only", "description": "Summarize native Apple Vision OCR text from the visible screen without storing screenshots or sending screen text to a model."},
         {"id": "diagnostics.model_context", "kind": "read_only", "description": "Preview model prompts/message shapes without calling any model."},
         {"id": "diagnostics.tool_catalog", "kind": "read_only", "description": "Compare model-callable tool specs against the public registry."},
         {"id": "diagnostics.app_identity", "kind": "read_only", "description": "Report duplicate app bundle identifiers and current app bundle metadata without launching apps or changing files."},
@@ -12161,6 +12170,119 @@ def outlook_visible_text_summary(
         "injection_scan": _messages_injection_scan(messages, source),
         "email_summary": email_summary,
         "reply": email_summary,
+    }
+
+
+def visible_screen_text_summary(
+    text: str,
+    *,
+    diagnostics: dict[str, Any] | None = None,
+    command: str | None = None,
+    max_chars: int = 12000,
+) -> dict[str, Any]:
+    """Summarize native visible-screen OCR text without storing a screenshot."""
+    diagnostics = diagnostics or {}
+    source = str(diagnostics.get("source") or "native_vision_ocr_screen")
+    engine = str(diagnostics.get("ocr_engine") or "apple_vision")
+    capture_error = _clean_local_field(diagnostics.get("capture_error"))
+    app_name = _clean_local_field(
+        diagnostics.get("target_app_name")
+        or diagnostics.get("window_owner")
+        or diagnostics.get("app_name")
+    )
+    window_title = _clean_local_field(diagnostics.get("window_title"))
+    source_label = app_name or window_title or "the visible screen"
+    clean_text = _normalize_browser_page_text(str(text or "")[: max(500, min(int(max_chars), 12000))])
+    base: dict[str, Any] = {
+        "tool": "screen.visible_text",
+        "risk": "private_read_local_only",
+        "status": "unknown",
+        "source": source,
+        "ocr_engine": engine,
+        "capture_process": "native_jarvis_app",
+        "target_app_name": app_name,
+        "window_title": window_title,
+        "line_count": int(diagnostics.get("line_count") or 0),
+        "capture_width": int(diagnostics.get("capture_width") or 0),
+        "capture_height": int(diagnostics.get("capture_height") or 0),
+        "screen_access_preflight": bool(diagnostics.get("screen_access_preflight")),
+        "visible_text_chars": len(clean_text),
+        "read_private_content": True,
+        "captured_screen": True,
+        "stored_screenshot": False,
+        "raw_screenshot_sent_to_worker": False,
+        "external_model_allowed": False,
+        "called_model": False,
+        "audit_note": "Audit stores status and counts only; visible OCR text and digest content are omitted from audit details.",
+        "safety_note": "Read-only local summary. The native app sends extracted text only, not the screenshot image.",
+    }
+    app_bundle_path = _clean_local_field(diagnostics.get("app_bundle_path"))
+    app_executable_path = _clean_local_field(diagnostics.get("app_executable_path"))
+    bundle_identifier = _clean_local_field(diagnostics.get("bundle_identifier"))
+    if app_bundle_path:
+        base["app_bundle_path"] = app_bundle_path
+    if app_executable_path:
+        base["app_executable_path"] = app_executable_path
+    if bundle_identifier:
+        base["bundle_identifier"] = bundle_identifier
+
+    if capture_error:
+        return {
+            **base,
+            "status": "native_capture_failed",
+            "reply": "Jarvis tried to read the visible screen with native Apple Vision OCR, but the capture step failed.",
+            "spoken_summary": "I tried to read the visible screen, but the native capture step failed.",
+            "error": capture_error,
+            "next_steps": [
+                "Confirm Screen Recording permission for the current Jarvis app.",
+                "Bring the target app or page to the front and try the visible-screen read again.",
+            ],
+        }
+    if not clean_text.strip():
+        return {
+            **base,
+            "status": "native_ocr_empty",
+            "reply": f"I tried to read {source_label}, but Apple Vision OCR did not return readable text.",
+            "spoken_summary": "I tried to read the visible screen, but I could not find readable text.",
+            "next_steps": ["Bring the target text clearly into view and try again."],
+            "prompt_injection_findings": 0,
+        }
+
+    scan_source = f"Native visible-screen OCR: {source_label}"
+    injection_scan = scan_untrusted_text(clean_text, source=scan_source)
+    findings = injection_scan.get("findings") if isinstance(injection_scan, dict) else []
+    finding_count = len(findings) if isinstance(findings, list) else 0
+    if finding_count:
+        reply = (
+            f"I read {source_label}, but the visible text contains suspicious instructions, "
+            "so I will not act on it automatically."
+        )
+        return {
+            **base,
+            "status": "suspicious_content",
+            "injection_scan": injection_scan,
+            "prompt_injection_findings": finding_count,
+            "page_digest": "",
+            "page_digest_items": [],
+            "reply": reply,
+            "spoken_summary": reply,
+        }
+
+    digest_items = _browser_page_digest_items(clean_text, max_items=5, max_chars=180)
+    digest = "; ".join(digest_items)
+    if digest:
+        reply = f"I read {source_label}. I can see: {digest}."
+    else:
+        reply = f"I read {source_label}, but I could not condense the visible text into a useful short summary."
+    return {
+        **base,
+        "status": "checked" if digest else "read_without_digest",
+        "injection_scan": injection_scan,
+        "prompt_injection_findings": 0,
+        "page_digest": digest,
+        "page_digest_items": digest_items,
+        "reply": reply,
+        "spoken_summary": reply,
     }
 
 

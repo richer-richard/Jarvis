@@ -268,6 +268,30 @@ public struct JarvisClient: Sendable {
         return try await perform(request, as: CommandResponse.self)
     }
 
+    public func summarizeVisibleScreenText(
+        command: String,
+        text: String,
+        diagnostics: VisibleOutlookTextDiagnostics
+    ) async throws -> CommandResponse {
+        let url = baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("screen")
+            .appendingPathComponent("visible-text")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = Self.nativeOCRTimeout
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "command": command,
+                "text": String(text.prefix(12_000)),
+                "diagnostics": diagnostics.jsonObject,
+            ],
+            options: []
+        )
+        return try await perform(request, as: CommandResponse.self)
+    }
+
     public func speakStatus(_ text: String) async throws -> SpeechStatusResponse {
         let url = baseURL
             .appendingPathComponent("api")
@@ -343,6 +367,8 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
     public let appBundlePath: String
     public let appExecutablePath: String
     public let bundleIdentifier: String
+    public let targetAppName: String
+    public let windowTitle: String
 
     public init(
         source: String = "native_vision_ocr",
@@ -355,7 +381,9 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
         captureError: String? = nil,
         appBundlePath: String = "",
         appExecutablePath: String = "",
-        bundleIdentifier: String = ""
+        bundleIdentifier: String = "",
+        targetAppName: String = "",
+        windowTitle: String = ""
     ) {
         self.source = source
         self.ocrEngine = ocrEngine
@@ -368,6 +396,8 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
         self.appBundlePath = appBundlePath
         self.appExecutablePath = appExecutablePath
         self.bundleIdentifier = bundleIdentifier
+        self.targetAppName = targetAppName
+        self.windowTitle = windowTitle
     }
 
     var jsonObject: [String: Any] {
@@ -391,6 +421,13 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
         }
         if !bundleIdentifier.isEmpty {
             value["bundle_identifier"] = bundleIdentifier
+        }
+        if !targetAppName.isEmpty {
+            value["target_app_name"] = targetAppName
+            value["window_owner"] = targetAppName
+        }
+        if !windowTitle.isEmpty {
+            value["window_title"] = windowTitle
         }
         return value
     }

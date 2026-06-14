@@ -44,13 +44,74 @@ enum JarvisNativeOutlookReader {
         )
     }
 
+    static func readVisibleScreenText(
+        targetAppName: String? = nil,
+        targetBundleIdentifier: String? = nil
+    ) async throws -> NativeOutlookOCRResult {
+        let cleanTargetName = targetAppName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanBundleIdentifier = targetBundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cleanBundleIdentifier, !cleanBundleIdentifier.isEmpty {
+            try await focusApplication(
+                bundleIdentifier: cleanBundleIdentifier,
+                fallbackPath: nil,
+                displayName: cleanTargetName?.isEmpty == false ? cleanTargetName! : cleanBundleIdentifier
+            )
+            try await Task.sleep(nanoseconds: 850_000_000)
+        }
+
+        let hadAccessBeforeRequest = CGPreflightScreenCaptureAccess()
+        if !hadAccessBeforeRequest {
+            let granted = CGRequestScreenCaptureAccess()
+            guard granted else {
+                throw NativeOutlookReadError.screenRecordingDenied
+            }
+        }
+
+        let ownerNames = cleanTargetName?.isEmpty == false ? Set([cleanTargetName!]) : nil
+        guard let image = captureVisibleWindow(ownerNames: ownerNames) ?? CGDisplayCreateImage(CGMainDisplayID()) else {
+            throw NativeOutlookReadError.captureFailed
+        }
+
+        let lines = try recognizeText(in: image)
+        let text = String(lines.joined(separator: "\n").prefix(12_000))
+        return NativeOutlookOCRResult(
+            text: text,
+            diagnostics: VisibleOutlookTextDiagnostics(
+                source: "native_vision_ocr_screen",
+                lineCount: lines.count,
+                characterCount: text.count,
+                captureWidth: image.width,
+                captureHeight: image.height,
+                screenAccessPreflight: hadAccessBeforeRequest,
+                captureError: nil,
+                appBundlePath: Bundle.main.bundleURL.path,
+                appExecutablePath: Bundle.main.executableURL?.path ?? "",
+                bundleIdentifier: Bundle.main.bundleIdentifier ?? "",
+                targetAppName: cleanTargetName ?? ""
+            )
+        )
+    }
+
     @MainActor
     private static func focusOutlook() async throws {
+        try await focusApplication(
+            bundleIdentifier: "com.microsoft.Outlook",
+            fallbackPath: "/Applications/Microsoft Outlook.app",
+            displayName: "Microsoft Outlook"
+        )
+    }
+
+    @MainActor
+    private static func focusApplication(
+        bundleIdentifier: String,
+        fallbackPath: String?,
+        displayName: String
+    ) async throws {
         let workspace = NSWorkspace.shared
-        let appURL = workspace.urlForApplication(withBundleIdentifier: "com.microsoft.Outlook")
-            ?? URL(fileURLWithPath: "/Applications/Microsoft Outlook.app")
-        guard FileManager.default.fileExists(atPath: appURL.path) else {
-            throw NativeOutlookReadError.outlookNotFound
+        guard let appURL = workspace.urlForApplication(withBundleIdentifier: bundleIdentifier)
+            ?? fallbackPath.map({ URL(fileURLWithPath: $0) }),
+              FileManager.default.fileExists(atPath: appURL.path) else {
+            throw NativeOutlookReadError.appNotFound(displayName)
         }
 
         let configuration = NSWorkspace.OpenConfiguration()
@@ -58,7 +119,7 @@ enum JarvisNativeOutlookReader {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             workspace.openApplication(at: appURL, configuration: configuration) { _, error in
                 if let error {
-                    continuation.resume(throwing: NativeOutlookReadError.openOutlookFailed(error.localizedDescription))
+                    continuation.resume(throwing: NativeOutlookReadError.openAppFailed(displayName, error.localizedDescription))
                 } else {
                     continuation.resume(returning: ())
                 }
@@ -83,6 +144,10 @@ enum JarvisNativeOutlookReader {
     }
 
     private static func captureVisibleOutlookWindow() -> CGImage? {
+        captureVisibleWindow(ownerNames: Set(["Microsoft Outlook"]))
+    }
+
+    private static func captureVisibleWindow(ownerNames: Set<String>? = nil) -> CGImage? {
         guard let windowInfo = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
@@ -92,7 +157,11 @@ enum JarvisNativeOutlookReader {
 
         let candidates: [(windowID: CGWindowID, bounds: CGRect)] = windowInfo.compactMap { window in
             let ownerName = window[kCGWindowOwnerName as String] as? String ?? ""
-            guard ownerName == "Microsoft Outlook" else {
+            if let ownerNames {
+                guard ownerNames.contains(ownerName) else {
+                    return nil
+                }
+            } else if ownerName.localizedCaseInsensitiveContains("Jarvis") {
                 return nil
             }
             let layer = window[kCGWindowLayer as String] as? Int ?? 0
@@ -112,9 +181,12 @@ enum JarvisNativeOutlookReader {
             return (CGWindowID(number.uint32Value), bounds)
         }
 
-        guard let largest = candidates.max(by: { lhs, rhs in
-            lhs.bounds.width * lhs.bounds.height < rhs.bounds.width * rhs.bounds.height
-        }) else {
+        let selected = ownerNames == nil
+            ? candidates.first
+            : candidates.max(by: { lhs, rhs in
+                lhs.bounds.width * lhs.bounds.height < rhs.bounds.width * rhs.bounds.height
+            })
+        guard let selected else {
             return nil
         }
 
@@ -122,18 +194,19 @@ enum JarvisNativeOutlookReader {
         return CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
-            largest.windowID,
+            selected.windowID,
             imageOptions
         ) ?? CGWindowListCreateImage(
-            largest.bounds,
+            selected.bounds,
             [.optionOnScreenOnly],
             kCGNullWindowID,
             imageOptions
         )
     }
 
-    static func failureDiagnostics(for error: Error) -> VisibleOutlookTextDiagnostics {
+    static func failureDiagnostics(for error: Error, source: String = "native_vision_ocr") -> VisibleOutlookTextDiagnostics {
         VisibleOutlookTextDiagnostics(
+            source: source,
             lineCount: 0,
             characterCount: 0,
             captureWidth: 0,
@@ -148,21 +221,21 @@ enum JarvisNativeOutlookReader {
 }
 
 enum NativeOutlookReadError: Error, CustomStringConvertible {
-    case outlookNotFound
+    case appNotFound(String)
     case screenRecordingDenied
     case captureFailed
-    case openOutlookFailed(String)
+    case openAppFailed(String, String)
 
     var description: String {
         switch self {
-        case .outlookNotFound:
-            return "Microsoft Outlook was not found in /Applications or by bundle identifier."
+        case .appNotFound(let appName):
+            return "\(appName) was not found by bundle identifier or fallback path."
         case .screenRecordingDenied:
             return "Jarvis does not have Screen Recording permission for native screenshot capture."
         case .captureFailed:
             return "CoreGraphics could not create a native screen image."
-        case .openOutlookFailed(let message):
-            return "Could not open Microsoft Outlook: \(message)"
+        case .openAppFailed(let appName, let message):
+            return "Could not open \(appName): \(message)"
         }
     }
 }

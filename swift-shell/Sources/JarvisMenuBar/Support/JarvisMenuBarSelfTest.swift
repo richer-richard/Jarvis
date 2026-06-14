@@ -127,6 +127,18 @@ enum JarvisMenuBarSelfTest {
         guard !JarvisShellModel.shouldUseNativeOutlookRead("send an email with a screenshot") else {
             throw SelfTestError.failed("Blocked email actions must not use native read routing.")
         }
+        guard JarvisShellModel.shouldUseNativeVisibleScreenRead("read the visible Teams screen") else {
+            throw SelfTestError.failed("Explicit visible Teams screen reads should use native visible-screen OCR.")
+        }
+        guard JarvisShellModel.shouldUseNativeVisibleScreenRead("what is on this page") else {
+            throw SelfTestError.failed("Visible current-page reads should use native visible-screen OCR.")
+        }
+        guard !JarvisShellModel.shouldUseNativeVisibleScreenRead("check screen status") else {
+            throw SelfTestError.failed("Screen status should remain a readiness check, not a capture request.")
+        }
+        guard !JarvisShellModel.shouldUseNativeVisibleScreenRead("submit the visible Teams assignment") else {
+            throw SelfTestError.failed("Schoolwork-changing requests must not use native visible-screen OCR.")
+        }
         guard JarvisShellModel.shouldUseNativePermissionStatus("permissions status") else {
             throw SelfTestError.failed("Permission status should use the native Swift permission snapshot.")
         }

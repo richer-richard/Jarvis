@@ -1230,6 +1230,16 @@ final class JarvisShellModel: ObservableObject {
                 }
                 recordTurnPhase("Working", detail: statusText)
                 response = try await runNativeOutlookRead(commandText)
+            } else if Self.shouldUseNativeVisibleScreenRead(commandText) {
+                let statusText = "Checking the visible screen now."
+                _ = appendJarvisMessage(text: statusText, detail: "Working")
+                visibleStatusLines.append(statusText)
+                updateSummonThinking(statusText)
+                if !isSpeechMuted {
+                    _ = try? await client.speakStatus(statusText)
+                }
+                recordTurnPhase("Working", detail: statusText)
+                response = try await runNativeVisibleScreenRead(commandText)
             } else {
                 var streamedReply = ""
                 var lastStatusText = ""
@@ -1814,6 +1824,38 @@ final class JarvisShellModel: ObservableObject {
                 command: commandText,
                 text: "",
                 diagnostics: JarvisNativeOutlookReader.failureDiagnostics(for: error)
+            )
+        }
+    }
+
+    private func runNativeVisibleScreenRead(_ commandText: String) async throws -> CommandResponse {
+        let mode = try await client.mode()
+        applyMode(mode)
+        guard !mode.paused else {
+            return try await client.send(command: commandText)
+        }
+
+        state = "Reading Screen"
+        tool = "screen.visible_text"
+        let target = Self.visibleScreenReadTarget(for: commandText)
+        do {
+            let capture = try await JarvisNativeOutlookReader.readVisibleScreenText(
+                targetAppName: target.appName,
+                targetBundleIdentifier: target.bundleIdentifier
+            )
+            return try await client.summarizeVisibleScreenText(
+                command: commandText,
+                text: capture.text,
+                diagnostics: capture.diagnostics
+            )
+        } catch {
+            return try await client.summarizeVisibleScreenText(
+                command: commandText,
+                text: "",
+                diagnostics: JarvisNativeOutlookReader.failureDiagnostics(
+                    for: error,
+                    source: "native_vision_ocr_screen"
+                )
             )
         }
     }
@@ -2943,6 +2985,73 @@ final class JarvisShellModel: ObservableObject {
             "summary",
         ]
         return readCues.contains(where: { lower.contains($0) }) || lower.contains("ocr")
+    }
+
+    static func shouldUseNativeVisibleScreenRead(_ commandText: String) -> Bool {
+        let lower = commandText.lowercased()
+        if shouldUseNativeScreenStatus(commandText) || shouldUseNativeOutlookRead(commandText) {
+            return false
+        }
+        let blockedActions = [
+            "click",
+            "delete",
+            "download",
+            "edit",
+            "send",
+            "submit",
+            "turn in",
+            "upload",
+            "write",
+        ]
+        guard !blockedActions.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let readCues = [
+            "check",
+            "describe",
+            "extract",
+            "find",
+            "look",
+            "read",
+            "scan",
+            "summarize",
+            "tell me",
+            "what",
+        ]
+        guard readCues.contains(where: { lower.contains($0) }) || lower.contains("ocr") else {
+            return false
+        }
+        let visualCues = [
+            "visible",
+            "screen",
+            "screenshot",
+            "ocr",
+            "window",
+            "frontmost",
+            "front-most",
+            "on screen",
+            "on this page",
+            "this page",
+            "current page",
+            "teams page",
+        ]
+        if visualCues.contains(where: { lower.contains($0) }) {
+            return true
+        }
+        return lower.contains("teams")
+            && lower.contains("assignment")
+            && (lower.contains("page") || lower.contains("visible") || lower.contains("screen"))
+    }
+
+    private static func visibleScreenReadTarget(for commandText: String) -> (appName: String?, bundleIdentifier: String?) {
+        let lower = commandText.lowercased()
+        if lower.contains("teams") || lower.contains("chrome") || lower.contains("browser") || lower.contains("page") {
+            return ("Google Chrome", "com.google.Chrome")
+        }
+        if lower.contains("outlook") || lower.contains("email") || lower.contains("mail") || lower.contains("inbox") {
+            return ("Microsoft Outlook", "com.microsoft.Outlook")
+        }
+        return (nil, nil)
     }
 
     private static func mentionsMail(_ lower: String) -> Bool {

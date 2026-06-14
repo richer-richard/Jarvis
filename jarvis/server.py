@@ -41,6 +41,7 @@ from .tools import (
     set_audio_actions_suppressed,
     store_localos_music_snapshot,
     outlook_visible_text_summary,
+    visible_screen_text_summary,
     prewarm_tts_async,
     set_speech_muted,
     speech_mute_status,
@@ -362,6 +363,83 @@ class JarvisServer:
                     "Checked Outlook with native Apple Vision OCR."
                     if result.get("status") == "checked"
                     else "Tried Outlook native Apple Vision OCR."
+                ),
+                "assessment": assessment,
+                "result": result,
+                "executed": True,
+                "confirmation": None,
+            }
+
+        event = self.audit.record(
+            command=command,
+            risk_level=int(data["assessment"]["risk_level"]),
+            risk_label=str(data["assessment"]["risk_label"]),
+            tool=data["tool"],
+            decision=str(data["assessment"]["decision"]),
+            summary=data["summary"],
+            details={
+                "executed": data["executed"],
+                "result": _audit_safe_result(data["tool"], data["result"]),
+                "confirmation": data.get("confirmation"),
+            },
+        )
+        data["audit_event_id"] = event.id
+        _attach_auto_speech(data, reason="final", suppress=False)
+        return data
+
+    def native_visible_screen_text(
+        self,
+        *,
+        command: str,
+        text: str,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with self._mode_lock:
+            is_paused = self.paused
+        assessment = classify_command(command).to_dict()
+        if is_paused:
+            assessment["decision"] = "paused"
+            assessment["reasons"] = [*assessment.get("reasons", []), "Jarvis command execution is paused."]
+            data = self._paused_result(command, assessment)
+        elif assessment.get("blocked"):
+            data = {
+                "command": command,
+                "tool": "policy.block",
+                "summary": "Command blocked by safety policy.",
+                "assessment": assessment,
+                "result": {},
+                "executed": False,
+                "confirmation": None,
+            }
+        elif assessment.get("requires_typed_confirmation"):
+            data = {
+                "command": command,
+                "tool": "policy.strong_confirmation",
+                "summary": "Command requires strong confirmation and was not executed.",
+                "assessment": assessment,
+                "result": {"next_step": "Show a typed confirmation prompt in the Jarvis UI."},
+                "executed": False,
+                "confirmation": None,
+            }
+        elif assessment.get("requires_confirmation"):
+            data = {
+                "command": command,
+                "tool": "policy.confirmation",
+                "summary": "Command requires confirmation and was not executed.",
+                "assessment": assessment,
+                "result": {"next_step": "Show a confirmation prompt in the Jarvis UI."},
+                "executed": False,
+                "confirmation": None,
+            }
+        else:
+            result = visible_screen_text_summary(text, diagnostics=diagnostics, command=command)
+            data = {
+                "command": command,
+                "tool": "screen.visible_text",
+                "summary": (
+                    "Read visible screen text with native Apple Vision OCR."
+                    if result.get("status") in {"checked", "read_without_digest", "suspicious_content"}
+                    else "Tried native visible-screen Apple Vision OCR."
                 ),
                 "assessment": assessment,
                 "result": result,
@@ -990,6 +1068,31 @@ class RequestHandler(BaseHTTPRequestHandler):
                 )
             )
             return
+        if route.path == "/api/screen/visible-text":
+            try:
+                payload = self._read_json_payload()
+                command = str(payload.get("command", "read the visible screen"))
+                text = str(payload.get("text", ""))
+                diagnostics = payload.get("diagnostics", {})
+                if not isinstance(diagnostics, dict):
+                    diagnostics = {}
+            except RequestBodyTooLarge:
+                self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return
+            except UnsupportedContentType:
+                self._send_json({"error": "Content-Type must be application/json"}, status=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+                return
+            except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(
+                STATE.native_visible_screen_text(
+                    command=command,
+                    text=text[:12000],
+                    diagnostics=diagnostics,
+                )
+            )
+            return
         if route.path == "/api/speech/status":
             try:
                 payload = self._read_json_payload()
@@ -1598,6 +1701,31 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
             safe["injection_findings_count"] = len(findings) if isinstance(findings, list) else 0
         safe["browser_private_details_omitted"] = True
         safe["page_text_chars"] = int(result.get("page_text_chars") or 0)
+        return safe
+
+    if tool == "screen.visible_text":
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key
+            not in {
+                "page_digest",
+                "page_digest_items",
+                "reply",
+                "spoken_summary",
+                "injection_scan",
+                "window_title",
+                "stdout",
+                "stderr",
+            }
+        }
+        injection_scan = result.get("injection_scan") if isinstance(result, dict) else None
+        if isinstance(injection_scan, dict):
+            findings = injection_scan.get("findings")
+            safe["injection_scan_status"] = injection_scan.get("status")
+            safe["injection_findings_count"] = len(findings) if isinstance(findings, list) else 0
+        safe["visible_screen_private_details_omitted"] = True
+        safe["visible_text_chars"] = int(result.get("visible_text_chars") or 0)
         return safe
 
     if tool in {"browser.bookmarks_import", "browser.bookmarks_search", "browser.bookmark_open"}:
