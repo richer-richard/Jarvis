@@ -168,6 +168,7 @@ PROOF_ITEMS = [
     "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-023431.json` after the 0.1.421 build.",
     "Focused speech-audit proof: `Summarize all the emails from Ms. Sharpay in the past month` now speaks `Checking emails from Ms Sharpay over the past month now` with 1.0 local STT similarity and zero leaks.",
     "Focused speech-audit proof: the Teams assignment handoff status now speaks `Opening Teams now` with zero leaks.",
+    "Live eight-prompt speech-audit matrix passed 8/8 at `runtime/regression_prompt_matrix/20260615-023711/summary.json` on Jarvis 0.1.421 after the status-line polish.",
     "Live Jarvis 0.1.420 build 420 launched from bundled app resources with worker_launch_matches_bundle=true.",
     "Full Python safety suite passed 614/614 after the Teams follow-up question route.",
     "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-020859.json`.",
