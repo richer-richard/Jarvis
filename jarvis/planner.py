@@ -1074,6 +1074,17 @@ class Planner:
             )
             if routed is not None:
                 return routed
+        if result.get("status") != "completed" and _looks_like_email_inspection_request(text.lower()):
+            routed = self.handle_selected_tool(text, "outlook.visible_summary", {}, history=history)
+            if routed is not None:
+                routed.summary = "Recovered email route after first model failed."
+                routed.result["model_route_fallback"] = {
+                    "used": True,
+                    "primary_status": result.get("status"),
+                    "primary_tool": result.get("tool"),
+                    "primary_backend": result.get("backend"),
+                }
+                return routed
         tool = str(result.get("tool") or "conversation.fast_local")
         if result.get("status") == "completed":
             summary = "Answered through fast local chat."
@@ -3354,7 +3365,7 @@ def email_request_metadata(
     structured_selection = _email_selection_from_entities(safe_entities)
     prompt_selection = _extract_email_selection_constraint(text)
     selection = entity_selection or structured_selection or prompt_selection
-    sender_query = _clean_optional_entity(safe_entities.get("sender_query")) or _extract_email_sender_constraint(text)
+    sender_query = _email_sender_query_from_entities_and_prompt(text, safe_entities)
     entity_date_range = _clean_optional_entity(safe_entities.get("date_range"))
     prompt_date_range = _extract_email_date_range_constraint(text)
     date_range = _normalize_email_date_range(entity_date_range or prompt_date_range)
@@ -3477,11 +3488,16 @@ def email_request_preview_plan(text: str, entities: dict[str, Any] | None = None
 
 def email_request_status_text(text: str, entities: dict[str, Any] | None = None) -> str:
     safe_entities = entities if isinstance(entities, dict) else {}
+    sender_query = _email_sender_query_from_entities_and_prompt(text, safe_entities)
     selection = (
         _clean_optional_entity(safe_entities.get("selection"))
         or _email_selection_from_entities(safe_entities)
         or _extract_email_selection_constraint(text)
     )
+    if sender_query:
+        if selection and selection.lower() == "latest":
+            return f"Checking your newest email from {sender_query} now."
+        return f"Checking your email from {sender_query} now."
     if selection:
         lowered = selection.lower()
         if lowered == "latest":
@@ -3498,10 +3514,31 @@ def email_request_status_text(text: str, entities: dict[str, Any] | None = None)
             start = int(range_match.group(1))
             end = int(range_match.group(2))
             return f"Checking emails {start} through {end} now."
-    sender_query = _clean_optional_entity(safe_entities.get("sender_query")) or _extract_email_sender_constraint(text)
-    if sender_query:
-        return f"Checking your email from {sender_query} now."
     return "Checking your email now."
+
+
+def _email_sender_query_from_entities_and_prompt(text: str, entities: dict[str, Any]) -> str | None:
+    entity_sender = _clean_optional_entity(entities.get("sender_query"))
+    prompt_sender = _extract_email_sender_constraint(text)
+    if entity_sender and prompt_sender:
+        if _email_sender_prompt_restores_honorific(entity_sender, prompt_sender):
+            return prompt_sender
+        return entity_sender
+    return entity_sender or prompt_sender
+
+
+def _email_sender_prompt_restores_honorific(entity_sender: str, prompt_sender: str) -> bool:
+    entity = _clean_optional_entity(entity_sender) or ""
+    prompt = _clean_optional_entity(prompt_sender) or ""
+    if not entity or not prompt:
+        return False
+    entity_norm = re.sub(r"[^a-z0-9]+", " ", entity.lower()).strip()
+    prompt_norm = re.sub(r"[^a-z0-9]+", " ", prompt.lower()).strip()
+    if not prompt_norm.endswith(entity_norm):
+        return False
+    entity_has_honorific = re.match(r"(?i)^(?:ms|mr|mrs|dr)\b", entity_norm) is not None
+    prompt_has_honorific = re.match(r"(?i)^(?:ms|mr|mrs|dr)\b", prompt_norm) is not None
+    return prompt_has_honorific and not entity_has_honorific
 
 
 def _email_ordinal_label(value: int) -> str:

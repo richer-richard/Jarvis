@@ -4563,7 +4563,7 @@ def _localos_music_track_phrase(tracks: list[dict[str, Any]]) -> str:
 def _localos_music_found_phrase(track: dict[str, Any]) -> str:
     phrase = _localos_music_track_phrase([track])
     if track.get("match_kind") == "alias":
-        return f"the closest Local OS file, {phrase}"
+        return f"the closest LocalOS file, {phrase}"
     return phrase
 
 
@@ -5282,21 +5282,16 @@ def calendar_today_schedule(date_iso: str | None = None) -> dict[str, Any]:
             "reply": "I could not read Calendar. macOS may need Automation permission for Jarvis or Terminal to control Calendar.",
             **_duration_fields(started_at),
         }
-    events = _parse_calendar_events_output(completed.stdout)
-    if events:
-        event_phrase = "; ".join(_calendar_event_phrase(event) for event in events[:5])
-        extra = len(events) - 5
-        reply = f"Today's schedule: {event_phrase}"
-        if extra > 0:
-            reply += f"; plus {extra} more event{'s' if extra != 1 else ''}"
-        reply += "."
-    else:
-        reply = "Calendar shows no events for today."
+    raw_events = _parse_calendar_events_output(completed.stdout)
+    events = _calendar_deduplicate_events(raw_events)
+    duplicate_count = max(0, len(raw_events) - len(events))
+    reply = _calendar_events_reply(events)
     return {
         **base,
         "status": "checked",
         "returncode": completed.returncode,
         "event_count": len(events),
+        **({"raw_event_count": len(raw_events), "duplicate_event_count": duplicate_count} if duplicate_count else {}),
         "events": events,
         "reply": reply,
         **_duration_fields(started_at),
@@ -5309,9 +5304,11 @@ def _calendar_today_schedule_from_sqlite(
     started_at: float,
     automation_status: str | None = None,
 ) -> dict[str, Any] | None:
-    events = _calendar_events_from_sqlite(target_date)
-    if events is None:
+    raw_events = _calendar_events_from_sqlite(target_date)
+    if raw_events is None:
         return None
+    events = _calendar_deduplicate_events(raw_events)
+    duplicate_count = max(0, len(raw_events) - len(events))
     reply = _calendar_events_reply(events)
     result: dict[str, Any] = {
         "tool": "calendar.today_schedule",
@@ -5322,6 +5319,7 @@ def _calendar_today_schedule_from_sqlite(
         "changed_calendar": False,
         "date": target_date.isoformat(),
         "event_count": len(events),
+        **({"raw_event_count": len(raw_events), "duplicate_event_count": duplicate_count} if duplicate_count else {}),
         "events": events,
         "reply": reply,
         **_duration_fields(started_at),
@@ -5437,10 +5435,29 @@ def _calendar_events_reply(events: list[dict[str, Any]]) -> str:
         return "Calendar shows no events for today."
     event_phrase = "; ".join(_calendar_event_phrase(event) for event in events[:5])
     extra = len(events) - 5
-    reply = f"Today's schedule: {event_phrase}"
+    reply = f"Today's Calendar schedule: {event_phrase}"
     if extra > 0:
         reply += f"; plus {extra} more event{'s' if extra != 1 else ''}"
     return reply + "."
+
+
+def _calendar_deduplicate_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, bool]] = set()
+    for event in events:
+        all_day = bool(event.get("all_day"))
+        key = (
+            _clean_local_field(event.get("title")).casefold(),
+            _clean_local_field(event.get("start")).casefold(),
+            _clean_local_field(event.get("end")).casefold(),
+            "" if all_day else _clean_local_field(event.get("location")).casefold(),
+            all_day,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+    return deduped
 
 
 def _calendar_local_day_apple_seconds(target_date: datetime) -> float:
@@ -10592,7 +10609,11 @@ def commerce_price_convert(
             "reply": f"I do not have a reliable official price source for {clean_product} yet.",
         }
 
-    price_page = _fetch_public_web_text(source["url"], timeout=PUBLIC_WEB_TIMEOUT_SECONDS)
+    price_page = _fetch_public_web_text_with_retries(
+        source["url"],
+        timeout=PUBLIC_WEB_TIMEOUT_SECONDS,
+        attempts=2,
+    )
     if not price_page.get("ok"):
         return {
             **base,
@@ -10727,6 +10748,26 @@ def _fetch_public_web_text(url: str, *, timeout: float) -> dict[str, Any]:
     except (urllib.error.URLError, OSError) as error:
         reason = getattr(error, "reason", error)
         return {"ok": False, "error": str(reason), "url": url}
+
+
+def _fetch_public_web_text_with_retries(url: str, *, timeout: float, attempts: int = 2) -> dict[str, Any]:
+    clean_attempts = max(1, int(attempts or 1))
+    last: dict[str, Any] = {}
+    errors: list[str] = []
+    for attempt in range(1, clean_attempts + 1):
+        result = _fetch_public_web_text(url, timeout=timeout)
+        result["attempt"] = attempt
+        result["attempts"] = clean_attempts
+        if result.get("ok"):
+            if errors:
+                result["previous_errors"] = errors
+            return result
+        errors.append(_text_tail(str(result.get("error") or "unknown"), 240))
+        last = result
+    if last:
+        last["attempts"] = clean_attempts
+        last["previous_errors"] = errors
+    return last or {"ok": False, "error": "fetch failed", "url": url, "attempts": clean_attempts}
 
 
 def _extract_apple_product_price(page_text: str, source: dict[str, str]) -> dict[str, Any]:

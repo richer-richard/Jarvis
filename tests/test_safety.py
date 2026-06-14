@@ -43,7 +43,7 @@ from jarvis import self_check as jarvis_self_check
 from jarvis.audit import AuditLogger, redact_sensitive_text
 from jarvis.config import PROJECT_ROOT, env_bool, host_allowed
 from jarvis.injection import scan_untrusted_text
-from jarvis.planner import NATURAL_LANGUAGE_TOOL_SPECS, PlannedResult, Planner
+from jarvis.planner import NATURAL_LANGUAGE_TOOL_SPECS, PlannedResult, Planner, email_request_status_text
 from jarvis.safety import classify_command, classify_shell_command, policy_summary
 from jarvis.server import (
     MAX_VERIFICATION_AGE_SECONDS,
@@ -1645,7 +1645,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["source_status"], "matched")
         self.assertEqual(result["selected_track"]["file_name"], "Dear Evan Hansen.mp3")
         self.assertEqual(result["selected_track"]["match_kind"], "alias")
-        self.assertIn("closest Local OS file", result["reply"])
+        self.assertIn("closest LocalOS file", result["reply"])
         self.assertEqual(pending["status"], "available")
         self.assertEqual(pending["command"]["track"]["file_name"], "Dear Evan Hansen.mp3")
 
@@ -3455,6 +3455,38 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["converted"]["rounded_amount"], 705)
         self.assertIn("about 705 yuan", result["reply"])
 
+    def test_commerce_price_convert_retries_transient_price_source_failure(self):
+        apple_page = """
+        <html><head>
+        <title>Magic Keyboard (USB-C) - US English - Apple</title>
+        <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"Product","name":"Magic Keyboard (USB-C) - US English",
+         "offers":[{"@type":"Offer","priceCurrency":"USD","price":99.00}]}
+        </script>
+        </head></html>
+        """
+        rate_json = json.dumps({"result": "success", "rates": {"CNY": 6.8}})
+        apple_attempts = 0
+
+        def fake_fetch(url, *, timeout):
+            nonlocal apple_attempts
+            if "apple.com" in url:
+                apple_attempts += 1
+                if apple_attempts == 1:
+                    return {"ok": False, "error": "temporary timeout", "url": url}
+                return {"ok": True, "text": apple_page, "url": url}
+            if "open.er-api.com" in url:
+                return {"ok": True, "text": rate_json, "url": url}
+            return {"ok": False, "error": "unexpected url"}
+
+        with patch("jarvis.tools._fetch_public_web_text", side_effect=fake_fetch):
+            result = commerce_price_convert("Magic Keyboard", target_currency="CNY", source_country="US")
+
+        self.assertEqual(result["status"], "converted")
+        self.assertEqual(apple_attempts, 2)
+        self.assertEqual(result["converted"]["rounded_amount"], 673)
+        self.assertIn("yuan", result["reply"])
+
     def test_chrome_bookmarks_import_search_and_open_plan_are_local(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "Chrome"
@@ -5009,6 +5041,68 @@ class PlannerTests(unittest.TestCase):
         infer_mock.assert_not_called()
         mail_mock.assert_not_called()
 
+    def test_email_sender_entities_restore_honorific_from_original_prompt(self):
+        fake_result = {"status": "no_matching_messages", "messages": [], "message_count": 0}
+        with patch("jarvis.planner.contact_data_lookup", return_value={"status": "not_found", "alias": "Ms Sharpay"}), \
+             patch(
+                 "jarvis.planner.contact_data_infer_from_email",
+                 return_value={
+                     "status": "needs_confirmation",
+                     "alias": "Ms Sharpay",
+                     "read_email_content": False,
+                     "read_private_content": True,
+                     "candidates": [{"display_name": "Ms Darbus", "score": 0.71}],
+                 },
+             ), \
+             patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock:
+            result = Planner().handle_selected_tool(
+                "Summarize all the emails from Ms. Sharpay in the past month.",
+                "outlook.visible_summary",
+                {"sender_query": "Sharpay", "selection": "latest", "date_range": "past_month"},
+            )
+            status_text = email_request_status_text(
+                "Summarize all the emails from Ms. Sharpay in the past month.",
+                {"sender_query": "Sharpay", "selection": "latest"},
+            )
+
+        self.assertEqual(result.result["status"], "needs_contact_confirmation")
+        self.assertEqual(result.result["sender_query"], "Ms Sharpay")
+        self.assertIn("Ms Sharpay", result.result["reply"])
+        self.assertEqual(status_text, "Checking your newest email from Ms Sharpay now.")
+        mail_mock.assert_not_called()
+
+    def test_email_model_failure_recovers_with_local_metadata_route(self):
+        model_timeout = {
+            "tool": "conversation.fast_local",
+            "backend": "ollama",
+            "status": "timeout",
+            "executed": True,
+            "reply": "The fast local model timed out.",
+        }
+        with patch("jarvis.planner.run_fast_local_chat", return_value=model_timeout) as model_mock, \
+             patch("jarvis.planner.contact_data_lookup", return_value={"status": "not_found", "alias": "Ms Sharpay"}), \
+             patch(
+                 "jarvis.planner.contact_data_infer_from_email",
+                 return_value={
+                     "status": "needs_confirmation",
+                     "alias": "Ms Sharpay",
+                     "read_email_content": False,
+                     "read_private_content": True,
+                     "candidates": [{"display_name": "Ms Darbus", "score": 0.71}],
+                 },
+             ), \
+             patch("jarvis.planner.outlook_read_only_check") as mail_mock:
+            result = Planner().handle("Summarize all the emails from Ms. Sharpay in the past month.")
+
+        self.assertEqual(result.tool, "outlook.visible_summary")
+        self.assertEqual(result.summary, "Recovered email route after first model failed.")
+        self.assertEqual(result.result["status"], "needs_contact_confirmation")
+        self.assertEqual(result.result["sender_query"], "Ms Sharpay")
+        self.assertEqual(result.result["model_route_fallback"]["primary_status"], "timeout")
+        self.assertIn("Ms Sharpay", result.result["reply"])
+        model_mock.assert_called_once()
+        mail_mock.assert_not_called()
+
     def test_email_sender_alias_infers_before_mail_search_when_unknown(self):
         fake_result = {"status": "no_matching_messages", "messages": [], "message_count": 0}
         inferred = {
@@ -5855,6 +5949,75 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["event_count"], 1)
         self.assertIn("Math class", result["reply"])
         self.assertIn("09:00", result["reply"])
+        run_mock.assert_not_called()
+
+    def test_calendar_schedule_deduplicates_identical_all_day_cache_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "Calendar.sqlitedb"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(
+                """
+                create table OccurrenceCache (
+                    day real,
+                    event_id integer,
+                    calendar_id integer,
+                    occurrence_date real,
+                    occurrence_start_date real,
+                    occurrence_end_date real
+                );
+                create table CalendarItem (
+                    ROWID integer primary key,
+                    summary text,
+                    location_id integer,
+                    start_date real,
+                    end_date real,
+                    all_day integer,
+                    hidden integer
+                );
+                create table Calendar (
+                    ROWID integer primary key,
+                    title text
+                );
+                create table Location (
+                    ROWID integer primary key,
+                    title text,
+                    address text
+                );
+                """
+            )
+            day_seconds = jarvis_tools._calendar_local_day_apple_seconds(jarvis_tools._calendar_target_date("2026-06-14"))
+            connection.execute("insert into Calendar values (?, ?)", (1, "School"))
+            connection.execute("insert into Calendar values (?, ?)", (2, "Holidays"))
+            connection.execute("insert into Location values (?, ?, ?)", (5, "United States", ""))
+            connection.execute(
+                "insert into CalendarItem values (?, ?, ?, ?, ?, ?, ?)",
+                (3, "Flag Day", None, day_seconds, day_seconds + 86400, 1, 0),
+            )
+            connection.execute(
+                "insert into CalendarItem values (?, ?, ?, ?, ?, ?, ?)",
+                (4, "Flag Day", 5, day_seconds, day_seconds + 86400, 1, 0),
+            )
+            connection.execute(
+                "insert into OccurrenceCache values (?, ?, ?, ?, ?, ?)",
+                (day_seconds, 3, 1, day_seconds, day_seconds, day_seconds + 86400),
+            )
+            connection.execute(
+                "insert into OccurrenceCache values (?, ?, ?, ?, ?, ?)",
+                (day_seconds, 4, 2, day_seconds, day_seconds, day_seconds + 86400),
+            )
+            connection.commit()
+            connection.close()
+
+            with patch("jarvis.tools.CALENDAR_SQLITE_DB_PATH", db_path), \
+                 patch("jarvis.tools.subprocess.run") as run_mock:
+                result = calendar_today_schedule("2026-06-14")
+
+        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["event_count"], 1)
+        self.assertEqual(result["raw_event_count"], 2)
+        self.assertEqual(result["duplicate_event_count"], 1)
+        self.assertEqual(result["reply"].count("Flag Day"), 1)
+        self.assertIn("Today's Calendar schedule", result["reply"])
         run_mock.assert_not_called()
 
     def test_daily_memory_summary_reports_codex_memory_without_raw_history(self):
