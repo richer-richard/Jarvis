@@ -53,6 +53,7 @@ from jarvis.server import (
     _bounded_int,
     _conversation_history_from_payload,
     _host_from_header,
+    _payload_command_text,
     _stream_status_text,
     _verification_detail,
     _verification_is_fresh,
@@ -12745,6 +12746,13 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertEqual(response["tool"], "policy.pause")
         self.assertFalse(response["executed"])
+
+    def test_command_payload_text_accepts_common_aliases_without_losing_prompt(self):
+        self.assertEqual(_payload_command_text({"message": "  Play Waving Through a Window.  "}), "Play Waving Through a Window.")
+        self.assertEqual(_payload_command_text({"text": "check my calendar"}), "check my calendar")
+        self.assertEqual(_payload_command_text({"prompt": "status"}), "status")
+        self.assertEqual(_payload_command_text({"command": "status", "message": "hello"}), "status")
+        self.assertEqual(_payload_command_text({"message": "   "}), "")
 
     def test_stream_command_yields_fast_chat_delta_and_final(self):
         fake_events = [

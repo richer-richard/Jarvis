@@ -561,6 +561,29 @@ def run_isolated_worker_hardening_checks(results: list[CheckResult]) -> None:
             )
         )
 
+        message_alias = post_json("/api/command", {"message": "status"}, base_url=base_url)
+        results.append(
+            CheckResult(
+                "isolated_command_message_alias",
+                message_alias.get("command") == "status" and message_alias.get("tool") == "system.status",
+                f"command={message_alias.get('command')}, tool={message_alias.get('tool')}",
+            )
+        )
+        missing_command_status, missing_command_body = http_status(
+            base_url,
+            "/api/command",
+            method="POST",
+            body=json.dumps({}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        results.append(
+            CheckResult(
+                "isolated_missing_command_rejected",
+                missing_command_status == 400 and "Command text is required" in missing_command_body,
+                f"status={missing_command_status}",
+            )
+        )
+
         chained = post_json("/api/command", {"command": "shell: ls && rm /tmp/example"}, base_url=base_url)
         results.append(
             CheckResult(

@@ -1030,7 +1030,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         if route.path == "/api/plan":
             try:
                 payload = self._read_json_payload()
-                command = str(payload.get("command", ""))
+                command = _payload_command_text(payload)
                 history = _conversation_history_from_payload(payload, current_command=command)
             except RequestBodyTooLarge:
                 self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
@@ -1173,7 +1173,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         if route.path == "/api/command/stream":
             try:
                 payload = self._read_json_payload()
-                command = str(payload.get("command", ""))
+                command = _payload_command_text(payload)
+                if not command:
+                    self._send_json({"error": "Command text is required"}, status=HTTPStatus.BAD_REQUEST)
+                    return
                 history = _conversation_history_from_payload(payload, current_command=command)
                 suppress_speech = _payload_suppresses_speech(payload)
                 suppress_audio_actions = _payload_suppresses_audio_actions(payload)
@@ -1200,7 +1203,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         try:
             payload = self._read_json_payload()
-            command = str(payload.get("command", ""))
+            command = _payload_command_text(payload)
+            if not command:
+                self._send_json({"error": "Command text is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
             history = _conversation_history_from_payload(payload, current_command=command)
             suppress_speech = _payload_suppresses_speech(payload)
             suppress_audio_actions = _payload_suppresses_audio_actions(payload)
@@ -1408,6 +1414,16 @@ def _payload_suppresses_speech(payload: dict[str, Any]) -> bool:
 
 def _payload_suppresses_audio_actions(payload: dict[str, Any]) -> bool:
     return payload.get("suppress_audio_actions") is True or payload.get("suppress_audio") is True
+
+
+def _payload_command_text(payload: dict[str, Any]) -> str:
+    for key in ("command", "message", "text", "prompt"):
+        if key not in payload:
+            continue
+        text = " ".join(str(payload.get(key) or "").split())
+        if text:
+            return text
+    return ""
 
 
 def _optional_float(raw: Any) -> float | None:
