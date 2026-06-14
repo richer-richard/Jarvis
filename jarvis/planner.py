@@ -61,6 +61,7 @@ from .tools import (
     latest_latency_status,
     localos_music_recommendations,
     localos_music_search,
+    localos_music_stop,
     memory_status,
     memory_usage_status,
     model_test_plan,
@@ -107,6 +108,16 @@ from .tools import (
 MIDDLE_TOOL_CONFIDENCE_FLOOR = 0.45
 
 
+def _localos_music_play_summary(result: dict[str, Any], *, from_your_pick: bool = False) -> str:
+    status = str(result.get("status") or "")
+    suffix = " from Your Pick" if from_your_pick else ""
+    if status == "playing":
+        return f"Started Local OS Music playback{suffix}."
+    if status == "queued":
+        return f"Queued Local OS Music playback{suffix}."
+    return f"Tried Local OS Music playback{suffix}."
+
+
 NATURAL_LANGUAGE_TOOL_SPECS = [
     {
         "tool": "outlook.visible_summary",
@@ -133,7 +144,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "localos.music_play",
-        "description": "Play a named song or a chosen Your Pick song through the Local OS Music Player. Use when the user asks to play, queue, start, or listen to music; Jarvis only queues the command and LocalOS plays the audio.",
+        "description": "Play a named song or a chosen Your Pick song through the Local OS Music Player. Use when the user asks to play, queue, start, or listen to music; LocalOS is preferred, with a tracked local fallback only if Chrome blocks the page audio.",
         "entities": ["query", "from_your_pick", "limit"],
         "entity_details": {
             "query": "Song title, artist, or phrase to search for. Leave empty when from_your_pick is true.",
@@ -143,6 +154,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "examples": [
             'Starting that through Local OS now. \\tool({"tool":"localos.music_play","entities":{"query":"Waving Through A Window","limit":5}})',
             'Choosing something from Your Pick now. \\tool({"tool":"localos.music_play","entities":{"from_your_pick":true,"limit":12}})',
+        ],
+    },
+    {
+        "tool": "localos.music_stop",
+        "description": "Stop Jarvis-owned fallback music playback. Use when Leo asks Jarvis to stop or pause music that Jarvis started.",
+        "entities": [],
+        "examples": [
+            'Stopping that music now. \\tool({"tool":"localos.music_stop","entities":{}})',
         ],
     },
     {
@@ -826,6 +845,8 @@ class Planner:
             return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(_extract_model_context_sample(text), tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
         if _looks_like_stop_speaking(lower):
             return self._result(text, "voice.stop_speaking", "Stopped Jarvis speech playback.", assessment, stop_speaking(), True)
+        if _looks_like_music_stop_request(lower):
+            return self._result(text, "localos.music_stop", "Stopped Jarvis-owned music playback.", assessment, localos_music_stop(), True)
         if _looks_like_remote_worker_status(lower):
             return self._result(text, "diagnostics.remote_worker", "Read remote MacBook Air worker status.", assessment, remote_worker_status(), True)
         if _looks_like_elevation_status(lower):
@@ -901,11 +922,7 @@ class Planner:
                 return self._result(
                     text,
                     "localos.music_play",
-                    (
-                        "Queued Local OS Music playback from Your Pick."
-                        if play_result.get("status") == "queued"
-                        else "Tried Local OS Music playback from Your Pick."
-                    ),
+                    _localos_music_play_summary(play_result, from_your_pick=True),
                     assessment,
                     play_result,
                     True,
@@ -925,7 +942,7 @@ class Planner:
                 return self._result(
                     text,
                     "localos.music_play",
-                    "Queued Local OS Music playback." if play_result.get("status") == "queued" else "Tried Local OS Music playback.",
+                    _localos_music_play_summary(play_result),
                     assessment,
                     play_result,
                     True,
@@ -1239,6 +1256,8 @@ class Planner:
             return self._preview_result(text, "browser.search_web", assessment, False, plan={"query": _extract_browser_search_query(text)})
         if _looks_like_builtin_browser_plan_request(lower):
             return self._preview_result(text, "browser.built_in_plan", assessment, True, plan={"goal": text})
+        if _looks_like_music_stop_request(lower):
+            return self._preview_result(text, "localos.music_stop", assessment, True, plan={"stops": "jarvis_owned_fallback_music_only"})
         if _looks_like_your_pick_choice(text):
             selected_tool = "localos.music_play" if _looks_like_music_play_request(text) else "localos.music_choose_from_your_pick"
             return self._preview_result(
@@ -1443,9 +1462,21 @@ class Planner:
             return self._result(
                 text,
                 "localos.music_play",
-                "Queued Local OS Music playback." if play_result.get("status") == "queued" else "Tried Local OS Music playback.",
+                _localos_music_play_summary(play_result, from_your_pick=from_your_pick),
                 assessment,
                 play_result,
+                True,
+            )
+        if selected_tool == "localos.music_stop":
+            if not execute:
+                return self._preview_result(text, "localos.music_stop", assessment, True, plan={"intent": intent, "stops": "jarvis_owned_fallback_music_only"})
+            stop_result = localos_music_stop()
+            return self._result(
+                text,
+                "localos.music_stop",
+                "Stopped Jarvis-owned music playback.",
+                assessment,
+                stop_result,
                 True,
             )
         if selected_tool == "localos.music_choose_from_your_pick":
@@ -1463,11 +1494,7 @@ class Planner:
                 return self._result(
                     text,
                     "localos.music_play",
-                    (
-                        "Queued Local OS Music playback from Your Pick."
-                        if play_result.get("status") == "queued"
-                        else "Tried Local OS Music playback from Your Pick."
-                    ),
+                    _localos_music_play_summary(play_result, from_your_pick=True),
                     assessment,
                     play_result,
                     True,
@@ -1530,11 +1557,7 @@ class Planner:
                     return self._result(
                         text,
                         "localos.music_play",
-                        (
-                            "Queued Local OS Music playback from Your Pick."
-                            if play_result.get("status") == "queued"
-                            else "Tried Local OS Music playback from Your Pick."
-                        ),
+                        _localos_music_play_summary(play_result, from_your_pick=True),
                         assessment,
                         play_result,
                         True,
@@ -1569,7 +1592,7 @@ class Planner:
                 return self._result(
                     text,
                     "localos.music_play",
-                    "Queued Local OS Music playback." if play_result.get("status") == "queued" else "Tried Local OS Music playback.",
+                    _localos_music_play_summary(play_result),
                     assessment,
                     play_result,
                     True,
@@ -2716,6 +2739,16 @@ def _looks_like_your_pick_choice(text: str) -> bool:
 def _looks_like_music_play_request(text: str) -> bool:
     lowered = re.sub(r"\s+", " ", str(text or "").lower())
     return bool(re.search(r"\b(?:play|queue|start|put on|listen to)\b", lowered))
+
+
+def _looks_like_music_stop_request(lower: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:stop|pause|cancel|interrupt)\s+(?:the\s+|my\s+|jarvis\s+)?(?:music|song|track|localos music|local os music)\b",
+            lower,
+        )
+        or re.search(r"\b(?:stop|pause)\s+(?:what|whatever)\s+(?:you|jarvis)\s+(?:are|were)?\s*(?:playing|started)\b", lower)
+    )
 
 
 def _looks_like_browser_url_request(text: str) -> bool:

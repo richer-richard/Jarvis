@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import atexit
 import base64
 import binascii
 import mimetypes
 import re
+import signal
 import threading
 import time
 import uuid
@@ -32,6 +34,7 @@ from .planner import NATURAL_LANGUAGE_TOOL_SPECS, Planner, email_request_status_
 from .safety import classify_command, policy_summary
 from .self_check import run_self_checks
 from .tools import (
+    cleanup_background_audio,
     codex_activity_snapshot,
     localos_music_pending_control,
     reset_audio_actions_suppressed,
@@ -695,6 +698,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
     labels = {
         "outlook.visible_summary": "Checking your email now.",
         "localos.music_play": "Starting that through Local OS now.",
+        "localos.music_stop": "Stopping that music now.",
         "localos.music_recommendations": "Checking your music picks now.",
         "localos.music_choose_from_your_pick": "Choosing from Your Pick now.",
         "localos.music_search": "Looking through your music library now.",
@@ -1256,6 +1260,8 @@ def run(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, start_paused: bool |
         PROJECT_ROOT.joinpath("runtime").mkdir(exist_ok=True)
     except OSError:
         pass
+    cleanup_background_audio(reason="server_startup")
+    _install_background_audio_shutdown_cleanup()
     if start_paused is not None:
         STATE.configure_mode(
             paused=start_paused,
@@ -1264,6 +1270,27 @@ def run(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, start_paused: bool |
     httpd = ThreadingHTTPServer((host, port), RequestHandler)
     print(f"Jarvis dashboard: http://{host}:{port}")
     httpd.serve_forever()
+
+
+_BACKGROUND_AUDIO_SHUTDOWN_CLEANUP_INSTALLED = False
+
+
+def _install_background_audio_shutdown_cleanup() -> None:
+    global _BACKGROUND_AUDIO_SHUTDOWN_CLEANUP_INSTALLED
+    if _BACKGROUND_AUDIO_SHUTDOWN_CLEANUP_INSTALLED:
+        return
+    _BACKGROUND_AUDIO_SHUTDOWN_CLEANUP_INSTALLED = True
+    atexit.register(cleanup_background_audio, reason="server_exit")
+
+    def handle_signal(signum: int, _frame: Any) -> None:
+        cleanup_background_audio(reason=f"signal_{signum}")
+        raise SystemExit(0)
+
+    for shutdown_signal in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(shutdown_signal, handle_signal)
+        except (OSError, ValueError):
+            pass
 
 
 def _bounded_int(raw: str, *, default: int, minimum: int, maximum: int) -> int:

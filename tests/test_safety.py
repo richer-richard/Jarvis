@@ -104,6 +104,7 @@ from jarvis.tools import (
     localos_music_play,
     localos_music_recommendations,
     localos_music_search,
+    localos_music_stop,
     memory_status,
     memory_usage_status,
     model_test_plan,
@@ -1450,6 +1451,44 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(preview.result["plan"]["query"], "Waving Through a Window")
         self.assertTrue(preview.result["plan"]["deterministic_preview"])
 
+    def test_primitive_music_play_extracts_dictated_song_phrase(self):
+        fake_result = {
+            "tool": "localos.music_play",
+            "status": "playing",
+            "executed": True,
+            "selected_track": {"id": "track-beat", "title": "Justin Bieber - Beauty And A Beat"},
+            "reply": "Playing Justin Bieber - Beauty And A Beat in Local OS.",
+        }
+        with patch("jarvis.planner.localos_music_play", return_value=fake_result) as play_mock, \
+             patch("jarvis.planner.run_fast_local_chat") as fast_chat_mock:
+            result = Planner().handle("play me beauty and the beast")
+
+        self.assertEqual(result.tool, "localos.music_play")
+        self.assertEqual(result.summary, "Started Local OS Music playback.")
+        play_mock.assert_called_once_with(
+            query="beauty and the beast",
+            user_request="play me beauty and the beast",
+            from_your_pick=False,
+            limit=None,
+        )
+        fast_chat_mock.assert_not_called()
+
+    def test_primitive_music_stop_routes_without_model(self):
+        fake_result = {
+            "tool": "localos.music_stop",
+            "status": "stopped",
+            "executed": True,
+            "reply": "Stopped Jarvis music playback.",
+        }
+        with patch("jarvis.planner.localos_music_stop", return_value=fake_result) as stop_mock, \
+             patch("jarvis.planner.run_fast_local_chat") as fast_chat_mock:
+            result = Planner().handle("stop the music")
+
+        self.assertEqual(result.tool, "localos.music_stop")
+        self.assertEqual(result.summary, "Stopped Jarvis-owned music playback.")
+        stop_mock.assert_called_once_with()
+        fast_chat_mock.assert_not_called()
+
     def test_model_selected_magic_keyboard_price_conversion_routes_to_tool(self):
         fake_result = {
             "tool": "commerce.price_convert",
@@ -1600,6 +1639,29 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(pending["status"], "available")
         self.assertEqual(pending["command"]["track"]["file_name"], "Dear Evan Hansen.mp3")
 
+    def test_localos_music_search_tolerates_small_dictation_mishear(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
+            payload = {
+                "source": "localos-music-player",
+                "allSongsCount": 1,
+                "library": [
+                    {
+                        "id": "track-beat",
+                        "title": "Justin Bieber - Beauty And A Beat",
+                        "artist": "Unknown",
+                        "relativePath": "mp3/Justin Bieber - Beauty And A Beat.mp3",
+                    }
+                ],
+            }
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path):
+                store_localos_music_snapshot(payload)
+                result = localos_music_search("beauty and the beast", limit=5)
+
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["matches"][0]["id"], "track-beat")
+        self.assertGreater(result["matches"][0]["score"], 70)
+
     def test_localos_music_play_uses_bridge_playing_confirmation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
@@ -1628,10 +1690,105 @@ class PlannerTests(unittest.TestCase):
                 store_localos_music_snapshot(payload)
                 result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
 
-        self.assertEqual(result["status"], "queued")
+        self.assertEqual(result["status"], "playing")
         self.assertEqual(result["playback_confirmation"], "playing")
         self.assertEqual(result["localos_bridge_version"], 2)
         self.assertIn("Playing Waving Through A Window by Dear Evan Hansen", result["reply"])
+
+    def test_localos_music_play_uses_native_fallback_when_chrome_blocks_audio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
+            control_path = Path(tmpdir) / "localos_music_control.json"
+            payload = {
+                "source": "localos-music-player",
+                "jarvisControlBridgeVersion": 3,
+                "jarvisControlPollingActive": True,
+                "library": [
+                    {
+                        "id": "track-natural",
+                        "title": "Imagine Dragons - Natural",
+                        "artist": "7clouds",
+                        "relativePath": "mp3/Imagine Dragons - Natural.mp3",
+                    }
+                ],
+            }
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
+                 patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path), \
+                 patch("jarvis.tools._localos_music_playback_confirmation", return_value={
+                     "status": "failed",
+                     "bridge_version": 3,
+                     "polling_active": True,
+                     "latest_command_id": "music-test",
+                     "latest_command_status": "failed",
+                     "current_track_matches": True,
+                     "current_track_playing": False,
+                     "error": "play() failed because the user didn't interact with the document first.",
+                 }), \
+                 patch("jarvis.tools._play_localos_music_native_fallback", return_value={
+                     "status": "playing",
+                     "played": True,
+                     "player": "afplay",
+                     "path": "/tmp/Imagine Dragons - Natural.mp3",
+                 }) as native_mock:
+                store_localos_music_snapshot(payload)
+                result = localos_music_play("natural", user_request="play natural", limit=5)
+
+        self.assertEqual(result["status"], "playing")
+        self.assertEqual(result["played_by"], "localos_native_file_fallback")
+        self.assertTrue(result["jarvis_played_audio"])
+        self.assertEqual(result["playback_confirmation"], "native_fallback_playing")
+        self.assertEqual(result["localos_page_playback_confirmation"], "failed")
+        self.assertEqual(result["native_fallback"]["player"], "afplay")
+        self.assertIn("from your Local OS music library", result["reply"])
+        native_mock.assert_called_once()
+
+    def test_localos_music_native_path_resolves_file_name_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            mp3_dir = root / "localOS" / "localFiles" / "mp3"
+            mp3_dir.mkdir(parents=True)
+            audio_path = mp3_dir / "Dear Evan Hansen - For Forever.mp3"
+            audio_path.write_bytes(b"fake mp3")
+            with patch.object(jarvis_tools, "LOCALOS_ROOT", root):
+                resolved = jarvis_tools._localos_music_audio_path({
+                    "relative_path": "Desktop/Dear Evan Hansen - For Forever.mp3",
+                    "file_name": "Dear Evan Hansen - For Forever.mp3",
+                })
+
+        self.assertEqual(resolved, audio_path.resolve())
+
+    def test_localos_music_stop_kills_tracked_orphaned_afplay(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            state_path = root / "runtime" / "integrations" / "localos_native_music.json"
+            mp3_dir = root / "localOS" / "localFiles" / "mp3"
+            mp3_dir.mkdir(parents=True)
+            audio_path = mp3_dir / "Imagine Dragons - Natural.mp3"
+            audio_path.write_bytes(b"fake mp3")
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(
+                json.dumps({
+                    "schema": "jarvis.localos.native_music.v1",
+                    "pid": 4242,
+                    "path": str(audio_path),
+                    "track": {"title": "Imagine Dragons - Natural"},
+                }),
+                encoding="utf-8",
+            )
+            with patch.object(jarvis_tools, "LOCALOS_NATIVE_MUSIC_STATE_PATH", state_path), \
+                 patch.object(jarvis_tools, "LOCALOS_MUSIC_MP3_DIR", mp3_dir), \
+                 patch.object(jarvis_tools, "LOCALOS_NATIVE_MUSIC_PROCESS", None), \
+                 patch("jarvis.tools._pid_command_line", side_effect=[
+                     f"/usr/bin/afplay /usr/bin/afplay {audio_path}",
+                     "",
+                 ]), \
+                 patch("jarvis.tools.os.kill") as kill_mock:
+                result = localos_music_stop()
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertTrue(result["interrupted_previous"])
+        self.assertFalse(state_path.exists())
+        kill_mock.assert_called_once_with(4242, jarvis_tools.signal.SIGTERM)
 
     def test_localos_music_confirmation_requires_audio_playing_flag(self):
         snapshot = {
@@ -1676,6 +1833,7 @@ class PlannerTests(unittest.TestCase):
                 {"status": "available", "snapshot": accepted_snapshot},
                 {"status": "available", "snapshot": accepted_snapshot},
                 {"status": "available", "snapshot": playing_snapshot},
+                {"status": "available", "snapshot": playing_snapshot},
             ],
         ), patch("jarvis.tools.time.sleep", return_value=None) as sleep_mock:
             confirmation = jarvis_tools._localos_music_playback_confirmation(
@@ -1687,6 +1845,42 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(confirmation["status"], "playing")
         self.assertTrue(confirmation["current_track_playing"])
         sleep_mock.assert_called()
+
+    def test_localos_music_playback_confirmation_catches_playing_then_failed(self):
+        command = {"id": "music-abc", "created_at": time.time() - 0.1}
+        selected = {"id": "track-2", "title": "Natural", "artist": "Imagine Dragons"}
+        playing_snapshot = {
+            "jarvis_control_bridge_version": 3,
+            "jarvis_control_polling_active": True,
+            "received_at": time.time(),
+            "last_jarvis_command_id": "music-abc",
+            "last_jarvis_command_status": "playing",
+            "current_track": {"id": "track-2", "title": "Natural", "playing": True},
+            "playing": True,
+        }
+        failed_snapshot = {
+            **playing_snapshot,
+            "last_jarvis_command_status": "failed",
+            "last_jarvis_command_error": "play() failed because the user didn't interact with the document first.",
+            "current_track": {"id": "track-2", "title": "Natural", "playing": False},
+            "playing": False,
+        }
+        with patch(
+            "jarvis.tools._read_localos_music_snapshot_for_tool",
+            side_effect=[
+                {"status": "available", "snapshot": playing_snapshot},
+                {"status": "available", "snapshot": playing_snapshot},
+                {"status": "available", "snapshot": failed_snapshot},
+            ],
+        ), patch("jarvis.tools.time.sleep", return_value=None):
+            confirmation = jarvis_tools._localos_music_playback_confirmation(
+                command,
+                selected,
+                timeout_seconds=1.0,
+            )
+
+        self.assertEqual(confirmation["status"], "failed")
+        self.assertIn("user didn't interact", confirmation["error"])
 
     def test_localos_music_playback_confirmation_reports_stale_bridge(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1781,7 +1975,7 @@ class PlannerTests(unittest.TestCase):
                  }) as direct_mock:
                 result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
 
-        self.assertEqual(result["status"], "queued")
+        self.assertEqual(result["status"], "playing")
         self.assertEqual(result["control_lane"], "chrome_direct_localos_page")
         self.assertEqual(result["playback_confirmation"], "playing")
         self.assertFalse(control_path.exists())
@@ -1953,7 +2147,7 @@ class PlannerTests(unittest.TestCase):
                 result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
                 pending = localos_music_pending_control()
 
-        self.assertEqual(result["status"], "queued")
+        self.assertEqual(result["status"], "playing")
         self.assertEqual(result["control_lane"], "localos_polling_bridge_opened_player")
         self.assertEqual(result["playback_confirmation"], "playing")
         self.assertEqual(result["player_open"]["status"], "live")
@@ -2078,7 +2272,7 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(control_path.exists())
         self.assertIn("Local OS Music is not connected", result["reply"])
 
-    def test_localos_music_play_tells_user_when_bridge_did_not_poll(self):
+    def test_localos_music_play_keeps_live_bridge_delay_queued(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
             control_path = Path(tmpdir) / "localos_music_control.json"
@@ -2106,9 +2300,10 @@ class PlannerTests(unittest.TestCase):
                 store_localos_music_snapshot(payload)
                 result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
 
+        self.assertEqual(result["status"], "queued")
         self.assertEqual(result["playback_confirmation"], "bridge_not_polling")
-        self.assertIn("Local OS did not pick up the command", result["reply"])
-        self.assertIn("Open or refresh the Local OS Music Player", result["reply"])
+        self.assertIn("I sent Waving Through A Window by Dear Evan Hansen to Local OS", result["reply"])
+        self.assertIn("may take a moment", result["reply"])
         self.assertIn("bridge_recovery", result)
         self.assertIn("player_path", result["bridge_recovery"])
         self.assertIn("shell_path", result["bridge_recovery"])
@@ -2134,6 +2329,26 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result.tool, "localos.music_play")
         self.assertEqual(result.summary, "Tried Local OS Music playback.")
         self.assertEqual(result.result["status"], "not_queued")
+
+    def test_localos_music_play_summary_reports_started_when_confirmed(self):
+        fake_result = {
+            "tool": "localos.music_play",
+            "status": "playing",
+            "executed": True,
+            "available": True,
+            "playback_confirmation": "playing",
+            "reply": "Playing Waving Through A Window by Dear Evan Hansen in Local OS.",
+        }
+        with patch("jarvis.planner.localos_music_play", return_value=fake_result):
+            result = Planner().handle_selected_tool(
+                "play Waving Through A Window",
+                "localos.music_play",
+                {"query": "Waving Through A Window"},
+            )
+
+        self.assertEqual(result.tool, "localos.music_play")
+        self.assertEqual(result.summary, "Started Local OS Music playback.")
+        self.assertEqual(result.result["status"], "playing")
 
     def test_your_pick_play_request_queues_chosen_track(self):
         fake_result = {
@@ -2305,6 +2520,10 @@ class PlannerTests(unittest.TestCase):
             "Starting that through Local OS now.",
         )
         self.assertEqual(
+            _stream_status_text({"tool": "localos.music_stop"}),
+            "Stopping that music now.",
+        )
+        self.assertEqual(
             _stream_status_text({"tool": "localos.music_recommendations"}),
             "Checking your music picks now.",
         )
@@ -2328,13 +2547,16 @@ class PlannerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("JARVIS_MUSIC_CONTROL_URL", source)
-        self.assertIn("JARVIS_MUSIC_CONTROL_BRIDGE_VERSION", source)
+        self.assertIn("JARVIS_MUSIC_CONTROL_BRIDGE_VERSION = 3", source)
         self.assertIn("/api/integrations/localos/music/control", source)
         self.assertIn("jarvisControlStatus", source)
         self.assertIn('mode: "cors"', source)
         self.assertIn("pollJarvisMusicControl", source)
         self.assertIn("handleJarvisMusicCommand", source)
         self.assertIn("markJarvisMusicCommandStatus", source)
+        self.assertIn("allowMutedAutoplayRetry", source)
+        self.assertIn("isAutoplayGestureError", source)
+        self.assertIn("audioEl.muted = true", source)
         self.assertIn("playing: audioPlaying", source)
         self.assertIn("playTrackById", source)
         self.assertIn('command.action !== "play_track"', source)

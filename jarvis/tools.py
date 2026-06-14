@@ -108,6 +108,8 @@ ACTIVE_TIMERS_LOCK = threading.Lock()
 SPEECH_PROCESS: Any | None = None
 SPEECH_PROCESS_REASON: str | None = None
 SPEECH_GENERATION = 0
+LOCALOS_NATIVE_MUSIC_PROCESS: Any | None = None
+LOCALOS_NATIVE_MUSIC_TRACK: dict[str, Any] | None = None
 SPEECH_MUTED = False
 SPEECH_LOCK = threading.Lock()
 STATUS_TO_FINAL_QUEUE_TIMEOUT_SECONDS = 2.8
@@ -171,6 +173,7 @@ LOCALOS_MUSIC_MP3_DIR = LOCALOS_ROOT / "localOS" / "localFiles" / "mp3"
 LOCALOS_MUSIC_SNAPSHOT_PATH = RUNTIME_DIR / "integrations" / "localos_music_snapshot.json"
 LOCALOS_MUSIC_CONTROL_PATH = RUNTIME_DIR / "integrations" / "localos_music_control.json"
 LOCALOS_MUSIC_PLAYER_OPEN_MARK_PATH = RUNTIME_DIR / "integrations" / "localos_music_player_open.json"
+LOCALOS_NATIVE_MUSIC_STATE_PATH = RUNTIME_DIR / "integrations" / "localos_native_music.json"
 LOCALOS_MUSIC_SNAPSHOT_MAX_TRACKS = 25
 LOCALOS_MUSIC_LIBRARY_MAX_TRACKS = 500
 LOCALOS_MUSIC_DEFAULT_LIMIT = 10
@@ -634,7 +637,15 @@ def tool_registry() -> dict[str, Any]:
                 "mode": "safe_execute",
                 "risk": "local_audio_playback",
                 "available": LOCALOS_MUSIC_SNAPSHOT_PATH.exists(),
-                "description": "Queues a selected track for the Local OS Music Player to play; Jarvis does not play the audio itself.",
+                "description": "Plays a selected Local OS Music track, preferring the Local OS bridge and using a tracked local fallback only when Chrome blocks audio.",
+            },
+            {
+                "id": "localos.music_stop",
+                "label": "Stop Jarvis Music",
+                "mode": "safe_execute",
+                "risk": "local_audio_control",
+                "available": True,
+                "description": "Stops Jarvis-owned fallback music playback without touching unrelated system audio.",
             },
             {
                 "id": "localos.music_recommendations",
@@ -3013,6 +3024,251 @@ def localos_music_search(query: str, limit: int | str | None = None) -> dict[str
     }
 
 
+def _localos_music_native_fallback_reason(error: Any) -> bool:
+    text = _localos_clean_text(error, 400).lower()
+    return "user didn't interact" in text or "user gesture" in text or "autoplay" in text
+
+
+def _localos_music_audio_path(track: dict[str, Any]) -> Path | None:
+    raw_candidates = [
+        _localos_clean_text(track.get("path"), 500),
+        _localos_clean_text(track.get("relative_path"), 500),
+        _localos_clean_text(track.get("relativePath"), 500),
+        _localos_clean_text(track.get("file_name"), 300),
+        _localos_clean_text(track.get("fileName"), 300),
+    ]
+    candidates: list[Path] = []
+    localos_base = LOCALOS_ROOT / "localOS"
+    local_files = localos_base / "localFiles"
+    for raw in raw_candidates:
+        if not raw:
+            continue
+        raw_path = Path(raw).expanduser()
+        if raw_path.is_absolute():
+            candidates.append(raw_path)
+        candidates.extend([
+            local_files / raw,
+            localos_base / raw,
+            LOCALOS_ROOT / raw,
+        ])
+        if "/" not in raw and "\\" not in raw:
+            candidates.append(local_files / "mp3" / raw)
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
+    return None
+
+
+def _read_localos_native_music_state() -> dict[str, Any]:
+    try:
+        data = json.loads(LOCALOS_NATIVE_MUSIC_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_localos_native_music_state(process: subprocess.Popen[str], audio_path: Path, track: dict[str, Any]) -> None:
+    try:
+        LOCALOS_NATIVE_MUSIC_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema": "jarvis.localos.native_music.v1",
+            "pid": process.pid,
+            "path": str(audio_path),
+            "started_at": time.time(),
+            "track": _sanitize_localos_music_track(track, rank=_safe_int(track.get("rank")) or 1) or dict(track),
+        }
+        LOCALOS_NATIVE_MUSIC_STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _clear_localos_native_music_state() -> None:
+    try:
+        LOCALOS_NATIVE_MUSIC_STATE_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def _path_is_localos_music_file(path: Path | None) -> bool:
+    if path is None:
+        return False
+    try:
+        resolved = path.resolve()
+        music_root = LOCALOS_MUSIC_MP3_DIR.resolve()
+    except OSError:
+        return False
+    try:
+        return resolved == music_root or resolved.is_relative_to(music_root)
+    except AttributeError:
+        return str(resolved).startswith(str(music_root) + os.sep)
+
+
+def _pid_command_line(pid: int) -> str:
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "comm=,args="],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _terminate_tracked_localos_native_music_pid(pid: int, audio_path: Path | None) -> dict[str, Any]:
+    if pid <= 0 or not _path_is_localos_music_file(audio_path):
+        return {"stopped": False, "pid": pid, "reason": "untrusted_native_music_state"}
+    command_line = _pid_command_line(pid)
+    if "afplay" not in command_line or (audio_path is not None and str(audio_path) not in command_line):
+        return {"stopped": False, "pid": pid, "reason": "pid_does_not_match_tracked_afplay"}
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return {"stopped": False, "pid": pid, "reason": "not_running"}
+    except OSError as error:
+        return {"stopped": False, "pid": pid, "reason": "terminate_failed", "error": str(error)}
+    deadline = time.monotonic() + 0.8
+    while time.monotonic() < deadline:
+        if not _pid_command_line(pid):
+            return {"stopped": True, "pid": pid, "method": "terminate"}
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+        return {"stopped": True, "pid": pid, "method": "kill"}
+    except ProcessLookupError:
+        return {"stopped": True, "pid": pid, "method": "terminate"}
+    except OSError as error:
+        return {"stopped": False, "pid": pid, "reason": "kill_failed", "error": str(error)}
+
+
+def _stop_localos_native_music() -> dict[str, Any]:
+    global LOCALOS_NATIVE_MUSIC_PROCESS, LOCALOS_NATIVE_MUSIC_TRACK
+    process = LOCALOS_NATIVE_MUSIC_PROCESS
+    track = LOCALOS_NATIVE_MUSIC_TRACK
+    was_running = bool(process is not None and getattr(process, "poll", lambda: 0)() is None)
+    stopped_process: dict[str, Any] = {"stopped": False}
+    if was_running:
+        try:
+            process.terminate()
+            process.wait(timeout=0.8)
+            stopped_process = {"stopped": True, "pid": process.pid, "method": "terminate"}
+        except Exception:
+            try:
+                process.kill()
+                stopped_process = {"stopped": True, "pid": process.pid, "method": "kill"}
+            except Exception:
+                pass
+    state = _read_localos_native_music_state()
+    state_pid = _safe_int(state.get("pid"))
+    state_path = Path(_localos_clean_text(state.get("path"), 600)) if state.get("path") else None
+    stopped_tracked = {"stopped": False}
+    if state_pid and (not process or state_pid != getattr(process, "pid", None)):
+        stopped_tracked = _terminate_tracked_localos_native_music_pid(state_pid, state_path)
+    LOCALOS_NATIVE_MUSIC_PROCESS = None
+    LOCALOS_NATIVE_MUSIC_TRACK = None
+    _clear_localos_native_music_state()
+    return {
+        "was_running": was_running or bool(stopped_tracked.get("stopped")),
+        "stopped_track": track,
+        "stopped_process": stopped_process,
+        "stopped_tracked_process": stopped_tracked,
+    }
+
+
+def _play_localos_music_native_fallback(track: dict[str, Any], *, reason: str = "") -> dict[str, Any]:
+    global LOCALOS_NATIVE_MUSIC_PROCESS, LOCALOS_NATIVE_MUSIC_TRACK
+    started_at = time.monotonic()
+    afplay_path = _configured_executable(TTS_AFPLAY, "afplay")
+    audio_path = _localos_music_audio_path(track)
+    if not afplay_path:
+        return {
+            "status": "unavailable",
+            "played": False,
+            "error": "afplay_not_available",
+            **_duration_fields(started_at),
+        }
+    if not audio_path:
+        return {
+            "status": "unavailable",
+            "played": False,
+            "error": "localos_audio_file_not_found",
+            **_duration_fields(started_at),
+        }
+    stopped = _stop_localos_native_music()
+    try:
+        process = subprocess.Popen(
+            [afplay_path, str(audio_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "played": False,
+            "path": str(audio_path),
+            "error": f"{type(exc).__name__}: {exc}",
+            "stopped_previous": stopped,
+            **_duration_fields(started_at),
+        }
+    LOCALOS_NATIVE_MUSIC_PROCESS = process
+    LOCALOS_NATIVE_MUSIC_TRACK = _sanitize_localos_music_track(track, rank=_safe_int(track.get("rank")) or 1) or dict(track)
+    _write_localos_native_music_state(process, audio_path, track)
+    return {
+        "status": "playing",
+        "played": True,
+        "player": "afplay",
+        "pid": process.pid,
+        "path": str(audio_path),
+        "reason": _localos_clean_text(reason, 220),
+        "stopped_previous": stopped,
+        **_duration_fields(started_at),
+    }
+
+
+def cleanup_background_audio(*, reason: str = "cleanup") -> dict[str, Any]:
+    """Stop Jarvis-owned background audio that can outlive the app process."""
+    started_at = time.monotonic()
+    stopped = _stop_localos_native_music()
+    return {
+        "tool": "audio.cleanup",
+        "status": "stopped" if stopped.get("was_running") else "idle",
+        "executed": True,
+        "reason": reason,
+        **stopped,
+        **_duration_fields(started_at),
+    }
+
+
+def localos_music_stop() -> dict[str, Any]:
+    """Stop only Jarvis-owned LocalOS native fallback music playback."""
+    started_at = time.monotonic()
+    stopped = _stop_localos_native_music()
+    interrupted = bool(stopped.get("was_running"))
+    return {
+        "tool": "localos.music_stop",
+        "status": "stopped" if interrupted else "idle",
+        "executed": True,
+        "started_audio": False,
+        "played_audio": False,
+        "recorded_audio": False,
+        "read_private_content": False,
+        **stopped,
+        "interrupted_previous": interrupted,
+        **_duration_fields(started_at),
+        "reply": "Stopped Jarvis music playback." if interrupted else "No Jarvis-owned music was playing.",
+    }
+
+
 def localos_music_play(
     query: str | None = None,
     *,
@@ -3085,7 +3341,7 @@ def localos_music_play(
             reply = f"Playing {_localos_music_found_phrase(selected)} in Local OS."
             return {
                 **base,
-                "status": "queued",
+                "status": "playing",
                 "available": True,
                 "source_tool": source_result.get("tool"),
                 "source_status": source_result.get("status"),
@@ -3133,18 +3389,23 @@ def localos_music_play(
             command = _queue_localos_music_control("play_track", selected, user_request=user_request or query or "")
             confirmation = _localos_music_playback_confirmation(command, selected)
             confirmation_status = str(confirmation.get("status") or "unconfirmed")
+            page_confirmation_status = confirmation_status
+            native_fallback: dict[str, Any] | None = None
+            if confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error")):
+                native_fallback = _play_localos_music_native_fallback(selected, reason=confirmation.get("error") or "")
+                if native_fallback.get("played"):
+                    confirmation_status = "native_fallback_playing"
             bridge_version = confirmation.get("bridge_version")
             if confirmation_status == "playing":
                 reply = f"Playing {_localos_music_found_phrase(selected)} in Local OS."
+            elif confirmation_status == "native_fallback_playing":
+                reply = f"Playing {_localos_music_found_phrase(selected)} from your Local OS music library."
             elif confirmation_status == "failed":
                 reply = f"I found {_localos_music_found_phrase(selected)}, but Local OS could not start it."
             elif confirmation_status == "ignored":
                 reply = f"Local OS ignored the request for {_localos_music_found_phrase(selected)}."
             elif confirmation_status == "bridge_not_polling":
-                reply = (
-                    f"I found {_localos_music_found_phrase(selected)}, but Local OS did not pick up the command. "
-                    "Open or refresh the Local OS Music Player, then try again."
-                )
+                reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS; it may take a moment to start."
             elif confirmation_status == "accepted":
                 reply = (
                     f"I found {_localos_music_found_phrase(selected)}, but Local OS did not start the audio. "
@@ -3157,19 +3418,22 @@ def localos_music_play(
                     f"I queued {_localos_music_found_phrase(selected)} in Local OS. "
                     "If it does not start, refresh the LocalOS music window once."
                 )
-            result_status = "queued"
-            if confirmation_status in {"accepted", "failed", "ignored", "bridge_not_polling"}:
+            result_status = "playing" if confirmation_status in {"playing", "native_fallback_playing"} else "queued"
+            if confirmation_status in {"accepted", "failed", "ignored"}:
                 result_status = "not_queued"
             return {
                 **base,
                 "status": result_status,
+                "played_by": "localos_native_file_fallback" if confirmation_status == "native_fallback_playing" else "localos",
+                "jarvis_played_audio": confirmation_status == "native_fallback_playing",
                 "available": True,
                 "source_tool": source_result.get("tool"),
                 "source_status": source_result.get("status"),
                 "selected_track": selected,
                 "control": command,
                 "control_lane": "localos_polling_bridge_opened_player",
-                "playback_confirmation": confirmation_status,
+                "playback_confirmation": "native_fallback_playing" if confirmation_status == "native_fallback_playing" else confirmation_status,
+                **({"localos_page_playback_confirmation": page_confirmation_status, "native_fallback": native_fallback} if native_fallback else {}),
                 "localos_bridge_version": bridge_version,
                 "localos_bridge_polling_active": confirmation.get("polling_active"),
                 "localos_bridge_latest_command_id": confirmation.get("latest_command_id"),
@@ -3215,18 +3479,23 @@ def localos_music_play(
     command = _queue_localos_music_control("play_track", selected, user_request=user_request or query or "")
     confirmation = _localos_music_playback_confirmation(command, selected)
     confirmation_status = str(confirmation.get("status") or "unconfirmed")
+    page_confirmation_status = confirmation_status
+    native_fallback: dict[str, Any] | None = None
+    if confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error")):
+        native_fallback = _play_localos_music_native_fallback(selected, reason=confirmation.get("error") or "")
+        if native_fallback.get("played"):
+            confirmation_status = "native_fallback_playing"
     bridge_version = confirmation.get("bridge_version")
     if confirmation_status == "playing":
         reply = f"Playing {_localos_music_found_phrase(selected)} in Local OS."
+    elif confirmation_status == "native_fallback_playing":
+        reply = f"Playing {_localos_music_found_phrase(selected)} from your Local OS music library."
     elif confirmation_status == "failed":
         reply = f"I found {_localos_music_found_phrase(selected)}, but Local OS could not start it."
     elif confirmation_status == "ignored":
         reply = f"Local OS ignored the request for {_localos_music_found_phrase(selected)}."
     elif confirmation_status == "bridge_not_polling":
-        reply = (
-            f"I found {_localos_music_found_phrase(selected)}, but Local OS did not pick up the command. "
-            "Open or refresh the Local OS Music Player, then try again."
-        )
+        reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS; it may take a moment to start."
     elif confirmation_status == "accepted":
         reply = f"Local OS accepted {_localos_music_found_phrase(selected)}; waiting for the audio to start."
     elif bridge_version:
@@ -3236,19 +3505,22 @@ def localos_music_play(
             f"I queued {_localos_music_found_phrase(selected)} in Local OS. "
             "If it does not start, refresh the LocalOS music window once."
         )
-    result_status = "queued"
-    if confirmation_status in {"accepted", "failed", "ignored", "bridge_not_polling"}:
+    result_status = "playing" if confirmation_status in {"playing", "native_fallback_playing"} else "queued"
+    if confirmation_status in {"accepted", "failed", "ignored"}:
         result_status = "not_queued"
     return {
         **base,
         "status": result_status,
+        "played_by": "localos_native_file_fallback" if confirmation_status == "native_fallback_playing" else "localos",
+        "jarvis_played_audio": confirmation_status == "native_fallback_playing",
         "control_lane": "localos_polling_bridge",
         "available": True,
         "source_tool": source_result.get("tool"),
         "source_status": source_result.get("status"),
         "selected_track": selected,
         "control": command,
-        "playback_confirmation": confirmation_status,
+        "playback_confirmation": "native_fallback_playing" if confirmation_status == "native_fallback_playing" else confirmation_status,
+        **({"localos_page_playback_confirmation": page_confirmation_status, "native_fallback": native_fallback} if native_fallback else {}),
         "localos_bridge_version": bridge_version,
         "localos_bridge_polling_active": confirmation.get("polling_active"),
         "localos_bridge_latest_command_id": confirmation.get("latest_command_id"),
@@ -3882,7 +4154,22 @@ def _localos_music_playback_confirmation(
             selected_id=selected_id,
             command_created_at=command_created_at,
         )
-        if confirmation.get("status") in {"playing", "failed", "ignored"}:
+        if confirmation.get("status") == "playing":
+            stable_until = min(deadline, time.monotonic() + 1.0)
+            while time.monotonic() < stable_until:
+                time.sleep(0.15)
+            refreshed_result = _read_localos_music_snapshot_for_tool()
+            refreshed_snapshot = refreshed_result.get("snapshot") if isinstance(refreshed_result.get("snapshot"), dict) else {}
+            refreshed = _localos_music_confirmation_from_snapshot(
+                refreshed_snapshot,
+                command_id=command_id,
+                selected_id=selected_id,
+                command_created_at=command_created_at,
+            )
+            if refreshed.get("status") in {"playing", "failed", "ignored"}:
+                return refreshed
+            return confirmation
+        if confirmation.get("status") in {"failed", "ignored"}:
             return confirmation
         last_confirmation = confirmation
         if time.monotonic() >= deadline:
@@ -4212,7 +4499,7 @@ def _music_match_score(query_norm: str, query_tokens: list[str], haystack_norm: 
     haystack_tokens = set(_music_match_tokens(haystack_norm))
     if not haystack_tokens:
         return 0.0
-    matched = [token for token in query_tokens if token in haystack_tokens or token in haystack_norm]
+    matched = [token for token in query_tokens if _music_token_matches(token, haystack_tokens, haystack_norm)]
     coverage = len(matched) / len(query_tokens)
     if coverage <= 0:
         return 0.0
@@ -4228,6 +4515,19 @@ def _music_match_score(query_norm: str, query_tokens: list[str], haystack_norm: 
     if ordered:
         ordered_bonus = 14.0
     return coverage * 80.0 + ordered_bonus
+
+
+def _music_token_matches(query_token: str, haystack_tokens: set[str], haystack_norm: str) -> bool:
+    if query_token in haystack_tokens or query_token in haystack_norm:
+        return True
+    if len(query_token) < 4:
+        return False
+    for candidate in haystack_tokens:
+        if len(candidate) < 4:
+            continue
+        if difflib.SequenceMatcher(None, query_token, candidate).ratio() >= 0.82:
+            return True
+    return False
 
 
 def _music_direct_field_bonus(query_norm: str, track: dict[str, Any]) -> float:
@@ -4281,7 +4581,8 @@ def _normalize_music_match_text(value: Any) -> str:
 
 
 def _music_match_tokens(value: str) -> list[str]:
-    return [token for token in value.split() if token and token not in {"the", "a", "an", "me", "my", "please", "for", "song", "track", "music", "play"}]
+    stop_words = {"the", "a", "an", "and", "me", "my", "please", "for", "to", "by", "song", "track", "music", "play"}
+    return [token for token in value.split() if token and token not in stop_words]
 
 
 def _localos_title_artist_from_file(stem: str) -> tuple[str, str]:
@@ -4429,7 +4730,8 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "calendar.today_schedule", "kind": "private_read", "description": "Read today's Calendar schedule without creating, changing, accepting, or deleting events."},
         {"id": "diagnostics.memory_usage", "kind": "read_only", "description": "Report Activity Monitor-style RAM and memory-pressure status without opening Activity Monitor."},
         {"id": "models.test_plan", "kind": "read_only_plan", "description": "Plan a safe AI model test, preferring the MacBook Air for heavy models before touching this 16 GB Mac."},
-        {"id": "localos.music_play", "kind": "safe_execute", "description": "Queue a named or chosen song for the Local OS Music Player to play locally."},
+        {"id": "localos.music_play", "kind": "safe_execute", "description": "Play a named or chosen song locally, preferring the Local OS bridge and using a tracked fallback only when Chrome blocks audio."},
+        {"id": "localos.music_stop", "kind": "safe_execute", "description": "Stop Jarvis-owned fallback music playback without touching unrelated system audio."},
         {"id": "localos.music_recommendations", "kind": "read_only", "description": "Read the Local OS Music Player Your Pick recommendation snapshot after the music page publishes it to Jarvis."},
         {"id": "localos.music_choose_from_your_pick", "kind": "read_only_model_choice", "description": "Feed the Your Pick candidate list to Jarvis's fast model so it can choose one track naturally."},
         {"id": "localos.music_search", "kind": "read_only", "description": "Search the full Local OS Music library snapshot by title, artist, group, or filename."},
@@ -13963,6 +14265,7 @@ _FAST_CHAT_STREAM_FALLBACK_CORE_TOOLS = {
     "app.list",
     "voice.stop_speaking",
     "localos.music_play",
+    "localos.music_stop",
     "browser.current_tab",
     "browser.read_page",
     "browser.bookmarks_import",
