@@ -583,6 +583,36 @@ def run_isolated_worker_hardening_checks(results: list[CheckResult]) -> None:
                 f"status={missing_command_status}",
             )
         )
+        stream_alias_status, stream_alias_body = http_status(
+            base_url,
+            "/api/command/stream",
+            method="POST",
+            body=json.dumps({"message": "status", "suppress_speech": True}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        results.append(
+            CheckResult(
+                "isolated_stream_command_message_alias",
+                stream_alias_status == 200
+                and '"command":"status"' in stream_alias_body
+                and '"tool":"system.status"' in stream_alias_body,
+                f"status={stream_alias_status}",
+            )
+        )
+        missing_stream_status, missing_stream_body = http_status(
+            base_url,
+            "/api/command/stream",
+            method="POST",
+            body=json.dumps({}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        results.append(
+            CheckResult(
+                "isolated_missing_stream_command_rejected",
+                missing_stream_status == 400 and "Command text is required" in missing_stream_body,
+                f"status={missing_stream_status}",
+            )
+        )
 
         chained = post_json("/api/command", {"command": "shell: ls && rm /tmp/example"}, base_url=base_url)
         results.append(
