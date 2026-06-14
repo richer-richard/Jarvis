@@ -8097,22 +8097,22 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         {
             "id": "locate_class_team",
             "status": "manual_or_future_after_page_open",
-            "tool": "browser.read_page",
-            "summary": "After Teams is visibly open, try a bounded page or screen read only when explicitly requested; do not claim the assignment was inspected until that read succeeds.",
+            "tool": "screen.visible_text",
+            "summary": "After Teams is visibly open in signed-in Chrome, try the native visible-screen OCR route; do not claim the assignment was inspected until that read succeeds.",
             "executes_now": False,
         },
         {
             "id": "identify_newest_assignment",
             "status": "manual_or_future_after_page_open",
-            "tool": "browser.read_page",
-            "summary": "Identify visible assignment titles/dates only from a successful later page or screen read; Teams itself is just opened in this step.",
+            "tool": "screen.visible_text",
+            "summary": "Identify visible assignment titles/dates only from a successful native visible-screen read; Teams itself is just opened in the handoff step.",
             "executes_now": False,
         },
         {
             "id": "collect_requirements",
             "status": "manual_or_future_after_page_open",
-            "tool": "browser.read_page",
-            "summary": "Capture visible rubric/instructions only after a later read succeeds; do not download or export private school content by default.",
+            "tool": "screen.visible_text",
+            "summary": "Capture visible rubric/instructions only after a later native visible-screen read succeeds; do not download or export private school content by default.",
             "executes_now": False,
         },
     ]
@@ -8180,10 +8180,10 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "open_chrome_to_reuse_login": bool(bookmark_plan.get("open_chrome_to_reuse_login")) if bookmark_ready else False,
         "requires_chrome_login": bool(bookmark_plan.get("requires_chrome_login")) if bookmark_ready else False,
         "read_private_browser_metadata": bool(bookmark_plan.get("read_private_content")),
-        "automatic_teams_page_inspection_supported": False,
-        "teams_page_inspection_status": "chrome_handoff_only" if bookmark_ready else "bookmark_needed",
+        "automatic_teams_page_inspection_supported": bool(bookmark_ready),
+        "teams_page_inspection_status": "chrome_handoff_then_native_visible_read" if bookmark_ready else "bookmark_needed",
         "teams_page_inspection_note": (
-            "This build opens signed-in Teams in Chrome but does not claim to read Teams assignments until a later page or screen read succeeds."
+            "This build opens signed-in Teams in Chrome and the macOS app can attempt a read-only native visible-screen OCR follow-up; it still does not claim to read Teams assignments until that follow-up succeeds."
         ),
         "copied_chrome_cookies": False,
         "copied_chrome_passwords": False,
@@ -8203,7 +8203,7 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "typed_text": False,
         "called_codex": False,
         "changed_state": False,
-        "recommended_next_safe_tool": "browser.read_page" if bookmark_ready else "browser.bookmarks_search",
+        "recommended_next_safe_tool": "screen.visible_text" if bookmark_ready else "browser.bookmarks_search",
         "reply": reply,
     }
 

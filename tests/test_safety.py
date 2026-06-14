@@ -7430,13 +7430,14 @@ Pages occupied by compressor:             10.
         self.assertTrue(result["open_chrome_to_reuse_login"])
         self.assertTrue(result["requires_chrome_login"])
         self.assertTrue(result["read_private_browser_metadata"])
-        self.assertFalse(result["automatic_teams_page_inspection_supported"])
-        self.assertEqual(result["teams_page_inspection_status"], "chrome_handoff_only")
+        self.assertTrue(result["automatic_teams_page_inspection_supported"])
+        self.assertEqual(result["teams_page_inspection_status"], "chrome_handoff_then_native_visible_read")
+        self.assertIn("native visible-screen OCR", result["teams_page_inspection_note"])
         self.assertIn("does not claim to read Teams assignments", result["teams_page_inspection_note"])
         self.assertFalse(result["copied_chrome_cookies"])
         self.assertFalse(result["copied_chrome_passwords"])
         self.assertFalse(result["copied_chrome_session_storage"])
-        self.assertEqual(result["recommended_next_safe_tool"], "browser.read_page")
+        self.assertEqual(result["recommended_next_safe_tool"], "screen.visible_text")
         phase_ids = [phase["id"] for phase in result["phases"]]
         self.assertIn("refresh_chrome_bookmarks", phase_ids)
         self.assertIn("open_teams_bookmark", phase_ids)
@@ -7466,16 +7467,16 @@ Pages occupied by compressor:             10.
                 "reply": "Opening your Teams bookmark in signed-in Chrome now.",
                 "browser_target_available": True,
                 "read_private_browser_metadata": True,
-                "automatic_teams_page_inspection_supported": False,
-                "teams_page_inspection_status": "chrome_handoff_only",
+                "automatic_teams_page_inspection_supported": True,
+                "teams_page_inspection_status": "chrome_handoff_then_native_visible_read",
             },
         )
 
         self.assertTrue(safe["teams_browser_private_details_omitted"])
         self.assertTrue(safe["browser_target_available"])
         self.assertTrue(safe["read_private_browser_metadata"])
-        self.assertFalse(safe["automatic_teams_page_inspection_supported"])
-        self.assertEqual(safe["teams_page_inspection_status"], "chrome_handoff_only")
+        self.assertTrue(safe["automatic_teams_page_inspection_supported"])
+        self.assertEqual(safe["teams_page_inspection_status"], "chrome_handoff_then_native_visible_read")
         self.assertNotIn("url", safe)
         self.assertNotIn("title", safe)
         self.assertNotIn("selected_bookmark", safe)

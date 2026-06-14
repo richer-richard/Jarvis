@@ -21,6 +21,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.422 aligns the Teams assignment plan with the real native OCR follow-up: the next safe read tool is now `screen.visible_text`, not the old browser-read placeholder.",
     "Jarvis 0.1.421 polishes spoken working lines: month-long email summaries no longer say `newest email`, and Teams assignment handoff no longer exposes `assignment plan` wording.",
     "Jarvis 0.1.420 now asks useful follow-up questions after Teams assignment OCR when Leo asks for enough information to finish the assignment.",
     "The automatic Teams OCR pass now preserves Leo's original command, so `ask me questions` survives the Chrome handoff and native screen-read step.",
@@ -161,6 +162,12 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.422 build 422 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "Full Python safety suite passed 615/615 after the 0.1.422 Teams OCR contract alignment.",
+    "Swift command-routing self-test passed after the 0.1.422 Teams OCR contract alignment.",
+    "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-024457.json`.",
+    "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-024858.json` after the 0.1.422 build.",
+    "Live Teams command probe now reports `chrome_handoff_then_native_visible_read`, `automatic_teams_page_inspection_supported=true`, and `recommended_next_safe_tool=screen.visible_text` while still saying no assignment has been inspected until OCR succeeds.",
     "Live Jarvis 0.1.421 build 421 launched from bundled app resources with worker_launch_matches_bundle=true.",
     "Full Python safety suite passed 615/615 after the 0.1.421 status-line polish.",
     "Swift command-routing self-test passed after the 0.1.421 status-line polish.",
@@ -880,6 +887,8 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.422", "Live app is bundled, launched, and reports Jarvis 0.1.422 build 422."),
+        ("done", "Align Teams OCR contract", "Teams assignment metadata now recommends screen.visible_text and names the Chrome handoff plus native OCR follow-up."),
         ("done", "Ship Jarvis 0.1.421", "Live app is bundled, launched, and reports Jarvis 0.1.421 build 421."),
         ("done", "Polish spoken working lines", "Month-long email summaries no longer say newest email, and Teams no longer says assignment plan."),
         ("done", "Ship Jarvis 0.1.420", "Live app is bundled, launched, and reports Jarvis 0.1.420 build 420."),
