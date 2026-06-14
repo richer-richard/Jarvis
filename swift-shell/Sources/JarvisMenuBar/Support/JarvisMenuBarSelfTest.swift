@@ -139,6 +139,24 @@ enum JarvisMenuBarSelfTest {
         guard !JarvisShellModel.shouldUseNativeVisibleScreenRead("submit the visible Teams assignment") else {
             throw SelfTestError.failed("Schoolwork-changing requests must not use native visible-screen OCR.")
         }
+        guard JarvisShellModel.shouldAutoReadTeamsVisibleScreen(
+            commandText: "Look in Teams for my newest Music assignment and ask me questions.",
+            tool: "teams.assignment"
+        ) else {
+            throw SelfTestError.failed("Teams assignment handoff should trigger a read-only visible-screen follow-up.")
+        }
+        guard !JarvisShellModel.shouldAutoReadTeamsVisibleScreen(
+            commandText: "Submit the newest Teams Music assignment.",
+            tool: "teams.assignment"
+        ) else {
+            throw SelfTestError.failed("Teams assignment submission must not trigger automatic visible-screen reading.")
+        }
+        guard !JarvisShellModel.shouldAutoReadTeamsVisibleScreen(
+            commandText: "Look in Teams for my newest Music assignment.",
+            tool: "browser.bookmark_open"
+        ) else {
+            throw SelfTestError.failed("Automatic Teams visible-screen read should only follow the teams.assignment tool.")
+        }
         guard JarvisShellModel.shouldUseNativePermissionStatus("permissions status") else {
             throw SelfTestError.failed("Permission status should use the native Swift permission snapshot.")
         }

@@ -1219,7 +1219,7 @@ final class JarvisShellModel: ObservableObject {
                 throw ShellModelError.workerUnavailable(startup.description)
             }
             recordTurnPhase("Working", detail: "Worker is ready.")
-            let response: CommandResponse
+            var response: CommandResponse
             if Self.shouldUseNativeOutlookRead(commandText) {
                 let statusText = "Checking what Outlook is showing now."
                 _ = appendJarvisMessage(text: statusText, detail: "Working")
@@ -1299,13 +1299,27 @@ final class JarvisShellModel: ObservableObject {
                     }
                 )
             }
+            let browserSurfaceOpened = openBrowserSurfaceIfNeeded(from: response)
+            if browserSurfaceOpened,
+               Self.shouldAutoReadTeamsVisibleScreen(commandText: commandText, tool: response.tool) {
+                let statusText = "Reading the visible Teams screen now."
+                _ = appendJarvisMessage(text: statusText, detail: "Working")
+                visibleStatusLines.append(statusText)
+                updateSummonThinking(statusText)
+                if !isSpeechMuted {
+                    _ = try? await client.speakStatus(statusText)
+                }
+                recordTurnPhase("Working", detail: statusText)
+                try await Task.sleep(nanoseconds: 2_200_000_000)
+                response = try await runNativeVisibleScreenRead("read the visible Teams screen")
+            }
+
             tool = response.tool ?? "unknown"
             confirmation = response.confirmation
             state = response.confirmation?.required == true ? "Approval" : "Ready"
             resultText = render(response)
             lastCommandDiagnostics = Self.commandDiagnostics(from: response)
             captureResponseDiagnostics(response)
-            let browserSurfaceOpened = openBrowserSurfaceIfNeeded(from: response)
             let finalText = assistantReply(for: response)
             finalVisibleText = finalText
             let finalDetail = chatDetail(for: response)
@@ -3041,6 +3055,38 @@ final class JarvisShellModel: ObservableObject {
         return lower.contains("teams")
             && lower.contains("assignment")
             && (lower.contains("page") || lower.contains("visible") || lower.contains("screen"))
+    }
+
+    static func shouldAutoReadTeamsVisibleScreen(commandText: String, tool: String?) -> Bool {
+        guard tool == "teams.assignment" else {
+            return false
+        }
+        let lower = commandText.lowercased()
+        guard lower.contains("teams"), lower.contains("assignment") else {
+            return false
+        }
+        let blockedActions = [
+            "submit",
+            "turn in",
+            "upload",
+            "send",
+            "delete",
+        ]
+        guard !blockedActions.contains(where: { lower.contains($0) }) else {
+            return false
+        }
+        let readCues = [
+            "ask me",
+            "check",
+            "find",
+            "look",
+            "newest",
+            "read",
+            "summarize",
+            "tell me",
+            "what",
+        ]
+        return readCues.contains(where: { lower.contains($0) })
     }
 
     private static func visibleScreenReadTarget(for commandText: String) -> (appName: String?, bundleIdentifier: String?) {
