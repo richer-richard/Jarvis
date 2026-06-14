@@ -146,6 +146,7 @@ REMOTE_WORKER_HOST = "100.72.212.85"
 REMOTE_WORKER_SSH_TARGET = f"{REMOTE_WORKER_USER}@{REMOTE_WORKER_HOST}"
 PUBLIC_WEB_TIMEOUT_SECONDS = 8.0
 USD_CNY_RATE_URL = "https://open.er-api.com/v6/latest/USD"
+USD_CNY_RATE_FALLBACK_URL = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
 APPLE_MAGIC_KEYBOARD_URL = "https://www.apple.com/shop/product/MXCL3LL/A/magic-keyboard-usb-c-us-english"
 APP_SEARCH_DIRS = [
     Path("/Applications"),
@@ -10810,6 +10811,24 @@ def _find_product_json_ld(value: Any) -> dict[str, Any] | None:
 
 
 def _fetch_usd_cny_exchange_rate() -> dict[str, Any]:
+    primary = _fetch_usd_cny_exchange_rate_from_er_api()
+    if primary.get("ok"):
+        return primary
+    fallback = _fetch_usd_cny_exchange_rate_from_jsdelivr()
+    if fallback.get("ok"):
+        fallback["fallback_after"] = primary
+        return fallback
+    return {
+        "ok": False,
+        "status": "all_sources_failed",
+        "source_url": USD_CNY_RATE_URL,
+        "fallback_source_url": USD_CNY_RATE_FALLBACK_URL,
+        "primary": primary,
+        "fallback": fallback,
+    }
+
+
+def _fetch_usd_cny_exchange_rate_from_er_api() -> dict[str, Any]:
     fetched = _fetch_public_web_text(USD_CNY_RATE_URL, timeout=PUBLIC_WEB_TIMEOUT_SECONDS)
     if not fetched.get("ok"):
         return {
@@ -10844,6 +10863,45 @@ def _fetch_usd_cny_exchange_rate() -> dict[str, Any]:
         "rate": rate,
         "source_url": USD_CNY_RATE_URL,
         "time_last_update_utc": str(data.get("time_last_update_utc") or ""),
+    }
+
+
+def _fetch_usd_cny_exchange_rate_from_jsdelivr() -> dict[str, Any]:
+    fetched = _fetch_public_web_text(USD_CNY_RATE_FALLBACK_URL, timeout=PUBLIC_WEB_TIMEOUT_SECONDS)
+    if not fetched.get("ok"):
+        return {
+            "ok": False,
+            "status": "source_unavailable",
+            "source_url": USD_CNY_RATE_FALLBACK_URL,
+            "error": fetched.get("error"),
+        }
+    try:
+        data = json.loads(str(fetched.get("text") or ""))
+    except json.JSONDecodeError as error:
+        return {
+            "ok": False,
+            "status": "parse_failed",
+            "source_url": USD_CNY_RATE_FALLBACK_URL,
+            "error": str(error),
+        }
+    rates = data.get("usd") if isinstance(data, dict) else {}
+    rate = _float_from_price(rates.get("cny") if isinstance(rates, dict) else None)
+    if rate is None:
+        return {
+            "ok": False,
+            "status": "missing_rate",
+            "source_url": USD_CNY_RATE_FALLBACK_URL,
+            "error": "CNY rate missing.",
+        }
+    return {
+        "ok": True,
+        "status": "checked",
+        "base": "USD",
+        "target": "CNY",
+        "rate": rate,
+        "source_url": USD_CNY_RATE_FALLBACK_URL,
+        "date": str(data.get("date") or ""),
+        "fallback": True,
     }
 
 

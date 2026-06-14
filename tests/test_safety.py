@@ -3424,6 +3424,37 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn("https://", result["reply"])
         self.assertEqual(result["spoken_summary"], result["reply"])
 
+    def test_commerce_price_convert_uses_yuan_rate_fallback_when_primary_fails(self):
+        apple_page = """
+        <html><head>
+        <title>Magic Keyboard (USB-C) - US English - Apple</title>
+        <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"Product","name":"Magic Keyboard (USB-C) - US English",
+         "offers":[{"@type":"Offer","priceCurrency":"USD","price":99.00}]}
+        </script>
+        </head></html>
+        """
+        fallback_json = json.dumps({"date": "2026-06-14", "usd": {"cny": 7.12}})
+
+        def fake_fetch(url, *, timeout):
+            if "apple.com" in url:
+                return {"ok": True, "text": apple_page, "url": url}
+            if "open.er-api.com" in url:
+                return {"ok": False, "error": "timeout", "url": url}
+            if "jsdelivr.net" in url:
+                return {"ok": True, "text": fallback_json, "url": url}
+            return {"ok": False, "error": "unexpected url"}
+
+        with patch("jarvis.tools._fetch_public_web_text", side_effect=fake_fetch):
+            result = commerce_price_convert("Magic Keyboard", target_currency="CNY", source_country="US")
+
+        self.assertEqual(result["status"], "converted")
+        self.assertTrue(result["exchange_rate"]["fallback"])
+        self.assertIn("fallback_after", result["exchange_rate"])
+        self.assertEqual(result["exchange_rate"]["rate"], 7.12)
+        self.assertEqual(result["converted"]["rounded_amount"], 705)
+        self.assertIn("about 705 yuan", result["reply"])
+
     def test_chrome_bookmarks_import_search_and_open_plan_are_local(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "Chrome"
