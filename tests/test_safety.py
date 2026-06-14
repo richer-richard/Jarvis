@@ -3536,9 +3536,38 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["raw_screenshot_sent_to_worker"])
         self.assertFalse(result["external_model_allowed"])
         self.assertFalse(result["called_model"])
+        self.assertTrue(result["detected_assignment_context"])
+        self.assertTrue(result["assignment_digest_items"])
         self.assertIn("Newest assignment", result["reply"])
         self.assertIn("Due Friday", result["spoken_summary"])
         self.assertNotIn("screenshot", result)
+
+    def test_visible_screen_text_summary_extracts_assignment_lines_from_noisy_teams_ocr(self):
+        result = visible_screen_text_summary(
+            "\n".join([
+                "Activity",
+                "Chat",
+                "Teams",
+                "Calendar",
+                "Music Class",
+                "Assignments",
+                "Final musical theatre poster",
+                "Due Monday 9:00 AM",
+                "Instructions: create one poster and include one visual example.",
+                "Rubric: title, explanation, and source list.",
+            ]),
+            command="look in Teams for my newest Music assignment",
+            diagnostics={"target_app_name": "Google Chrome", "window_title": "Microsoft Teams"},
+        )
+
+        self.assertEqual(result["status"], "checked")
+        self.assertTrue(result["detected_assignment_context"])
+        self.assertIn("assignment-related text", result["reply"])
+        digest = " ".join(result["assignment_digest_items"])
+        self.assertIn("Due Monday", digest)
+        self.assertIn("Instructions", digest)
+        self.assertIn("Rubric", digest)
+        self.assertNotIn("Activity", digest)
 
     def test_visible_screen_text_summary_blocks_prompt_injection_without_speaking_raw_text(self):
         fake_scan = {"status": "suspicious", "findings": [{"kind": "instruction_override"}]}

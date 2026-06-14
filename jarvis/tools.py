@@ -12268,15 +12268,21 @@ def visible_screen_text_summary(
             "spoken_summary": reply,
         }
 
-    digest_items = _browser_page_digest_items(clean_text, max_items=5, max_chars=180)
+    assignment_context = _is_visible_teams_assignment_context(command, diagnostics, clean_text)
+    assignment_items = _visible_assignment_digest_items(clean_text) if assignment_context else []
+    digest_items = assignment_items or _browser_page_digest_items(clean_text, max_items=5, max_chars=180)
     digest = "; ".join(digest_items)
-    if digest:
+    if assignment_items:
+        reply = f"I read the visible Teams screen. I can see assignment-related text: {digest}."
+    elif digest:
         reply = f"I read {source_label}. I can see: {digest}."
     else:
         reply = f"I read {source_label}, but I could not condense the visible text into a useful short summary."
     return {
         **base,
         "status": "checked" if digest else "read_without_digest",
+        "detected_assignment_context": assignment_context,
+        "assignment_digest_items": assignment_items,
         "injection_scan": injection_scan,
         "prompt_injection_findings": 0,
         "page_digest": digest,
@@ -12284,6 +12290,83 @@ def visible_screen_text_summary(
         "reply": reply,
         "spoken_summary": reply,
     }
+
+
+def _is_visible_teams_assignment_context(command: Any, diagnostics: dict[str, Any], text: str) -> bool:
+    haystack = " ".join(
+        [
+            str(command or ""),
+            str(diagnostics.get("target_app_name") or ""),
+            str(diagnostics.get("window_title") or ""),
+            text[:1200],
+        ]
+    ).casefold()
+    return (
+        ("teams" in haystack or "microsoft teams" in haystack)
+        and any(term in haystack for term in ["assignment", "assignments", "homework", "rubric", "due"])
+    )
+
+
+def _visible_assignment_digest_items(text: str, *, max_items: int = 6, max_chars: int = 190) -> list[str]:
+    """Pull assignment-looking lines from OCR text without calling a model."""
+    keywords = {
+        "assignment",
+        "assignments",
+        "homework",
+        "due",
+        "rubric",
+        "instructions",
+        "instruction",
+        "task",
+        "poster",
+        "project",
+        "music",
+        "classwork",
+    }
+    chrome_noise = {
+        "microsoft teams",
+        "activity",
+        "chat",
+        "teams",
+        "calendar",
+        "calls",
+        "apps",
+        "help",
+        "new chat",
+        "search",
+    }
+    raw_lines = [re.sub(r"\s+", " ", line).strip(" -\t") for line in str(text or "").splitlines()]
+    lines = [line for line in raw_lines if len(line) >= 4]
+    scored: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    for index, line in enumerate(lines):
+        normalized = line.casefold()
+        if normalized in seen or normalized in chrome_noise:
+            continue
+        seen.add(normalized)
+        score = 0
+        for keyword in keywords:
+            if keyword in normalized:
+                score += 4
+        if re.search(r"\b(?:due|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)\b", normalized):
+            score += 3
+        if re.search(r"\b(?:create|make|write|complete|include|submit|upload|answer)\b", normalized):
+            score += 2
+        if re.search(r"\b(?:title|rubric|criteria|points?)\b", normalized):
+            score += 2
+        if score <= 0:
+            continue
+        scored.append((score, index, line))
+
+    if not scored:
+        return []
+    selected = sorted(sorted(scored, key=lambda item: (-item[0], item[1]))[:max_items], key=lambda item: item[1])
+    items = []
+    for _, _, line in selected:
+        if len(line) > max_chars:
+            line = line[: max_chars - 3].rstrip() + "..."
+        items.append(line)
+    return items
 
 
 def outlook_read_only_check(

@@ -1711,6 +1711,7 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
             not in {
                 "page_digest",
                 "page_digest_items",
+                "assignment_digest_items",
                 "reply",
                 "spoken_summary",
                 "injection_scan",
