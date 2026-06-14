@@ -174,6 +174,7 @@ PROOF_ITEMS = [
     "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-042825.json`.",
     "Full safe verifier passed 100/100 at `runtime/verification/verify-safe-20260615-043159.json` after the 0.1.426 build.",
     "Live speech remained muted after relaunch and after verification: `/api/speech/mute` reports muted=true, active_speech=false, and speech_mute_persistent=true.",
+    "Live eight-prompt speech-audit matrix passed 8/8 at `runtime/regression_prompt_matrix/20260615-043740/summary.json` on Jarvis 0.1.426 after the persistent Shut Up patch.",
     "Live Jarvis 0.1.425 build 425 launched from bundled app resources with worker_launch_matches_bundle=true and exactly one app, one parent-bound status helper, and one worker.",
     "Full Python safety suite passed 619/619 after the 0.1.425 Teams OCR retry patch.",
     "No-prompt live verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-041133.json`.",
