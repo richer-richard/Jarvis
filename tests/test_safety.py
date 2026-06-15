@@ -147,6 +147,7 @@ from jarvis.tools import (
 )
 from jarvis.wake import WakeSession, detect_wake_command, score_wake_transcript
 from scripts import (
+    codex_cli_proxy_benchmark,
     compare_middle_models,
     render_overnight_status,
     repair_local_stt_model,
@@ -178,6 +179,35 @@ from scripts.morning_status import (
 
 
 class VerifySafeScriptTests(unittest.TestCase):
+    def test_codex_cli_proxy_benchmark_defaults_to_dry_run(self):
+        self.assertEqual(
+            [variant.id for variant in codex_cli_proxy_benchmark.VARIANTS],
+            ["control_no_proxy", "clash_local_127", "tailscale_air_proxy"],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch.object(codex_cli_proxy_benchmark, "REPORT_DIR", Path(temp_dir)), \
+             patch("scripts.codex_cli_proxy_benchmark.run_codex_variant") as run_codex, \
+             patch("scripts.codex_cli_proxy_benchmark.run_jarvis_baseline") as run_jarvis, \
+             patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            code = codex_cli_proxy_benchmark.main(["--no-report"])
+
+        self.assertEqual(code, 0)
+        run_codex.assert_not_called()
+        run_jarvis.assert_not_called()
+        self.assertIn("Dry run only", stdout.getvalue())
+
+    def test_codex_cli_proxy_benchmark_execute_runs_declared_variants(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch.object(codex_cli_proxy_benchmark, "REPORT_DIR", Path(temp_dir)), \
+             patch("scripts.codex_cli_proxy_benchmark.shutil.which", return_value="/usr/local/bin/codex"), \
+             patch("scripts.codex_cli_proxy_benchmark.run_codex_variant", return_value={"variant": "x", "status": "completed"}) as run_codex, \
+             patch("scripts.codex_cli_proxy_benchmark.run_jarvis_baseline", return_value={"status": "completed"}) as run_jarvis:
+            code = codex_cli_proxy_benchmark.main(["--execute", "--include-jarvis", "--no-report"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(run_codex.call_count, 3)
+        run_jarvis.assert_called_once()
+
     def test_verify_safe_help_does_not_run_checks(self):
         with patch("scripts.verify_safe.run_checks") as run_checks, \
              patch("sys.stdout", new_callable=io.StringIO) as stdout:
