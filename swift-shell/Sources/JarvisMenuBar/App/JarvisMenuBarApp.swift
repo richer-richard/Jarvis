@@ -574,6 +574,7 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         center.addObserver(self, selector: #selector(handleStatusHelperOpenPanel), name: MainAppNotification.openPanel.name, object: nil)
         center.addObserver(self, selector: #selector(handleStatusHelperRunStatus), name: MainAppNotification.runStatus.name, object: nil)
         center.addObserver(self, selector: #selector(handleStatusHelperToggleWakeListener), name: MainAppNotification.toggleWakeListener.name, object: nil)
+        center.addObserver(self, selector: #selector(handleStatusHelperSpeechMuteChanged), name: MainAppNotification.speechMuteChanged.name, object: nil)
         center.addObserver(self, selector: #selector(handleStatusHelperQuit), name: MainAppNotification.quit.name, object: nil)
     }
 
@@ -635,6 +636,13 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggleWakeListener()
     }
 
+    @objc private func handleStatusHelperSpeechMuteChanged(_ notification: Notification) {
+        Task {
+            await model.refreshSpeechMuteStatusNow()
+            updateSpeechMuteMenuItem()
+        }
+    }
+
     @objc private func handleStatusHelperQuit(_ notification: Notification) {
         quit()
     }
@@ -644,6 +652,7 @@ private enum MainAppNotification: String {
     case openPanel = "local.leo.jarvis.statusHelper.openPanel"
     case runStatus = "local.leo.jarvis.statusHelper.runStatus"
     case toggleWakeListener = "local.leo.jarvis.statusHelper.toggleWakeListener"
+    case speechMuteChanged = "local.leo.jarvis.statusHelper.speechMuteChanged"
     case quit = "local.leo.jarvis.statusHelper.quit"
 
     var name: Notification.Name {

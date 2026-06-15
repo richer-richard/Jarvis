@@ -332,6 +332,15 @@ final class JarvisShellModel: ObservableObject {
         }
     }
 
+    func refreshSpeechMuteStatusNow() async {
+        await refreshSpeechMuteStatus()
+    }
+
+    private func shouldSpeakAfterBackendMuteRefresh() async -> Bool {
+        await refreshSpeechMuteStatus()
+        return !isSpeechMuted
+    }
+
     private func startSpeechMuteStatusSync() {
         guard speechMuteStatusTask == nil else {
             return
@@ -1248,7 +1257,7 @@ final class JarvisShellModel: ObservableObject {
                 _ = appendJarvisMessage(text: statusText, detail: "Working")
                 visibleStatusLines.append(statusText)
                 updateSummonThinking(statusText)
-                if !isSpeechMuted {
+                if await shouldSpeakAfterBackendMuteRefresh() {
                     _ = try? await client.speakStatus(statusText)
                 }
                 recordTurnPhase("Working", detail: statusText)
@@ -1258,7 +1267,7 @@ final class JarvisShellModel: ObservableObject {
                 _ = appendJarvisMessage(text: statusText, detail: "Working")
                 visibleStatusLines.append(statusText)
                 updateSummonThinking(statusText)
-                if !isSpeechMuted {
+                if await shouldSpeakAfterBackendMuteRefresh() {
                     _ = try? await client.speakStatus(statusText)
                 }
                 recordTurnPhase("Working", detail: statusText)
@@ -1329,7 +1338,7 @@ final class JarvisShellModel: ObservableObject {
                 _ = appendJarvisMessage(text: statusText, detail: "Working")
                 visibleStatusLines.append(statusText)
                 updateSummonThinking(statusText)
-                if !isSpeechMuted {
+                if await shouldSpeakAfterBackendMuteRefresh() {
                     _ = try? await client.speakStatus(statusText)
                 }
                 recordTurnPhase("Working", detail: statusText)
