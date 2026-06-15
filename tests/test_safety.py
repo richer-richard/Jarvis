@@ -151,6 +151,7 @@ from scripts import (
     compare_middle_models,
     render_overnight_status,
     repair_local_stt_model,
+    run_regression_prompt_matrix,
     smoke_conversation_context,
     smoke_fast_latency,
     smoke_wake_threshold,
@@ -8903,6 +8904,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
             self.assertIn(f'expect_tool="{expected_tool}"', source)
         self.assertIn("--speech-audit-only", source)
         self.assertIn('"--stt-provider",', source)
+        self.assertIn("--only", source)
+        self.assertIn("--exclude", source)
+        self.assertIn("non_music", source)
         self.assertIn('choices=("auto", "apple", "local")', source)
         self.assertIn('"--no-permission-prompts",', source)
         self.assertIn("resolve_stt_mode(args, parser)", source)
@@ -8910,6 +8914,36 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("--no-permission-prompts can only be combined with --stt-provider local", source)
         self.assertIn("--no-permission-prompts", source)
         self.assertIn('command.extend(["--stt-provider", stt_provider])', source)
+
+    def test_regression_prompt_matrix_can_select_non_music_cases(self):
+        non_music = run_regression_prompt_matrix.select_cases(
+            run_regression_prompt_matrix.CASES,
+            only="non-music",
+        )
+        non_music_names = [case.name for case in non_music]
+
+        self.assertEqual(len(non_music_names), 7)
+        self.assertNotIn("music_waving", non_music_names)
+        self.assertIn("teams_assignment", non_music_names)
+        self.assertIn("magic_keyboard_yuan", non_music_names)
+
+        excluded = run_regression_prompt_matrix.select_cases(
+            run_regression_prompt_matrix.CASES,
+            exclude="music",
+        )
+        self.assertEqual(non_music_names, [case.name for case in excluded])
+
+        music = run_regression_prompt_matrix.select_cases(
+            run_regression_prompt_matrix.CASES,
+            only="music",
+        )
+        self.assertEqual([case.name for case in music], ["music_waving"])
+
+        with self.assertRaises(ValueError):
+            run_regression_prompt_matrix.select_cases(
+                run_regression_prompt_matrix.CASES,
+                only="does_not_exist",
+            )
 
     def test_swift_speech_barge_in_filters_short_noise_and_echoes(self):
         model_source = (

@@ -25,6 +25,7 @@ class MatrixCase:
     command: str
     expect_tool: str
     expect_visible_contains: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ("non_music",)
 
 
 CASES: tuple[MatrixCase, ...] = (
@@ -39,6 +40,7 @@ CASES: tuple[MatrixCase, ...] = (
         command="Play Waving Through a Window.",
         expect_tool="localos.music_play",
         expect_visible_contains=("LocalOS",),
+        tags=("music",),
     ),
     MatrixCase(
         name="ram",
@@ -86,6 +88,21 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=45.0)
     parser.add_argument("--length-scale", type=float, default=0.85)
     parser.add_argument(
+        "--only",
+        default="",
+        help="Run only matching case names or tags, comma-separated. Examples: non-music, teams_assignment, calendar_today.",
+    )
+    parser.add_argument(
+        "--exclude",
+        default="",
+        help="Skip matching case names or tags, comma-separated. Example: music.",
+    )
+    parser.add_argument(
+        "--list-cases",
+        action="store_true",
+        help="Print available case names and tags, then exit without running the matrix.",
+    )
+    parser.add_argument(
         "--allow-apple-speech",
         action="store_true",
         help="Allow voice_loop_qa.py to use Apple Speech if it is already authorized.",
@@ -102,6 +119,14 @@ def main() -> int:
         help="Force no Apple Speech permission prompts. This is the unattended default unless --allow-apple-speech is set.",
     )
     args = parser.parse_args()
+    if args.list_cases:
+        for case in CASES:
+            print(f"{case.name}\t{','.join(case.tags)}")
+        return 0
+    try:
+        selected_cases = select_cases(CASES, only=args.only, exclude=args.exclude)
+    except ValueError as error:
+        parser.error(str(error))
     stt_provider, no_permission_prompts = resolve_stt_mode(args, parser)
 
     stamp = datetime.now(BEIJING).strftime("%Y%m%d-%H%M%S")
@@ -118,7 +143,7 @@ def main() -> int:
             stt_provider=stt_provider,
             no_permission_prompts=no_permission_prompts,
         )
-        for case in CASES
+        for case in selected_cases
     ]
     passed = sum(1 for result in results if result["passed"])
     summary = {
@@ -127,6 +152,11 @@ def main() -> int:
         "total": len(results),
         "passed": passed,
         "ok": passed == len(results),
+        "case_filter": {
+            "only": args.only,
+            "exclude": args.exclude,
+            "selected": [case.name for case in selected_cases],
+        },
         "results": results,
     }
     summary_path = run_root / "summary.json"
@@ -136,6 +166,54 @@ def main() -> int:
     print(f"Report: {summary_path}")
     print(f"Passed: {passed}/{len(results)}")
     return 0 if summary["ok"] else 1
+
+
+def select_cases(
+    cases: tuple[MatrixCase, ...],
+    *,
+    only: str = "",
+    exclude: str = "",
+) -> tuple[MatrixCase, ...]:
+    only_tokens = _case_filter_tokens(only)
+    exclude_tokens = _case_filter_tokens(exclude)
+    known_labels = {"all"}
+    for case in cases:
+        known_labels.update(_case_labels(case))
+    unknown = sorted((only_tokens | exclude_tokens) - known_labels)
+    if unknown:
+        raise ValueError(f"Unknown matrix case or tag: {', '.join(unknown)}")
+
+    selected: list[MatrixCase] = []
+    for case in cases:
+        labels = _case_labels(case)
+        if only_tokens and "all" not in only_tokens and not (labels & only_tokens):
+            continue
+        if exclude_tokens and (labels & exclude_tokens):
+            continue
+        selected.append(case)
+    if not selected:
+        raise ValueError("No regression matrix cases selected.")
+    return tuple(selected)
+
+
+def _case_filter_tokens(value: str) -> set[str]:
+    tokens = {
+        _normalize_case_filter_token(token)
+        for token in re_split_case_filter(value)
+    }
+    return {token for token in tokens if token}
+
+
+def re_split_case_filter(value: str) -> list[str]:
+    return [token for token in str(value or "").replace(",", " ").split()]
+
+
+def _case_labels(case: MatrixCase) -> set[str]:
+    return {_normalize_case_filter_token(case.name), *(_normalize_case_filter_token(tag) for tag in case.tags)}
+
+
+def _normalize_case_filter_token(value: str) -> str:
+    return str(value or "").strip().lower().replace("-", "_")
 
 
 def resolve_stt_mode(
