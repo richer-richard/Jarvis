@@ -54,6 +54,7 @@ from jarvis.server import (
     _conversation_history_from_payload,
     _host_from_header,
     _payload_command_text,
+    _payload_speech_mute_source,
     _stream_status_text,
     _verification_detail,
     _verification_is_fresh,
@@ -688,7 +689,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
         self.assertIn("closed-loop voice QA", report)
-        self.assertIn("631/631 Python tests", report)
+        self.assertIn("633/633 Python tests", report)
+        self.assertNotIn("631/631 Python tests", report)
         self.assertNotIn("568/568 Python tests", report)
 
     def test_render_overnight_status_mentions_latest_product_builds(self):
@@ -697,9 +699,9 @@ class VerifySafeScriptTests(unittest.TestCase):
         workboard = render_overnight_status.render_workboard(
             {
                 "updated": "2026-06-15 19:30 CST",
-                "version": "0.1.435",
-                "build": "435",
-                "bundle": "Jarvis 0.1.435 build 435",
+                "version": "0.1.436",
+                "build": "436",
+                "bundle": "Jarvis 0.1.436 build 436",
                 "commit": "abc1234",
                 "branch": "codex/test",
                 "upstream": "origin/codex/test",
@@ -715,14 +717,15 @@ class VerifySafeScriptTests(unittest.TestCase):
             }
         )
 
-        for version in ["0.1.435", "0.1.434", "0.1.433", "0.1.432", "0.1.431", "0.1.430"]:
+        for version in ["0.1.436", "0.1.435", "0.1.434", "0.1.433", "0.1.432", "0.1.431", "0.1.430"]:
             with self.subTest(version=version):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
-        self.assertLess(shipped.find("0.1.435"), shipped.find("0.1.429"))
+        self.assertLess(shipped.find("0.1.436"), shipped.find("0.1.429"))
         self.assertIn("localos_music_and_emergency_cleanup", proof)
         self.assertIn("Keep Blabbering", shipped)
+        self.assertIn("status-helper", shipped)
         self.assertIn("Codex speed status", shipped)
         self.assertIn("build-and-launch", shipped.lower())
 
@@ -988,6 +991,11 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn(("/api/command", {"command": "status", "suppress_speech": True}), posts)
         self.assertNotIn("/api/speech/status", [path for path, _payload in posts])
         self.assertEqual(posts[-1], ("/api/speech/mute", {"muted": False}))
+
+    def test_speech_mute_source_payload_is_sanitized(self):
+        self.assertEqual(_payload_speech_mute_source({"source": "status helper"}), "status_helper")
+        self.assertEqual(_payload_speech_mute_source({"source": "Main-App!!"}), "main-app")
+        self.assertEqual(_payload_speech_mute_source({}), "api")
 
     def test_verify_safe_restores_original_muted_state(self):
         posts = []
@@ -8826,6 +8834,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("applySpeechMuteState(muted: previous)", model_source)
         self.assertIn("private func sendSpeechMute", model_source)
         self.assertIn("return try await client.setSpeechMuted(muted)", model_source)
+        self.assertIn('setSpeechMuted(_ muted: Bool, source: String = "main_app")', client_source)
+        self.assertIn('"source": source', client_source)
+        self.assertIn('client.setSpeechMuted(target, source: "status_helper")', helper_source)
         self.assertLess(
             model_source.index("return try await client.setSpeechMuted(muted)"),
             model_source.index("let startup = await workerSupervisor.ensureRunning()"),
@@ -10573,6 +10584,27 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(status["muted"])
         self.assertFalse(result["spoken"])
         self.assertEqual(result["status"], "muted")
+
+    def test_speech_mute_persists_source_for_debugging_silent_states(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "speech_mute.json"
+            original_path = jarvis_tools.SPEECH_MUTE_STATE_PATH
+            original_muted = jarvis_tools.SPEECH_MUTED
+            try:
+                jarvis_tools.SPEECH_MUTE_STATE_PATH = state_path
+                with jarvis_tools.SPEECH_LOCK:
+                    jarvis_tools.SPEECH_MUTED = False
+
+                result = jarvis_tools.set_speech_muted(True, source="status_helper")
+                saved = json.loads(state_path.read_text(encoding="utf-8"))
+            finally:
+                jarvis_tools.SPEECH_MUTE_STATE_PATH = original_path
+                with jarvis_tools.SPEECH_LOCK:
+                    jarvis_tools.SPEECH_MUTED = original_muted
+
+        self.assertTrue(result["muted"])
+        self.assertEqual(result["speech_mute_source"], "status_helper")
+        self.assertEqual(saved["source"], "status_helper")
 
     def test_speech_mute_interrupts_active_audio_when_enabled(self):
         class FakeProcess:
@@ -13252,13 +13284,14 @@ class RuntimeSurfaceTests(unittest.TestCase):
     def test_speech_mute_api_updates_runtime_state(self):
         server = JarvisServer()
         try:
-            muted = server.set_speech_muted(True)
+            muted = server.set_speech_muted(True, source="main_app")
             status = server.speech_mute_status()
             spoken = server.speak_status("This should not play.")
         finally:
             server.set_speech_muted(False)
 
         self.assertTrue(muted["muted"])
+        self.assertEqual(muted["speech_mute_source"], "main_app")
         self.assertTrue(status["muted"])
         self.assertFalse(spoken["executed"])
         self.assertEqual(spoken["speech"]["status"], "muted")

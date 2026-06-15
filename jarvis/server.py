@@ -478,8 +478,8 @@ class JarvisServer:
     def speech_mute_status(self) -> dict[str, Any]:
         return speech_mute_status()
 
-    def set_speech_muted(self, muted: bool) -> dict[str, Any]:
-        return set_speech_muted(muted)
+    def set_speech_muted(self, muted: bool, *, source: str = "api") -> dict[str, Any]:
+        return set_speech_muted(muted, source=source)
 
     def plan(self, command: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         return self.planner.preview(command, history=history).to_dict()
@@ -1123,7 +1123,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             except (TypeError, ValueError, UnicodeDecodeError) as exc:
                 self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            self._send_json(STATE.set_speech_muted(payload["muted"]))
+            source = _payload_speech_mute_source(payload)
+            self._send_json(STATE.set_speech_muted(payload["muted"], source=source))
             return
         if route.path == "/api/wake-audition/score":
             try:
@@ -1414,6 +1415,12 @@ def _payload_suppresses_speech(payload: dict[str, Any]) -> bool:
 
 def _payload_suppresses_audio_actions(payload: dict[str, Any]) -> bool:
     return payload.get("suppress_audio_actions") is True or payload.get("suppress_audio") is True
+
+
+def _payload_speech_mute_source(payload: dict[str, Any]) -> str:
+    raw = str(payload.get("source") or "api").strip().lower()
+    source = re.sub(r"[^a-z0-9_.-]+", "_", raw).strip("._-")
+    return source[:80] or "api"
 
 
 def _payload_command_text(payload: dict[str, Any]) -> str:

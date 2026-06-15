@@ -22,6 +22,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.436 makes silent-speech debugging concrete: mute/unmute writes now record whether they came from the main app, the always-visible status-helper menu, or a raw API call.",
     "Jarvis 0.1.435 refreshes the master report surface: shipped/proof/workboard sections now include the latest 0.1.430-0.1.434 reliability work instead of starting at the older 0.1.429 checkpoint.",
     "The normal build-and-launch path now regenerates `/overnight-report/` and `/overnight-workboard/` after the live worker is healthy, so the Report button does not serve stale product news after a rebuild.",
     "Jarvis 0.1.434 tightens the LocalOS music contract: the model-facing music tools now state that LocalOS owns normal playback and that Jarvis must not start a separate hidden player.",
@@ -183,6 +184,8 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.436 build 436 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "0.1.436 proof: full Python safety suite passed 633/633, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-205415.json`, speech mute source tagging is covered by backend persistence, server payload sanitization, Swift client, and status-helper source tests, and live `/api/speech/mute` stays unmuted after a direct Keep Blabbering-style restore.",
     "Live Jarvis 0.1.435 build 435 launched from bundled app resources with worker_launch_matches_bundle=true.",
     "0.1.435 proof: full Python safety suite passed 631/631, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-203433.json`, and live report/workboard routes show 0.1.434 through 0.1.430 before 0.1.429.",
     "Live Jarvis 0.1.434 build 434 launched from bundled app resources with worker_launch_matches_bundle=true.",
@@ -965,6 +968,8 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.436", "Live app is bundled, launched, and reports Jarvis 0.1.436 build 436."),
+        ("done", "Tag speech mute source", "Mute/unmute writes record main_app, status_helper, or api so silent-state bugs are traceable."),
         ("done", "Ship Jarvis 0.1.435", "Live app is bundled, launched, and reports Jarvis 0.1.435 build 435."),
         ("done", "Refresh master report", "Shipped/proof/workboard sections now include the latest 0.1.430-0.1.434 reliability work."),
         ("done", "Refresh reports after launch", "build_and_launch_app.sh regenerates overnight report files after the live worker becomes healthy."),

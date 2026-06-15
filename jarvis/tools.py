@@ -122,12 +122,12 @@ def _load_persisted_speech_muted() -> bool:
     return bool(data.get("muted")) if isinstance(data, dict) else False
 
 
-def _persist_speech_mute_state(muted: bool) -> dict[str, Any]:
+def _persist_speech_mute_state(muted: bool, *, source: str = "jarvis") -> dict[str, Any]:
     path = SPEECH_MUTE_STATE_PATH
     payload = {
         "muted": bool(muted),
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "source": "jarvis",
+        "source": str(source or "jarvis")[:80],
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -2423,14 +2423,15 @@ def speech_mute_status() -> dict[str, Any]:
         }
 
 
-def set_speech_muted(muted: bool) -> dict[str, Any]:
+def set_speech_muted(muted: bool, *, source: str = "api") -> dict[str, Any]:
     """Mute or unmute Jarvis speech and stop current playback when muting."""
     global SPEECH_MUTED, SPEECH_GENERATION
+    source = str(source or "api").strip()[:80] or "api"
     started_at = time.monotonic()
     with SPEECH_LOCK:
         previous = SPEECH_MUTED
         SPEECH_MUTED = bool(muted)
-        persist_status = _persist_speech_mute_state(SPEECH_MUTED)
+        persist_status = _persist_speech_mute_state(SPEECH_MUTED, source=source)
         if SPEECH_MUTED:
             SPEECH_GENERATION += 1
             stop_status = _stop_active_speech_locked(timeout_seconds=0.6)
@@ -2444,6 +2445,7 @@ def set_speech_muted(muted: bool) -> dict[str, Any]:
         "executed": True,
         "muted": SPEECH_MUTED,
         "previous_muted": previous,
+        "speech_mute_source": source,
         "active_speech": active,
         "started_audio": False,
         "played_audio": False,
