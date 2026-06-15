@@ -1247,12 +1247,11 @@ def system_status() -> dict[str, Any]:
     app_build = app_identity.get("build") or "unknown build"
     worker_kind = app_identity.get("worker_source_kind") or "unknown worker source"
     launch_mode = app_identity.get("launch_mode") or "unknown launch mode"
-    reply = (
-        f"Jarvis {app_version} build {app_build} is online from {worker_kind}. "
-        f"Launch mode: {launch_mode}. "
-        f"Fast model: {FAST_MODEL_BACKEND} {fast_model_name}. "
-        f"Timers active: {active_timer_count}. "
-        f"Codex jobs: {codex_jobs['running_count']} running of {codex_jobs['tracked_count']} tracked."
+    reply = _system_status_reply(
+        app_version=app_version,
+        app_build=app_build,
+        active_timer_count=active_timer_count,
+        running_codex_jobs=codex_jobs["running_count"],
     )
     return {
         "project_root": str(PROJECT_ROOT),
@@ -1308,6 +1307,25 @@ def system_status() -> dict[str, Any]:
         },
         "reply": reply,
     }
+
+
+def _system_status_reply(
+    *,
+    app_version: object,
+    app_build: object,
+    active_timer_count: int,
+    running_codex_jobs: int,
+) -> str:
+    parts = [f"Jarvis {app_version} build {app_build} is online and ready."]
+    if active_timer_count == 1:
+        parts.append("One timer is active.")
+    elif active_timer_count > 1:
+        parts.append(f"{active_timer_count} timers are active.")
+    if running_codex_jobs == 1:
+        parts.append("One Codex job is running.")
+    elif running_codex_jobs > 1:
+        parts.append(f"{running_codex_jobs} Codex jobs are running.")
+    return " ".join(parts)
 
 
 def latest_latency_status() -> dict[str, Any]:

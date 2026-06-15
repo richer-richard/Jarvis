@@ -284,6 +284,7 @@ def run_voice_loop(
     expect_routed_contains: list[str] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
+    stage_timings: list[dict[str, Any]] = []
     command_audio = run_dir / "01-command.wav"
     command_stt = run_dir / "02-command-stt.json"
     command_local_stt = run_dir / "02-command-local-stt.json"
@@ -315,7 +316,10 @@ def run_voice_loop(
     }
 
     try:
+        stage_started = time.monotonic()
         command_tts = synthesize(command_text, command_audio, length_scale=length_scale)
+        stage_timings.append(stage_timing("command_tts", stage_started))
+        stage_started = time.monotonic()
         command_transcription = transcribe_audio(
             command_audio,
             apple_output_json=command_stt,
@@ -324,8 +328,11 @@ def run_voice_loop(
             provider=stt_provider,
             no_permission_prompts=no_permission_prompts,
         )
+        stage_timings.append(stage_timing("command_stt", stage_started))
         command_transcript = str(command_transcription.get("transcript") or "").strip()
+        stage_started = time.monotonic()
         route = route_transcript(command_transcript)
+        stage_timings.append(stage_timing("wake_route", stage_started))
         if not route["command"]:
             report["result"] = {
                 "status": "failed",
@@ -334,6 +341,7 @@ def run_voice_loop(
                     "No command was extracted from the spoken command transcript.",
                 ],
                 "total_seconds": round(time.monotonic() - started, 3),
+                "stage_timings": stage_timings,
                 "command_tts": command_tts,
                 "command_stt": command_transcription,
                 "command_transcript": command_transcript,
@@ -342,16 +350,19 @@ def run_voice_loop(
             }
             return report
 
+        stage_started = time.monotonic()
         stream_events = stream_command_events(
             base_url,
             route["command"],
             timeout=timeout,
             suppress_speech=True,
         )
+        stage_timings.append(stage_timing("jarvis_stream", stage_started))
         command_response = final_response_from_stream_events(stream_events)
         if not command_response:
             raise RuntimeError("Jarvis stream did not return a final response.")
 
+        stage_started = time.monotonic()
         visible_reply = extract_visible_reply(command_response)
         expectation = evaluate_expectations(
             command_response=command_response,
@@ -361,6 +372,8 @@ def run_voice_loop(
             expect_visible_contains=expect_visible_contains or [],
             expect_routed_contains=expect_routed_contains or [],
         )
+        stage_timings.append(stage_timing("expectations", stage_started))
+        stage_started = time.monotonic()
         speech_audit = audit_spoken_payloads(
             speech_payloads_from_stream_events(stream_events),
             run_dir=run_dir,
@@ -369,15 +382,27 @@ def run_voice_loop(
             stt_provider=stt_provider,
             no_permission_prompts=no_permission_prompts,
         )
-        reply_tts = synthesize(visible_reply or "No visible reply.", reply_audio, length_scale=length_scale)
-        reply_transcription = transcribe_audio(
-            reply_audio,
-            apple_output_json=reply_stt,
-            local_output_json=reply_local_stt,
-            timeout=timeout,
-            provider=stt_provider,
-            no_permission_prompts=no_permission_prompts,
-        )
+        stage_timings.append(stage_timing("speech_audit", stage_started))
+        final_audit_item = final_spoken_audit_item(speech_audit)
+        if final_audit_item:
+            reply_tts = final_audit_item.get("tts") if isinstance(final_audit_item.get("tts"), dict) else {}
+            reply_transcription = final_audit_item.get("stt") if isinstance(final_audit_item.get("stt"), dict) else {}
+            reply_audio_source = "speech_audit_final_payload"
+        else:
+            stage_started = time.monotonic()
+            reply_tts = synthesize(visible_reply or "No visible reply.", reply_audio, length_scale=length_scale)
+            stage_timings.append(stage_timing("reply_tts", stage_started))
+            stage_started = time.monotonic()
+            reply_transcription = transcribe_audio(
+                reply_audio,
+                apple_output_json=reply_stt,
+                local_output_json=reply_local_stt,
+                timeout=timeout,
+                provider=stt_provider,
+                no_permission_prompts=no_permission_prompts,
+            )
+            stage_timings.append(stage_timing("reply_stt", stage_started))
+            reply_audio_source = "visible_reply_resynthesized"
         reply_transcript = str(reply_transcription.get("transcript") or "").strip()
         similarity = text_similarity(visible_reply, reply_transcript)
 
@@ -406,6 +431,8 @@ def run_voice_loop(
             "status": status,
             "warnings": warnings,
             "total_seconds": round(time.monotonic() - started, 3),
+            "measurement_contract": measurement_contract(),
+            "stage_timings": stage_timings,
             "command_tts": command_tts,
             "command_stt": command_transcription,
             "command_transcript": command_transcript,
@@ -416,6 +443,7 @@ def run_voice_loop(
             "expectation": expectation,
             "stream_event_count": len(stream_events),
             "speech_audit": speech_audit,
+            "reply_audio_source": reply_audio_source,
             "reply_tts": reply_tts,
             "reply_stt": reply_transcription,
             "reply_transcript": reply_transcript,
@@ -427,8 +455,36 @@ def run_voice_loop(
             "status": "failed",
             "error": f"{type(error).__name__}: {error}",
             "total_seconds": round(time.monotonic() - started, 3),
+            "stage_timings": stage_timings,
+            "measurement_contract": measurement_contract(),
         }
         return report
+
+
+def stage_timing(name: str, started: float) -> dict[str, Any]:
+    return {"stage": name, "duration_seconds": round(time.monotonic() - started, 3)}
+
+
+def measurement_contract() -> dict[str, Any]:
+    return {
+        "audio_input": "Synthesized command WAV transcribed by the selected STT provider.",
+        "jarvis_speech_output": "Exact Jarvis speech payloads synthesized to WAV and transcribed.",
+        "physical_speaker_capture": False,
+        "physical_microphone_capture": False,
+        "notes": "This verifies the sound files Jarvis would hear/say, not room acoustics or Mac speaker loopback.",
+    }
+
+
+def final_spoken_audit_item(speech_audit: dict[str, Any]) -> dict[str, Any] | None:
+    items = speech_audit.get("items")
+    if not isinstance(items, list):
+        return None
+    for item in reversed(items):
+        if not isinstance(item, dict):
+            continue
+        if item.get("source") == "final" and isinstance(item.get("stt"), dict):
+            return item
+    return None
 
 
 def run_speech_audit(

@@ -556,6 +556,20 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("final.intended", leak_sources)
         self.assertIn("final.transcript", leak_sources)
 
+    def test_voice_loop_qa_selects_final_speech_audit_item_for_reply_audio(self):
+        speech_audit = {
+            "items": [
+                {"source": "status", "stt": {"transcript": "Checking status now."}},
+                {"source": "final", "stt": {"transcript": "Jarvis is online."}},
+            ]
+        }
+
+        selected = voice_loop_qa.final_spoken_audit_item(speech_audit)
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected["source"], "final")
+        self.assertEqual(selected["stt"]["transcript"], "Jarvis is online.")
+
     def test_voice_loop_qa_expectations_check_tool_visible_and_routed_text(self):
         passed = voice_loop_qa.evaluate_expectations(
             command_response={"tool": "diagnostics.memory_usage"},
@@ -8958,6 +8972,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("detect_internal_speech_leaks", script_source)
         self.assertIn("INTERNAL_SPEECH_LEAK_PATTERNS", script_source)
         self.assertIn("speech-audit", script_source)
+        self.assertIn("stage_timings", script_source)
+        self.assertIn("measurement_contract", script_source)
+        self.assertIn("physical_speaker_capture", script_source)
+        self.assertIn("reply_audio_source", script_source)
+        self.assertIn("speech_audit_final_payload", script_source)
         self.assertIn('["/usr/bin/say", "-o", str(aiff_path), text]', script_source)
         self.assertIn('if provider == "local"', script_source)
         self.assertIn('HF_HUB_DISABLE_XET", "1"', script_source)
@@ -9724,7 +9743,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(status["codex_jobs"]["running_count"], 1)
         self.assertEqual(status["codex_jobs"]["latest_job_id"], "codex-done")
         self.assertEqual(status["codex_jobs"]["latest_status"], "completed")
-        self.assertIn("1 running of 2 tracked", status["reply"])
+        self.assertIn("One Codex job is running.", status["reply"])
+        self.assertNotIn("tracked", status["reply"].lower())
 
     def test_system_status_reports_app_identity_without_private_content(self):
         metadata = {
@@ -9757,8 +9777,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertFalse(app["worker_launch_identity_available"])
         self.assertFalse(app["worker_launch_matches_bundle"])
         self.assertIn(app["worker_source_kind"], {"project source", "bundled app resources"})
-        self.assertIn("Jarvis 0.1.212 build 212 is online", status["reply"])
-        self.assertIn("Launch mode: regular Dock app", status["reply"])
+        self.assertEqual("Jarvis 0.1.212 build 212 is online and ready.", status["reply"])
+        self.assertNotIn("Launch mode", status["reply"])
+        self.assertEqual(app["launch_mode"], "regular Dock app")
 
     def test_system_status_reports_worker_launch_identity(self):
         metadata = {
@@ -13297,6 +13318,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["speech"]["reason"], "final")
         self.assertIn("Jarvis", speak_mock.call_args.args[0])
         self.assertIn("build", speak_mock.call_args.args[0])
+        self.assertNotIn("Fast model", speak_mock.call_args.args[0])
+        self.assertNotIn("Codex jobs", speak_mock.call_args.args[0])
 
     def test_command_can_suppress_final_speech_per_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -13323,6 +13346,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(speak_mock.call_args_list[0].kwargs["reason"], "status")
         self.assertEqual(speak_mock.call_args_list[1].kwargs["reason"], "final")
         self.assertIn("Jarvis", speak_mock.call_args_list[1].args[0])
+        self.assertNotIn("Fast model", speak_mock.call_args_list[1].args[0])
 
     def test_stream_command_can_suppress_status_and_final_speech_per_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:
