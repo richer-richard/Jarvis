@@ -69,6 +69,15 @@ wait_for_health() {
   return 1
 }
 
+refresh_overnight_report() {
+  if python3 "$PROJECT_ROOT/scripts/render_overnight_status.py" --base-url "$BASE_URL" >/dev/null; then
+    printf 'Refreshed Jarvis report surfaces at %s/overnight-report/ and %s/overnight-workboard/.\n' "$BASE_URL" "$BASE_URL"
+    return 0
+  fi
+  printf 'Warning: Jarvis launched, but report surface refresh failed.\n' >&2
+  return 0
+}
+
 diagnose_launch_state() {
   printf 'Launch diagnostics:\n'
   printf '  app: %s\n' "$APP_PATH"
@@ -97,6 +106,7 @@ for attempt in 1 2; do
     exit 1
   fi
   if wait_for_health; then
+    refresh_overnight_report
     exit 0
   fi
   printf 'Jarvis health check failed on launch attempt %s.\n' "$attempt" >&2

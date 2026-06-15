@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -21,6 +22,14 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.435 refreshes the master report surface: shipped/proof/workboard sections now include the latest 0.1.430-0.1.434 reliability work instead of starting at the older 0.1.429 checkpoint.",
+    "The normal build-and-launch path now regenerates `/overnight-report/` and `/overnight-workboard/` after the live worker is healthy, so the Report button does not serve stale product news after a rebuild.",
+    "Jarvis 0.1.434 tightens the LocalOS music contract: the model-facing music tools now state that LocalOS owns normal playback and that Jarvis must not start a separate hidden player.",
+    "Jarvis 0.1.433 fixes the Keep Blabbering recovery path: the status helper notifies the main app after speech mute changes, and the main app refreshes backend mute state before native status speech.",
+    "Jarvis 0.1.432 makes Codex speed status useful: `codex speed status` now reports the active child-process proxy route and the latest sanitized proxy benchmark without exposing private prompt text.",
+    "Jarvis 0.1.431 speeds up Codex delegation on Leo's network: Jarvis auto-detects the reachable local ClashX proxy for Codex child processes while leaving normal system proxy settings alone.",
+    "Jarvis 0.1.430 improves sound-loop QA and status cleanliness: file-level sound-in/sound-out probes now time every stage, reuse the final speech-audit audio, and avoid reading backend model names or worker internals aloud.",
+    "The LocalOS music bridge was restored after 0.1.430: bridge v4 polling, snapshot publishing, LocalOS-owned play/pause handling, and human autoplay-blocked wording are back in the sibling LocalOS player.",
     "Jarvis 0.1.429 hardens command payloads: `message`, `text`, and `prompt` now preserve Leo's utterance just like `command`, and empty command posts are rejected instead of turning into a fake generic hello.",
     "The safe verifier now guards the streaming command path too: packaged workers must accept `message` aliases on `/api/command/stream` and reject empty streaming commands.",
     "Jarvis 0.1.428 polishes LocalOS music replies: approximate song matches now say `closest LocalOS match` instead of `closest LocalOS file`, keeping the answer honest without sounding like filesystem debug output.",
@@ -174,6 +183,18 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.435 build 435 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "0.1.435 proof: full Python safety suite passed 631/631, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-203433.json`, and live report/workboard routes show 0.1.434 through 0.1.430 before 0.1.429.",
+    "Live Jarvis 0.1.434 build 434 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "0.1.434 proof: full Python safety suite passed 630/630, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-192252.json`, and the full eight-prompt matrix passed 8/8 at `runtime/regression_prompt_matrix/20260615-192359/summary.json`.",
+    "Live `/api/plan` for `stop the music` now returns `localos_music_and_emergency_cleanup`, and the model-facing music catalog no longer advertises a tracked local fallback or hidden player route.",
+    "Live Jarvis 0.1.433 build 433 launched from bundled app resources with worker_launch_matches_bundle=true and `/api/speech/status` returned spoken=true through the macOS provider after Keep Blabbering recovery.",
+    "0.1.433 proof: full Python safety suite passed 629/629 and no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-183150.json`.",
+    "Live Jarvis 0.1.432 build 432 launched from bundled app resources with worker_launch_matches_bundle=true and `codex speed status` reported local ClashX 6.4s, no proxy 19.9s, and Air proxy timed out.",
+    "0.1.432 proof: full Python safety suite passed 628/628 and no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-180020.json`.",
+    "Live Jarvis 0.1.431 build 431 launched from bundled app resources with worker_launch_matches_bundle=true, and direct `run_codex_delegate(\"hi\")` selected the local ClashX proxy route in 9.586s.",
+    "0.1.431 proof: full Python safety suite passed 627/627 and no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-174653.json`.",
+    "Live Jarvis 0.1.430 build 430 launched from bundled app resources, file-level voice-loop QA passed for status, calendar, LocalOS music, and RAM, and the LocalOS bridge restoration passed no-prompt verification 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-114850.json`.",
     "Live Jarvis 0.1.429 build 429 launched from bundled app resources with worker_launch_matches_bundle=true and speech still muted.",
     "Command payload probes passed on the live app: `message: status` routed to `system.status`, `text: Play Waving Through a Window` routed to `localos.music_play`, and an empty body returned HTTP 400 `Command text is required`.",
     "Full Python safety suite passed 622/622 after the 0.1.429 command payload hardening.",
@@ -944,6 +965,21 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.435", "Live app is bundled, launched, and reports Jarvis 0.1.435 build 435."),
+        ("done", "Refresh master report", "Shipped/proof/workboard sections now include the latest 0.1.430-0.1.434 reliability work."),
+        ("done", "Refresh reports after launch", "build_and_launch_app.sh regenerates overnight report files after the live worker becomes healthy."),
+        ("done", "Ship Jarvis 0.1.434", "Live app is bundled, launched, and reports Jarvis 0.1.434 build 434."),
+        ("done", "Clarify LocalOS music ownership", "Model-facing music tools now say LocalOS owns normal playback and Jarvis must not start a separate hidden player."),
+        ("done", "Verify 0.1.434 prompt matrix", "The full quiet matrix passed 8/8 at runtime/regression_prompt_matrix/20260615-192359/summary.json."),
+        ("done", "Ship Jarvis 0.1.433", "Live app is bundled, launched, and reports Jarvis 0.1.433 build 433."),
+        ("done", "Repair Keep Blabbering recovery", "The status helper now notifies the main app after mute changes, and the app refreshes backend mute state before native speech."),
+        ("done", "Ship Jarvis 0.1.432", "Live app is bundled, launched, and reports Jarvis 0.1.432 build 432."),
+        ("done", "Expose Codex speed status", "Jarvis now reports the active Codex proxy route and latest sanitized proxy benchmark without private prompt text."),
+        ("done", "Ship Jarvis 0.1.431", "Live app is bundled, launched, and reports Jarvis 0.1.431 build 431."),
+        ("done", "Speed up Codex delegation", "Codex child processes can use the reachable local ClashX proxy route while normal system proxy settings stay untouched."),
+        ("done", "Ship Jarvis 0.1.430", "Live app is bundled, launched, and reports Jarvis 0.1.430 build 430."),
+        ("done", "Improve sound-loop QA", "Voice-loop QA now records stage timings and audits the exact final speech payload instead of synthesizing it twice."),
+        ("done", "Restore LocalOS bridge v4", "The LocalOS player bridge regained polling, snapshot publishing, LocalOS-owned play/pause, and human autoplay wording."),
         ("done", "Ship Jarvis 0.1.429", "Live app is bundled, launched, and reports Jarvis 0.1.429 build 429."),
         ("done", "Preserve command payload aliases", "The worker now treats message, text, and prompt as command text instead of losing the user's utterance."),
         ("done", "Reject empty command posts", "Empty /api/command and /api/command/stream payloads now return HTTP 400 instead of becoming generic chat."),
@@ -1129,6 +1165,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
     latency_text = ""
     if latency.get("path"):
         latency_text = f" Current fast smoke max first visible {float(latency.get('max_first_visible_seconds') or 0):.3f}s."
+    python_tests = latest_python_tests_label(context)
     cards = [
         (
             "Try First",
@@ -1136,7 +1173,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, 568/568 Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
         ),
         (
             "Honest Limit",
@@ -1148,6 +1185,15 @@ def spotlight_section(context: dict[str, Any]) -> str:
         for title, text in cards
     ) + "</div>"
     return f"<section><h2>Morning Snapshot</h2>{body}</section>"
+
+
+def latest_python_tests_label(context: dict[str, Any]) -> str:
+    proof_items = context.get("proof") if isinstance(context.get("proof"), list) else []
+    for item in proof_items:
+        match = re.search(r"full Python safety suite passed\s+([0-9]+/[0-9]+)", str(item), re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return "latest"
 
 
 def supporting_section(context: dict[str, Any]) -> str:

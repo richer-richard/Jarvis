@@ -688,6 +688,43 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
         self.assertIn("closed-loop voice QA", report)
+        self.assertIn("631/631 Python tests", report)
+        self.assertNotIn("568/568 Python tests", report)
+
+    def test_render_overnight_status_mentions_latest_product_builds(self):
+        shipped = "\n".join(render_overnight_status.SHIPPED_ITEMS)
+        proof = "\n".join(render_overnight_status.PROOF_ITEMS)
+        workboard = render_overnight_status.render_workboard(
+            {
+                "updated": "2026-06-15 19:30 CST",
+                "version": "0.1.435",
+                "build": "435",
+                "bundle": "Jarvis 0.1.435 build 435",
+                "commit": "abc1234",
+                "branch": "codex/test",
+                "upstream": "origin/codex/test",
+                "git_sync": "local",
+                "verification": {"label": "104/104 passed"},
+                "no_prompt_verification": {"label": "12/12 passed"},
+                "launch_mode": "regular Dock app",
+                "shipped": render_overnight_status.SHIPPED_ITEMS,
+                "proof": render_overnight_status.PROOF_ITEMS,
+                "try": render_overnight_status.TRY_ITEMS,
+                "risks": render_overnight_status.RISK_ITEMS,
+                "supporting": render_overnight_status.SUPPORTING_FILES,
+            }
+        )
+
+        for version in ["0.1.435", "0.1.434", "0.1.433", "0.1.432", "0.1.431", "0.1.430"]:
+            with self.subTest(version=version):
+                self.assertIn(version, shipped)
+                self.assertIn(version, proof)
+                self.assertIn(version, workboard)
+        self.assertLess(shipped.find("0.1.435"), shipped.find("0.1.429"))
+        self.assertIn("localos_music_and_emergency_cleanup", proof)
+        self.assertIn("Keep Blabbering", shipped)
+        self.assertIn("Codex speed status", shipped)
+        self.assertIn("build-and-launch", shipped.lower())
 
     def test_render_overnight_status_reads_latest_no_prompt_verification(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -9363,6 +9400,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("diagnose_launch_state", script_source)
         self.assertIn("stop_existing", script_source)
         self.assertIn("Jarvis launch failed after 2 attempts", script_source)
+        self.assertIn("refresh_overnight_report", script_source)
+        self.assertIn("scripts/render_overnight_status.py", script_source)
+        self.assertIn("/overnight-report/", script_source)
+        self.assertIn("if wait_for_health; then\n    refresh_overnight_report", script_source)
 
     def test_tool_registry_lists_policy_and_tool_routes(self):
         registry = tool_registry()
