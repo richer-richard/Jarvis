@@ -523,13 +523,26 @@ class JarvisServer:
         self_check = run_self_checks()
 
         tools = registry["tools"]
-        unavailable_tools = [tool["id"] for tool in tools if not tool.get("available")]
+        unavailable_tools = [tool for tool in tools if not tool.get("available")]
+        unavailable_tool_ids = [tool["id"] for tool in unavailable_tools]
+        planned_unavailable_ids = [
+            tool["id"]
+            for tool in unavailable_tools
+            if str(tool.get("mode") or "").startswith("planned")
+        ]
+        actionable_unavailable_ids = [
+            tool["id"]
+            for tool in unavailable_tools
+            if tool["id"] not in planned_unavailable_ids
+        ]
         failed_checks = [check["name"] for check in self_check["checks"] if not check.get("passed")]
         notes: list[str] = []
         if mode["paused"]:
             notes.append("Command execution is paused.")
-        if unavailable_tools:
-            notes.append(f"Unavailable tools: {', '.join(unavailable_tools)}.")
+        if actionable_unavailable_ids:
+            notes.append(f"Unavailable tools: {', '.join(actionable_unavailable_ids)}.")
+        if planned_unavailable_ids:
+            notes.append(f"Planned future tools not enabled yet: {', '.join(planned_unavailable_ids)}.")
         if failed_checks:
             notes.append(f"Failed self-checks: {', '.join(failed_checks)}.")
         if audit_status.get("unreadable_lines"):
@@ -549,8 +562,10 @@ class JarvisServer:
             },
             "tools": {
                 "total": len(tools),
-                "available": len(tools) - len(unavailable_tools),
-                "unavailable_ids": unavailable_tools,
+                "available": len(tools) - len(unavailable_tool_ids),
+                "unavailable_ids": unavailable_tool_ids,
+                "planned_unavailable_ids": planned_unavailable_ids,
+                "actionable_unavailable_ids": actionable_unavailable_ids,
             },
             "self_check": {
                 "ok": bool(self_check["ok"]),

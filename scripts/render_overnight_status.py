@@ -22,6 +22,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.437 makes readiness less misleading: planned future tools such as screen OCR and UI automation are listed separately from genuinely broken or actionable unavailable tools.",
     "Jarvis 0.1.436 makes silent-speech debugging concrete: mute/unmute writes now record whether they came from the main app, the always-visible status-helper menu, or a raw API call.",
     "Jarvis 0.1.435 refreshes the master report surface: shipped/proof/workboard sections now include the latest 0.1.430-0.1.434 reliability work instead of starting at the older 0.1.429 checkpoint.",
     "The normal build-and-launch path now regenerates `/overnight-report/` and `/overnight-workboard/` after the live worker is healthy, so the Report button does not serve stale product news after a rebuild.",
@@ -184,6 +185,8 @@ SHIPPED_ITEMS = [
 ]
 
 PROOF_ITEMS = [
+    "Live Jarvis 0.1.437 build 437 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "0.1.437 proof: full Python safety suite passed 634/634, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-210830.json`, and live readiness reports no actionable unavailable tools while listing `ui.automation` plus `screen.ocr` under planned future tools instead of a generic broken-tools warning.",
     "Live Jarvis 0.1.436 build 436 launched from bundled app resources with worker_launch_matches_bundle=true.",
     "0.1.436 proof: full Python safety suite passed 633/633, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-205415.json`, speech mute source tagging is covered by backend persistence, server payload sanitization, Swift client, and status-helper source tests, and live `/api/speech/mute` stays unmuted after a direct Keep Blabbering-style restore.",
     "Live Jarvis 0.1.435 build 435 launched from bundled app resources with worker_launch_matches_bundle=true.",
@@ -968,6 +971,8 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Ship Jarvis 0.1.437", "Live app is bundled, launched, and reports Jarvis 0.1.437 build 437."),
+        ("done", "Clarify readiness gaps", "Readiness separates planned future screen/app-control tools from actionable broken tools."),
         ("done", "Ship Jarvis 0.1.436", "Live app is bundled, launched, and reports Jarvis 0.1.436 build 436."),
         ("done", "Tag speech mute source", "Mute/unmute writes record main_app, status_helper, or api so silent-state bugs are traceable."),
         ("done", "Ship Jarvis 0.1.435", "Live app is bundled, launched, and reports Jarvis 0.1.435 build 435."),

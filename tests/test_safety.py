@@ -689,7 +689,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Start Hey Jarvis / Stop Hey Jarvis", report)
         self.assertIn("Shut Up", report)
         self.assertIn("closed-loop voice QA", report)
-        self.assertIn("633/633 Python tests", report)
+        self.assertIn("634/634 Python tests", report)
+        self.assertNotIn("633/633 Python tests", report)
         self.assertNotIn("631/631 Python tests", report)
         self.assertNotIn("568/568 Python tests", report)
 
@@ -699,9 +700,9 @@ class VerifySafeScriptTests(unittest.TestCase):
         workboard = render_overnight_status.render_workboard(
             {
                 "updated": "2026-06-15 19:30 CST",
-                "version": "0.1.436",
-                "build": "436",
-                "bundle": "Jarvis 0.1.436 build 436",
+                "version": "0.1.437",
+                "build": "437",
+                "bundle": "Jarvis 0.1.437 build 437",
                 "commit": "abc1234",
                 "branch": "codex/test",
                 "upstream": "origin/codex/test",
@@ -717,15 +718,16 @@ class VerifySafeScriptTests(unittest.TestCase):
             }
         )
 
-        for version in ["0.1.436", "0.1.435", "0.1.434", "0.1.433", "0.1.432", "0.1.431", "0.1.430"]:
+        for version in ["0.1.437", "0.1.436", "0.1.435", "0.1.434", "0.1.433", "0.1.432", "0.1.431", "0.1.430"]:
             with self.subTest(version=version):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
-        self.assertLess(shipped.find("0.1.436"), shipped.find("0.1.429"))
+        self.assertLess(shipped.find("0.1.437"), shipped.find("0.1.429"))
         self.assertIn("localos_music_and_emergency_cleanup", proof)
         self.assertIn("Keep Blabbering", shipped)
         self.assertIn("status-helper", shipped)
+        self.assertIn("readiness", shipped)
         self.assertIn("Codex speed status", shipped)
         self.assertIn("build-and-launch", shipped.lower())
 
@@ -12972,6 +12974,39 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertEqual(response["tool"], "policy.pause")
         self.assertFalse(response["executed"])
+
+    def test_readiness_separates_planned_future_tools_from_actionable_unavailable_tools(self):
+        fake_status = {
+            "project_root": str(PROJECT_ROOT),
+            "platform": "test-platform",
+            "python": "3.test",
+            "codex": {"path": "/usr/bin/codex", "version": "codex test"},
+            "runtime": {"pid": 123},
+        }
+        fake_registry = {
+            "tools": [
+                {"id": "system.status", "available": True},
+                {"id": "screen.ocr", "available": False, "mode": "planned"},
+                {"id": "ui.automation", "available": False, "mode": "planned_private_app_control"},
+                {"id": "broken.live_tool", "available": False, "mode": "runtime"},
+            ]
+        }
+        fake_self_check = {"ok": True, "checks": [{"name": "example", "passed": True}]}
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("jarvis.server.system_status", return_value=fake_status), \
+             patch("jarvis.server.tool_registry", return_value=fake_registry), \
+             patch("jarvis.server.run_self_checks", return_value=fake_self_check):
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            result = server.readiness()
+
+        self.assertEqual(result["tools"]["unavailable_ids"], ["screen.ocr", "ui.automation", "broken.live_tool"])
+        self.assertEqual(result["tools"]["planned_unavailable_ids"], ["screen.ocr", "ui.automation"])
+        self.assertEqual(result["tools"]["actionable_unavailable_ids"], ["broken.live_tool"])
+        self.assertIn("Unavailable tools: broken.live_tool.", result["notes"])
+        self.assertIn("Planned future tools not enabled yet: screen.ocr, ui.automation.", result["notes"])
+        self.assertNotIn("Unavailable tools: screen.ocr, ui.automation", " ".join(result["notes"]))
 
     def test_command_payload_text_accepts_common_aliases_without_losing_prompt(self):
         self.assertEqual(_payload_command_text({"message": "  Play Waving Through a Window.  "}), "Play Waving Through a Window.")
