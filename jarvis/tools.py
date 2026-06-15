@@ -218,6 +218,7 @@ LOCALOS_MUSIC_SNAPSHOT_PATH = RUNTIME_DIR / "integrations" / "localos_music_snap
 LOCALOS_MUSIC_CONTROL_PATH = RUNTIME_DIR / "integrations" / "localos_music_control.json"
 LOCALOS_MUSIC_PLAYER_OPEN_MARK_PATH = RUNTIME_DIR / "integrations" / "localos_music_player_open.json"
 LOCALOS_NATIVE_MUSIC_STATE_PATH = RUNTIME_DIR / "integrations" / "localos_native_music.json"
+CODEX_PROXY_BENCHMARK_DIR = RUNTIME_DIR / "codex_cli_proxy_benchmarks"
 LOCALOS_MUSIC_SNAPSHOT_MAX_TRACKS = 25
 LOCALOS_MUSIC_LIBRARY_MAX_TRACKS = 500
 LOCALOS_MUSIC_DEFAULT_LIMIT = 10
@@ -15619,6 +15620,8 @@ def codex_speed_status() -> dict[str, Any]:
     average = sum(durations) / len(durations) if durations else None
     fastest = min(durations) if durations else None
     slowest = max(durations) if durations else None
+    proxy_plan = _codex_proxy_plan()
+    benchmark = _latest_codex_proxy_benchmark()
     if durations:
         timing_text = (
             f"{len(durations)} completed Codex job timings tracked; "
@@ -15634,8 +15637,9 @@ def codex_speed_status() -> dict[str, Any]:
             _format_seconds(float(latest["duration_seconds"])) if _float_or_none(latest.get("duration_seconds")) is not None else "not finished"
         )
         latest_text = f" Latest job {latest_id} is {latest_status}, duration {latest_duration}."
+    proxy_text = _codex_proxy_status_text(proxy_plan, benchmark)
     reply = (
-        f"Codex speed status: {timing_text}; {running_count} running, {interrupted_count} interrupted."
+        f"Codex speed status: {timing_text}; {running_count} running, {interrupted_count} interrupted. {proxy_text}"
         f"{latest_text} Normal chat should not wait for Codex; broad Codex work runs asynchronously."
     )
     return {
@@ -15650,10 +15654,95 @@ def codex_speed_status() -> dict[str, Any]:
         "average_duration_seconds": round(average, 3) if average is not None else None,
         "fastest_duration_seconds": round(fastest, 3) if fastest is not None else None,
         "slowest_duration_seconds": round(slowest, 3) if slowest is not None else None,
+        "proxy": proxy_plan,
+        "latest_proxy_benchmark": benchmark,
         "latest_job": latest,
         "recent_jobs": recent_jobs,
         "reply": reply,
     }
+
+
+def _latest_codex_proxy_benchmark() -> dict[str, Any] | None:
+    try:
+        candidates = sorted(
+            CODEX_PROXY_BENCHMARK_DIR.glob("codex-cli-proxy-benchmark-*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    for path in candidates[:5]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict) or data.get("execute") is not True:
+            continue
+        results = data.get("results")
+        if not isinstance(results, list):
+            continue
+        safe_results: list[dict[str, Any]] = []
+        for raw in results:
+            if not isinstance(raw, dict):
+                continue
+            safe_results.append({
+                "variant": _codex_activity_tail(raw.get("variant"), 80),
+                "status": _codex_activity_tail(raw.get("status"), 80),
+                "first_output_seconds": _float_or_none(raw.get("first_output_seconds")),
+                "total_seconds": _float_or_none(raw.get("total_seconds")),
+                "returncode": _safe_int(raw.get("returncode")),
+            })
+        baseline = data.get("jarvis_baseline") if isinstance(data.get("jarvis_baseline"), dict) else {}
+        return {
+            "path": str(path),
+            "generated_at": _codex_activity_tail(data.get("generated_at"), 80),
+            "model": _codex_activity_tail(data.get("model"), 80),
+            "reasoning": _codex_activity_tail(data.get("reasoning"), 40),
+            "results": safe_results,
+            "jarvis_baseline": {
+                "status": _codex_activity_tail(baseline.get("status"), 80),
+                "first_event_seconds": _float_or_none(baseline.get("first_event_seconds")),
+                "total_seconds": _float_or_none(baseline.get("total_seconds")),
+                "tool": _codex_activity_tail(baseline.get("tool"), 120),
+            } if baseline else None,
+        }
+    return None
+
+
+def _codex_proxy_status_text(proxy_plan: dict[str, Any], benchmark: dict[str, Any] | None) -> str:
+    selected = str(proxy_plan.get("selected") or "unknown")
+    if selected == "local_clash":
+        proxy_text = "Codex CLI will use the local ClashX proxy for child processes."
+    elif selected == "inherited":
+        proxy_text = "Codex CLI is using inherited network settings because the local proxy is not reachable."
+    elif selected == "none":
+        proxy_text = "Codex CLI proxy override is disabled."
+    else:
+        proxy_text = f"Codex CLI proxy mode is {selected}."
+    if not benchmark:
+        return proxy_text + " No executed proxy benchmark is recorded yet. "
+    totals = {
+        str(item.get("variant")): item
+        for item in benchmark.get("results", [])
+        if isinstance(item, dict)
+    }
+    local = totals.get("clash_local_127", {})
+    control = totals.get("control_no_proxy", {})
+    air = totals.get("tailscale_air_proxy", {})
+    snippets: list[str] = []
+    if _float_or_none(local.get("total_seconds")) is not None:
+        snippets.append(f"local ClashX {_format_seconds(float(local['total_seconds']))}")
+    if _float_or_none(control.get("total_seconds")) is not None:
+        snippets.append(f"no proxy {_format_seconds(float(control['total_seconds']))}")
+    if air:
+        air_status = str(air.get("status") or "unknown")
+        if air_status == "timeout":
+            snippets.append("Air proxy timed out")
+        elif _float_or_none(air.get("total_seconds")) is not None:
+            snippets.append(f"Air proxy {_format_seconds(float(air['total_seconds']))}")
+    if snippets:
+        return proxy_text + " Latest benchmark: " + ", ".join(snippets) + ". "
+    return proxy_text + " Latest benchmark is present but has no usable timings. "
 
 
 def codex_chat_status() -> dict[str, Any]:

@@ -6625,9 +6625,13 @@ Pages occupied by compressor:             10.
     def test_codex_speed_status_summarizes_persisted_job_timings(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = Path(temp_dir) / "codex_jobs.json"
+            benchmark_dir = Path(temp_dir) / "benchmarks"
+            benchmark_dir.mkdir()
             with patch("jarvis.tools.CODEX_JOB_STORE", store), \
                  patch("jarvis.tools.CODEX_JOBS", {}), \
-                 patch("jarvis.tools.CODEX_JOBS_LOADED", False):
+                 patch("jarvis.tools.CODEX_JOBS_LOADED", False), \
+                 patch("jarvis.tools.CODEX_PROXY_BENCHMARK_DIR", benchmark_dir), \
+                 patch("jarvis.tools._codex_proxy_plan", return_value={"selected": "inherited", "local_proxy_reachable": False}):
                 store.write_text(
                     json.dumps(
                         {
@@ -6665,7 +6669,47 @@ Pages occupied by compressor:             10.
         self.assertFalse(result.result["read_private_content"])
         self.assertEqual(result.result["completed_timing_count"], 2)
         self.assertEqual(result.result["average_duration_seconds"], 31.0)
+        self.assertEqual(result.result["proxy"]["selected"], "inherited")
+        self.assertIsNone(result.result["latest_proxy_benchmark"])
         self.assertIn("Normal chat should not wait for Codex", result.result["reply"])
+
+    def test_codex_speed_status_reports_latest_proxy_benchmark_without_prompt_text(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = Path(temp_dir) / "codex_jobs.json"
+            benchmark_dir = Path(temp_dir) / "benchmarks"
+            benchmark_dir.mkdir()
+            (benchmark_dir / "codex-cli-proxy-benchmark-20260615-173252.json").write_text(
+                json.dumps({
+                    "execute": True,
+                    "generated_at": "2026-06-15T17:29:23+0800",
+                    "model": "gpt-5.4-mini",
+                    "reasoning": "low",
+                    "prompt": "private prompt should not appear",
+                    "results": [
+                        {"variant": "control_no_proxy", "status": "completed", "total_seconds": 19.858, "first_output_seconds": 2.364, "last_message_preview": "private reply"},
+                        {"variant": "clash_local_127", "status": "completed", "total_seconds": 6.4, "first_output_seconds": 0.269, "last_message_preview": "private reply"},
+                        {"variant": "tailscale_air_proxy", "status": "timeout", "total_seconds": 182.067, "first_output_seconds": 0.267},
+                    ],
+                    "jarvis_baseline": {"status": "completed", "first_event_seconds": 0.539, "total_seconds": 0.539, "tool": "quick.local_control", "reply_preview": "private"},
+                }),
+                encoding="utf-8",
+            )
+            with patch("jarvis.tools.CODEX_JOB_STORE", store), \
+                 patch("jarvis.tools.CODEX_JOBS", {}), \
+                 patch("jarvis.tools.CODEX_JOBS_LOADED", False), \
+                 patch("jarvis.tools.CODEX_PROXY_BENCHMARK_DIR", benchmark_dir), \
+                 patch("jarvis.tools._codex_proxy_plan", return_value={"selected": "local_clash", "local_proxy_reachable": True}):
+                store.write_text(json.dumps({"schema": "jarvis.codex_jobs.v1", "jobs": []}), encoding="utf-8")
+                result = Planner().handle("codex speed status")
+
+        self.assertEqual(result.result["proxy"]["selected"], "local_clash")
+        self.assertEqual(result.result["latest_proxy_benchmark"]["results"][1]["variant"], "clash_local_127")
+        self.assertIn("local ClashX 6.4s", result.result["reply"])
+        self.assertIn("no proxy 19.9s", result.result["reply"])
+        self.assertIn("Air proxy timed out", result.result["reply"])
+        serialized = json.dumps(result.result)
+        self.assertNotIn("private prompt", serialized)
+        self.assertNotIn("private reply", serialized)
 
     def test_launch_status_routes_before_generic_status(self):
         result = Planner().handle("Jarvis launch status")
