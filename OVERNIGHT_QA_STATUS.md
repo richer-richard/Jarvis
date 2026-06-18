@@ -90,3 +90,7 @@ spoken reply, time every stage, and clean up any app/browser state it created.
   `runtime/full_loop_regression/20260618-233216/summary.json`, adding the Magic
   Keyboard official-price-to-yuan public web case. Full Python safety suite then
   passed 841/841.
+- 2026-06-18 23:39 CST: combined full-loop regression passed 5/5 at
+  `runtime/full_loop_regression/20260618-233912/summary.json`, adding the Gemma
+  3 4B model-test planning case with a remote-first/no-local-model-run guardrail.
+  Full Python safety suite then passed 843/843.

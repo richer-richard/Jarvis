@@ -305,6 +305,36 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["passed"])
         self.assertIn("Commerce proof opened or changed browser state.", proof["failures"])
 
+    def test_full_loop_gemma_model_plan_accepts_remote_first_guardrail(self):
+        proof = full_loop_regression.verify_gemma_model_plan({
+            "tool": "models.test_plan",
+            "status": "planned",
+            "ran_model": False,
+            "changed_system_state": False,
+            "model": "Gemma 3 4B",
+            "preferred_lane": "remote_macbook_air",
+            "remote_worker": {"status": "available"},
+            "reply": "I will test the Gemma 3 4B on the MacBook Air first, not on this Mac.",
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertEqual(proof["preferred_lane"], "remote_macbook_air")
+
+    def test_full_loop_gemma_model_plan_rejects_local_model_run(self):
+        proof = full_loop_regression.verify_gemma_model_plan({
+            "tool": "models.test_plan",
+            "status": "planned",
+            "ran_model": True,
+            "changed_system_state": False,
+            "model": "Gemma 3 4B",
+            "preferred_lane": "local_mac",
+            "remote_worker": {"status": "unavailable"},
+            "reply": "I ran Gemma 3 4B locally.",
+        })
+
+        self.assertFalse(proof["passed"])
+        self.assertIn("Model proof says it ran a model.", proof["failures"])
+
     def test_voice_loop_stream_can_allow_audio_actions_for_live_regression(self):
         captured_payloads = []
 
