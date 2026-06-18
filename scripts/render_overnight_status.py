@@ -1456,7 +1456,8 @@ def render_report(context: dict[str, Any]) -> str:
     {promise_section(context)}
     {headline_section(context)}
     {spotlight_section(context)}
-    {section("Shipped Since The Last Proven Build", context["shipped"], collapsed=True)}
+    {section("Tonight's Shipped Highlights", shipped_highlights(context["shipped"]))}
+    {section("Full Shipped Archive", context["shipped"], collapsed=True)}
     {section("Proof So Far", context["proof"], collapsed=True)}
     {section("What You Should Be Able To Do Tomorrow", context["try"])}
     {section("Still Risky Or Unfinished", context["risks"], risk=True, collapsed=True)}
@@ -1715,6 +1716,12 @@ def section(title: str, items: list[str], *, cards: bool = False, risk: bool = F
             f"{body}</details></section>"
         )
     return f"<section><h2>{e(title)}</h2>{body}</section>"
+
+
+def shipped_highlights(items: list[str], *, limit: int = 7) -> list[str]:
+    """Keep the morning report product-facing instead of becoming a changelog dump."""
+    highlights = [str(item).strip() for item in items if str(item).strip()]
+    return highlights[: max(0, limit)]
 
 
 def promise_section(context: dict[str, Any]) -> str:
