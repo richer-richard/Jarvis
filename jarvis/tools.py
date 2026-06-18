@@ -13771,6 +13771,7 @@ def visible_screen_text_summary(
             f"I read the visible Teams screen, but it does not look like the {requested_subject} assignment. "
             f"I can see assignment-related text: {digest_sentence}."
         )
+        spoken_summary = f"I can see {assignment_items[0]}, but it does not look like the {requested_subject} assignment."
         return {
             **base,
             "status": "assignment_subject_mismatch",
@@ -13784,7 +13785,7 @@ def visible_screen_text_summary(
             "page_digest": digest,
             "page_digest_items": digest_items,
             "reply": reply,
-            "spoken_summary": reply,
+            "spoken_summary": spoken_summary,
             "requires_user_action": False,
             "next_steps": [f"Open the {requested_subject} class or assignment page in Teams, then ask Jarvis to read it again."],
         }

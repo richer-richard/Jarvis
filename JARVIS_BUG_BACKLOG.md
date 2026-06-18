@@ -465,3 +465,20 @@ Status legend:
 
 8. Keep bugs as tests wherever possible. If Leo reports a bug twice, add a
    regression test or a live-harness check before calling it fixed.
+
+## 2026-06-19 Fixes Added To Regression Coverage
+
+1. Fixed/proved: Teams assignment honesty no longer audits only the first
+   "Opening Teams now" line. When Chrome page-read permission is blocked but
+   native visible-screen OCR finds a wrong-subject assignment, the
+   `assignment_subject_mismatch` response is kept as the final auditable speech
+   payload.
+   - Test: `test_voice_loop_qa_run_speech_audit_uses_assignment_mismatch_followup_as_final_payload`.
+   - Live proof: `runtime/full_loop_regression/20260619-040451/summary.json`.
+
+2. Fixed/proved: wrong-subject Teams summaries now have a short voice-safe
+   spoken form, avoiding long technical readouts that sound like internals.
+   - Test: `test_visible_screen_text_summary_refuses_wrong_subject_assignment`.
+   - Live proof: the Teams voice-loop report under the focused run above
+     recorded two speech payloads, ending with the concise visible-screen
+     mismatch summary.

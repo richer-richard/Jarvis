@@ -2064,6 +2064,7 @@ def run_native_visible_screen_follow_up_attempt(
     status = "completed" if useful else "response_not_useful"
     if not useful and summary_status in {"login_gate_visible", "assignment_subject_mismatch"}:
         status = summary_status
+    response_is_auditable = useful or status in {"login_gate_visible", "assignment_subject_mismatch"}
     return {
         "used": useful,
         "status": status,
@@ -2075,7 +2076,7 @@ def run_native_visible_screen_follow_up_attempt(
         "tool": summary_response.get("tool"),
         "response_status": summary_result.get("status"),
         "visible_reply_preview": visible_reply[:500],
-        "response": summary_response if useful else None,
+        "response": summary_response if response_is_auditable else None,
         "attempt": attempt,
         "capture_report": str(capture_path),
         "response_report": str(response_path),

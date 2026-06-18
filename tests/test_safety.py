@@ -2217,6 +2217,86 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(report["result"]["visible_screen_follow_up"]["status"], "browser_permission_blocked")
         self.assertIn("Automation access", report["result"]["visible_reply_preview"])
 
+    def test_voice_loop_qa_run_speech_audit_uses_assignment_mismatch_followup_as_final_payload(self):
+        final_events = [
+            {
+                "event": "final",
+                "data": {
+                    "tool": "teams.assignment",
+                    "reply": "Opening your Teams bookmark in signed-in Chrome now.",
+                    "speech": {
+                        "spoken": False,
+                        "status": "suppressed_by_request",
+                        "reason": "final",
+                        "spoken_text": "Opening your Teams bookmark in signed-in Chrome now.",
+                    },
+                },
+            }
+        ]
+        follow_up_response = {
+            "tool": "screen.visible_text",
+            "result": {
+                "status": "assignment_subject_mismatch",
+                "reply": (
+                    "I read the visible Teams screen, but it does not look like the Music assignment. "
+                    "I can see assignment-related text: Lesson 2: The Geography of Greece Group Assignment."
+                ),
+                "spoken_summary": (
+                    "I read the visible Teams screen, but it does not look like the Music assignment. "
+                    "I can see assignment-related text, Lesson 2, The Geography of Greece Group Assignment."
+                ),
+            },
+            "speech": {
+                "spoken": False,
+                "status": "suppressed_by_request",
+                "reason": "final",
+                "spoken_text": (
+                    "I read the visible Teams screen, but it does not look like the Music assignment. "
+                    "I can see assignment-related text, Lesson 2, The Geography of Greece Group Assignment."
+                ),
+            },
+        }
+
+        def fake_audit(payloads, **_kwargs):
+            self.assertEqual(len(payloads), 2)
+            self.assertEqual(payloads[-1]["source"], "final")
+            self.assertIn("does not look like the Music assignment", payloads[-1]["text"])
+            return {
+                "status": "passed",
+                "payload_count": 2,
+                "leak_count": 0,
+                "warnings": [],
+                "items": [{"source": "final", "stt": {"status": "completed"}, "text_preview": payloads[-1]["text"]}],
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.stream_command_events", return_value=final_events), \
+             patch(
+                 "scripts.voice_loop_qa.run_native_visible_screen_follow_up",
+                 return_value={
+                     "attempted": True,
+                     "used": False,
+                     "status": "assignment_subject_mismatch",
+                     "tool": "screen.visible_text",
+                     "response": follow_up_response,
+                     "visible_reply_preview": follow_up_response["result"]["reply"],
+                 },
+             ), \
+             patch("scripts.voice_loop_qa.audit_spoken_payloads", side_effect=fake_audit):
+            report = voice_loop_qa.run_speech_audit(
+                command_text="Look in Teams for my newest Music assignment and ask me questions.",
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                length_scale=0.85,
+                timeout=5.0,
+                stt_provider="local",
+                no_permission_prompts=True,
+            )
+
+        self.assertEqual(report["result"]["final_visible_tool"], "screen.visible_text")
+        self.assertEqual(report["result"]["visible_screen_follow_up"]["status"], "assignment_subject_mismatch")
+        self.assertIn("does not look like the Music assignment", report["result"]["visible_reply_preview"])
+
     def test_voice_loop_qa_visible_screen_followup_tries_ocr_once_when_browser_permission_blocked(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch(
@@ -7745,6 +7825,10 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["assignment_subject_matched"])
         self.assertEqual(result["follow_up_questions"], [])
         self.assertIn("does not look like the Music assignment", result["reply"])
+        self.assertEqual(
+            result["spoken_summary"],
+            "I can see Lesson 2: The Geography of Greece Group Assignment, but it does not look like the Music assignment.",
+        )
         digest = " ".join(result["assignment_digest_items"])
         self.assertIn("Group Assignment", digest)
         self.assertIn("Instructions", digest)
