@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.455 packages the overnight reliability pass: Teams final speech now matches the visible mismatch answer, the master report opens with concise shipped highlights, and Sharpay email summaries keep the 75-message proof window while running much faster.",
     "Sharpay email summaries are much faster without shrinking the proof window: the Apple Mail path now keeps sender-recent candidates during the first bounded scan instead of rescanning the same 75-message window for every selected message.",
     "Jarvis's Teams proof now reads the visible Chrome window with native OCR even when Chrome page-text Automation is blocked, so it can say the current page is a Geography assignment instead of pretending it found the newest Music assignment.",
     "Jarvis's Music full-loop proof now watches for hidden `afplay` leftovers: a passed Music test must stop native Music playback and leave no new hidden audio process behind.",
