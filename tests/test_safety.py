@@ -3027,6 +3027,42 @@ class VerifySafeScriptTests(unittest.TestCase):
             "(runtime/regression_prompt_matrix/20260617-233458/summary.json).",
             proof,
         )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            matrix_root = root / "runtime" / "regression_prompt_matrix"
+            canonical_root = matrix_root / "20260618-063000"
+            focused_root = matrix_root / "20260618-070000"
+            canonical_root.mkdir(parents=True)
+            focused_root.mkdir(parents=True)
+            canonical_payload = {
+                "ok": True,
+                "passed": 8,
+                "total": 8,
+                "speech_payload_count": 16,
+                "speech_leak_count": 0,
+                "max_first_visible_seconds": 0.5,
+                "canonical_latest": True,
+                "root": "runtime/regression_prompt_matrix/20260618-063000",
+            }
+            focused_payload = {
+                "ok": True,
+                "passed": 1,
+                "total": 1,
+                "speech_payload_count": 2,
+                "speech_leak_count": 0,
+                "max_first_visible_seconds": 0.1,
+                "canonical_latest": False,
+                "root": "runtime/regression_prompt_matrix/20260618-070000",
+            }
+            (canonical_root / "summary.json").write_text(json.dumps(canonical_payload), encoding="utf-8")
+            (focused_root / "summary.json").write_text(json.dumps(focused_payload), encoding="utf-8")
+            (matrix_root / "latest.json").write_text(json.dumps(focused_payload), encoding="utf-8")
+            with patch("scripts.render_overnight_status.PROJECT_ROOT", root):
+                latest_matrix = render_overnight_status.latest_regression_prompt_matrix()
+
+        self.assertEqual(latest_matrix["label"], "8/8 passed")
+        self.assertEqual(latest_matrix["path"], "runtime/regression_prompt_matrix/20260618-063000/summary.json")
+
         full_loop_proof = render_overnight_status.proof_items_with_verification(
             {"label": "91/91 passed"},
             full_loop={
@@ -14060,7 +14096,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(result["user_action_required"])
         self.assertEqual(result["blocking_reason"], "login_gate")
 
-    def test_regression_prompt_matrix_refreshes_master_report_after_summary(self):
+    def test_regression_prompt_matrix_focused_run_preserves_master_latest(self):
         fake_result = {
             "name": "ram",
             "passed": True,
@@ -14096,7 +14132,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "runtime") as temp_dir, \
              patch("scripts.run_regression_prompt_matrix.run_case", return_value=fake_result) as run_case_mock, \
              patch("scripts.run_regression_prompt_matrix.refresh_report_surfaces_quietly", return_value={"ok": True}) as refresh_mock, \
-             patch("sys.argv", [
+            patch("sys.argv", [
                  "run_regression_prompt_matrix.py",
                  "--output-root",
                  temp_dir,
@@ -14107,44 +14143,43 @@ class RuntimeSurfaceTests(unittest.TestCase):
             code = run_regression_prompt_matrix.main()
             output_root = Path(temp_dir)
             summaries = list(output_root.glob("*/summary.json"))
-            global_latest = output_root / "latest.json"
-            global_latest_md = output_root / "latest.md"
-            global_latest_exists = global_latest.exists()
-            global_latest_md_exists = global_latest_md.exists()
-            global_latest_data = json.loads(global_latest.read_text(encoding="utf-8"))
-            global_latest_passed = global_latest_data["passed"]
-            global_latest_blocked = global_latest_data["environment_blocked_count"]
-            global_latest_user_action_required = global_latest_data["user_action_required_count"]
-            global_latest_leaks = global_latest_data["results"][0]["speech_leak_count"]
-            global_latest_total_payloads = global_latest_data["speech_payload_count"]
-            global_latest_total_leaks = global_latest_data["speech_leak_count"]
-            global_latest_fallbacks = global_latest_data["fallback_count"]
-            global_latest_max_first_visible = global_latest_data["max_first_visible_seconds"]
-            global_latest_md_text = global_latest_md.read_text(encoding="utf-8")
+            run_latest = summaries[0].parent / "latest.json"
+            run_latest_md = summaries[0].parent / "latest.md"
+            run_latest_data = json.loads(run_latest.read_text(encoding="utf-8"))
+            run_latest_passed = run_latest_data["passed"]
+            run_latest_blocked = run_latest_data["environment_blocked_count"]
+            run_latest_user_action_required = run_latest_data["user_action_required_count"]
+            run_latest_leaks = run_latest_data["results"][0]["speech_leak_count"]
+            run_latest_total_payloads = run_latest_data["speech_payload_count"]
+            run_latest_total_leaks = run_latest_data["speech_leak_count"]
+            run_latest_fallbacks = run_latest_data["fallback_count"]
+            run_latest_max_first_visible = run_latest_data["max_first_visible_seconds"]
+            run_latest_md_text = run_latest_md.read_text(encoding="utf-8")
 
         self.assertEqual(code, 0)
         run_case_mock.assert_called_once()
         refresh_mock.assert_called_once_with("http://127.0.0.1:8765")
         self.assertEqual(len(summaries), 1)
-        self.assertTrue(global_latest_exists)
-        self.assertTrue(global_latest_md_exists)
-        self.assertEqual(global_latest_passed, 1)
-        self.assertEqual(global_latest_blocked, 0)
-        self.assertEqual(global_latest_user_action_required, 0)
-        self.assertEqual(global_latest_leaks, 0)
-        self.assertEqual(global_latest_total_payloads, 2)
-        self.assertEqual(global_latest_total_leaks, 0)
-        self.assertEqual(global_latest_fallbacks, 0)
-        self.assertEqual(global_latest_max_first_visible, 0.321)
-        self.assertIn("Speech audit: 2 payloads, 0 leaks", global_latest_md_text)
-        self.assertIn("Blocked: 0", global_latest_md_text)
-        self.assertIn("Needs action: 0", global_latest_md_text)
-        self.assertIn("Unresolved failures: 0", global_latest_md_text)
-        self.assertIn("Fallbacks: 0", global_latest_md_text)
-        self.assertIn("Max first visible: 0.321s", global_latest_md_text)
+        self.assertFalse((Path(temp_dir) / "latest.json").exists())
+        self.assertFalse((Path(temp_dir) / "latest.md").exists())
+        self.assertFalse(run_latest_data["canonical_latest"])
+        self.assertEqual(run_latest_passed, 1)
+        self.assertEqual(run_latest_blocked, 0)
+        self.assertEqual(run_latest_user_action_required, 0)
+        self.assertEqual(run_latest_leaks, 0)
+        self.assertEqual(run_latest_total_payloads, 2)
+        self.assertEqual(run_latest_total_leaks, 0)
+        self.assertEqual(run_latest_fallbacks, 0)
+        self.assertEqual(run_latest_max_first_visible, 0.321)
+        self.assertIn("Speech audit: 2 payloads, 0 leaks", run_latest_md_text)
+        self.assertIn("Blocked: 0", run_latest_md_text)
+        self.assertIn("Needs action: 0", run_latest_md_text)
+        self.assertIn("Unresolved failures: 0", run_latest_md_text)
+        self.assertIn("Fallbacks: 0", run_latest_md_text)
+        self.assertIn("Max first visible: 0.321s", run_latest_md_text)
         self.assertIn(
             "| ram | pass | `diagnostics.memory_usage` | `none` | `groq/llama-3.3-70b-versatile compact` | 0.321s | 0.100s | passed, 2 payloads, 0 leaks | Memory usage. |",
-            global_latest_md_text,
+            run_latest_md_text,
         )
 
     def test_regression_prompt_matrix_environment_block_exits_cleanly_but_stays_visible(self):
@@ -14195,11 +14230,14 @@ class RuntimeSurfaceTests(unittest.TestCase):
              ]), \
              patch("sys.stdout", stdout):
             code = run_regression_prompt_matrix.main()
-            latest = json.loads((Path(temp_dir) / "latest.json").read_text(encoding="utf-8"))
-            latest_md = (Path(temp_dir) / "latest.md").read_text(encoding="utf-8")
+            run_summary = next(Path(temp_dir).glob("*/summary.json"))
+            latest = json.loads((run_summary.parent / "latest.json").read_text(encoding="utf-8"))
+            latest_md = (run_summary.parent / "latest.md").read_text(encoding="utf-8")
 
         self.assertEqual(code, 0)
         refresh_mock.assert_not_called()
+        self.assertFalse((Path(temp_dir) / "latest.json").exists())
+        self.assertFalse(latest["canonical_latest"])
         self.assertTrue(latest["ok"])
         self.assertEqual(latest["passed"], 0)
         self.assertEqual(latest["environment_blocked_count"], 1)
@@ -14210,6 +14248,63 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Status: passed", latest_md)
         self.assertIn("Blocked: 1", latest_md)
         self.assertIn("| teams_assignment | blocked | `teams.assignment`", latest_md)
+
+    def test_regression_prompt_matrix_all_run_updates_master_latest(self):
+        def fake_run_case(case, **_kwargs):
+            return {
+                "name": case.name,
+                "passed": True,
+                "environment_blocked": False,
+                "user_action_required": False,
+                "blocking_reason": "",
+                "returncode": 0,
+                "duration_seconds": 0.1,
+                "report": f"runtime/regression_prompt_matrix/test/{case.name}/report.json",
+                "tool": case.expect_tool,
+                "backend": "groq",
+                "model": "llama-3.3-70b-versatile",
+                "fallback_used": False,
+                "primary_fallback_used": False,
+                "fallback_trigger": None,
+                "primary_status": None,
+                "tool_catalog_compacted": True,
+                "first_visible_seconds": 0.1,
+                "first_status_seconds": 0.05,
+                "first_final_seconds": 0.1,
+                "first_speech_payload_seconds": 0.05,
+                "model_reported_first_visible_seconds": 0.1,
+                "model_reported_total_seconds": 0.1,
+                "visible_reply": f"{case.name} done.",
+                "speech_audit_status": "passed",
+                "speech_payload_count": 2,
+                "speech_leak_count": 0,
+                "speech_audit_gate_passed": True,
+                "speech_audit_failures": [],
+                "stdout_tail": "",
+                "stderr_tail": "",
+            }
+
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "runtime") as temp_dir, \
+             patch("scripts.run_regression_prompt_matrix.run_case", side_effect=fake_run_case) as run_case_mock, \
+             patch("scripts.run_regression_prompt_matrix.refresh_report_surfaces_quietly") as refresh_mock, \
+             patch("sys.argv", [
+                 "run_regression_prompt_matrix.py",
+                 "--output-root",
+                 temp_dir,
+                 "--no-permission-prompts",
+                 "--no-refresh-report",
+             ]):
+            code = run_regression_prompt_matrix.main()
+            global_latest = json.loads((Path(temp_dir) / "latest.json").read_text(encoding="utf-8"))
+            global_latest_md = (Path(temp_dir) / "latest.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(run_case_mock.call_count, len(run_regression_prompt_matrix.CASES))
+        refresh_mock.assert_not_called()
+        self.assertTrue(global_latest["canonical_latest"])
+        self.assertEqual(global_latest["passed"], len(run_regression_prompt_matrix.CASES))
+        self.assertEqual(global_latest["total"], len(run_regression_prompt_matrix.CASES))
+        self.assertIn("Status: passed", global_latest_md)
 
     def test_regression_prompt_matrix_can_skip_master_report_refresh(self):
         fake_result = {

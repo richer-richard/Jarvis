@@ -109,6 +109,7 @@ def ensure_latest_artifacts() -> dict[str, Any]:
             run_regression_prompt_matrix.OUTPUT_ROOT / "latest.md",
             run_regression_prompt_matrix.render_markdown,
             transform_payload=run_regression_prompt_matrix.enrich_summary_payload,
+            payload_filter=run_regression_prompt_matrix.is_canonical_summary,
         ),
         "voice_loop_qa": _write_latest_from_newest(
             voice_loop_qa.REPORT_DIR.glob("*/report.json"),

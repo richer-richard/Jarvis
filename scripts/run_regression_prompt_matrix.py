@@ -137,6 +137,7 @@ def main() -> int:
         selected_cases = select_cases(CASES, only=args.only, exclude=args.exclude)
     except ValueError as error:
         parser.error(str(error))
+    canonical_latest = is_canonical_case_selection(selected_cases)
     try:
         base_url = normalize_base_url(args.base_url)
     except ValueError as error:
@@ -199,6 +200,7 @@ def main() -> int:
         "speech_payload_count": total_speech_payloads,
         "speech_leak_count": total_speech_leaks,
         "slowest_case": slowest_case,
+        "canonical_latest": canonical_latest,
         "case_filter": {
             "only": args.only,
             "exclude": args.exclude,
@@ -209,14 +211,18 @@ def main() -> int:
     summary = enrich_summary_payload(summary)
     summary_path = run_root / "summary.json"
     latest_path = run_root / "latest.json"
+    latest_md_path = run_root / "latest.md"
     global_latest_path = output_root / "latest.json"
     global_latest_md_path = output_root / "latest.md"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     latest_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-    global_latest_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-    global_latest_md_path.write_text(render_markdown(summary), encoding="utf-8")
+    latest_md_path.write_text(render_markdown(summary), encoding="utf-8")
+    if canonical_latest:
+        global_latest_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        global_latest_md_path.write_text(latest_md_path.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"Report: {summary_path}")
     print(f"Passed: {passed}/{len(results)}")
+    print(f"Canonical latest: {'yes' if canonical_latest else 'no'}")
     print(f"Environment blocked: {summary.get('environment_blocked_count', 0)}")
     print(f"Needs action: {summary.get('user_action_required_count', 0)}")
     if not args.no_refresh_report:
@@ -256,7 +262,22 @@ def enrich_summary_payload(summary: dict[str, object]) -> dict[str, object]:
         key=lambda item: item["duration_seconds"],
         default=None,
     )
+    payload["canonical_latest"] = is_canonical_summary(payload)
     return payload
+
+
+def is_canonical_case_selection(selected_cases: tuple[MatrixCase, ...]) -> bool:
+    return [case.name for case in selected_cases] == [case.name for case in CASES]
+
+
+def is_canonical_summary(summary: dict[str, object]) -> bool:
+    if summary.get("canonical_latest") is True:
+        return True
+    case_filter = summary.get("case_filter")
+    if not isinstance(case_filter, dict):
+        return False
+    selected = case_filter.get("selected")
+    return list(selected) == [case.name for case in CASES]
 
 
 def matrix_summary_ok(results: list[dict[str, object]]) -> bool:

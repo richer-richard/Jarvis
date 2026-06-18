@@ -1095,9 +1095,9 @@ def latest_wake_threshold_smoke() -> dict[str, Any]:
 
 def latest_regression_prompt_matrix() -> dict[str, Any]:
     latest = PROJECT_ROOT / "runtime" / "regression_prompt_matrix" / "latest.json"
+    reports = sorted((PROJECT_ROOT / "runtime" / "regression_prompt_matrix").glob("*/summary.json"))
     if not latest.exists():
-        reports = sorted((PROJECT_ROOT / "runtime" / "regression_prompt_matrix").glob("*/summary.json"))
-        latest = reports[-1] if reports else latest
+        latest = _newest_canonical_matrix_summary(reports) or (reports[-1] if reports else latest)
     if not latest.exists():
         return {
             "ok": False,
@@ -1122,6 +1122,14 @@ def latest_regression_prompt_matrix() -> dict[str, Any]:
             "speech_leak_count": 0,
             "max_first_visible_seconds": 0.0,
         }
+    if reports and data.get("canonical_latest") is not True:
+        canonical_latest = _newest_canonical_matrix_summary(reports)
+        if canonical_latest is not None and canonical_latest != latest:
+            try:
+                data = json.loads(canonical_latest.read_text(encoding="utf-8"))
+                latest = canonical_latest
+            except (OSError, json.JSONDecodeError):
+                pass
     passed = int(data.get("passed") or 0)
     total = int(data.get("total") or 0)
     leaks = int(data.get("speech_leak_count") or 0)
@@ -1148,6 +1156,21 @@ def latest_regression_prompt_matrix() -> dict[str, Any]:
         "speech_leak_count": leaks,
         "max_first_visible_seconds": float(data.get("max_first_visible_seconds") or 0.0),
     }
+
+
+def _newest_canonical_matrix_summary(reports: list[Path]) -> Path | None:
+    for report in reversed(reports):
+        try:
+            data = json.loads(report.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("canonical_latest") is True:
+            return report
+        case_filter = data.get("case_filter")
+        selected = case_filter.get("selected") if isinstance(case_filter, dict) else None
+        if isinstance(selected, list) and len(selected) >= 8:
+            return report
+    return None
 
 
 def latest_voice_loop_qa() -> dict[str, Any]:
