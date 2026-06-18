@@ -1663,19 +1663,21 @@ def headline_section(context: dict[str, Any]) -> str:
     matrix_label = str(matrix.get("label") or "matrix not generated")
     speech_payloads = int(matrix.get("speech_payload_count") or 0)
     speech_leaks = int(matrix.get("speech_leak_count") or 0)
+    full_loop = context.get("full_loop") if isinstance(context.get("full_loop"), dict) else {}
+    full_loop_label = str(full_loop.get("label") or "full-loop not generated")
     bundle = str(context.get("bundle") or "current Jarvis build")
     cards = [
         (
             f"Live {bundle}",
-            "LocalOS music now reports browser autoplay blocks as an explicit activation-required state instead of a generic failure or hidden fallback.",
+            "Jarvis now has a real full-loop gate for Leo's spoken prompts: audio in, tool route, action proof, speech audit, and cleanup; LocalOS music still reports browser autoplay as an activation-required state and keeps normal playback owned by LocalOS.",
         ),
         (
             "Proof",
-            f"{python_tests} Python tests passed, {context['verification']['label']} safe verifier, the behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks, and overnight Chrome test tabs were cleaned up.",
+            f"{full_loop_label} full-loop real-action checks, {python_tests} Python tests, {context['verification']['label']} safe verifier, plus the older behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks.",
         ),
         (
             "Caveat",
-            "Chrome still requires one real LocalOS player click before browser audio can start; Jarvis now says that plainly and keeps normal playback owned by LocalOS.",
+            "Chrome still requires one real LocalOS player click in some browser-audio paths, and Teams still depends on signed-in Chrome permissions; the new proof makes Jarvis fail honestly instead of claiming it read the wrong page.",
         ),
     ]
     body = '<div class="grid headline">' + "".join(
@@ -1691,6 +1693,8 @@ def spotlight_section(context: dict[str, Any]) -> str:
     if latency.get("path"):
         latency_text = f" Current fast smoke max first visible {float(latency.get('max_first_visible_seconds') or 0):.3f}s."
     python_tests = latest_python_tests_label(context)
+    full_loop = context.get("full_loop") if isinstance(context.get("full_loop"), dict) else {}
+    full_loop_text = f" Full-loop: {full_loop.get('label')}." if full_loop.get("path") else ""
     matrix = context.get("regression_matrix") if isinstance(context.get("regression_matrix"), dict) else {}
     matrix_text = (
         f" Behavior matrix: {matrix.get('label')}, max first visible "
@@ -1705,7 +1709,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, closed-loop voice QA, and post-patch matrix proof.{latency_text} {matrix_text}".strip(),
+            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, closed-loop voice QA, and post-patch matrix proof.{full_loop_text}{latency_text} {matrix_text}".strip(),
         ),
         (
             "Honest Limit",
