@@ -790,11 +790,13 @@ def proof_items_with_verification(
                 f"({latest_path})."
             )
     if full_loop and full_loop.get("path"):
+        case_summary = str(full_loop.get("case_summary") or "")
+        case_note = f", cases {case_summary}" if case_summary else ""
         items.append(
             "Latest full-loop real-action regression: "
             f"{full_loop['label']}, command {full_loop['command']!r}, "
             f"selected {full_loop['selected_title']!r}, voice loop {full_loop['voice_loop_status']}, "
-            f"cleanup {full_loop['cleanup_label']} ({full_loop['path']})."
+            f"cleanup {full_loop['cleanup_label']}{case_note} ({full_loop['path']})."
         )
     if crash and crash.get("path"):
         crash_version = str(crash.get("version") or "unknown")
@@ -1257,6 +1259,11 @@ def latest_full_loop_regression() -> dict[str, Any]:
         return {**empty, "path": str(latest), "label": "unreadable"}
     results = data.get("results") if isinstance(data.get("results"), list) else []
     first = next((item for item in results if isinstance(item, dict)), {})
+    case_ids = [
+        str(item.get("case_id") or "")
+        for item in results
+        if isinstance(item, dict) and item.get("case_id")
+    ]
     action_proof = first.get("action_proof") if isinstance(first.get("action_proof"), dict) else {}
     cleanup = first.get("cleanup") if isinstance(first.get("cleanup"), dict) else {}
     stop_ok = bool(nested(cleanup, "stop").get("ok"))
@@ -1269,6 +1276,8 @@ def latest_full_loop_regression() -> dict[str, Any]:
         "path": path,
         "label": f"{passed}/{total} passed" if total else "empty",
         "command": str(first.get("command") or ""),
+        "case_ids": case_ids,
+        "case_summary": ", ".join(case_ids),
         "selected_title": str(action_proof.get("selected_title") or ""),
         "voice_loop_status": str(first.get("voice_loop_status") or ""),
         "cleanup_label": f"stop {'ok' if stop_ok else 'failed'}, close {'ok' if close_ok else 'failed'}",

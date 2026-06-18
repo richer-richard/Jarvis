@@ -2426,6 +2426,15 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "speech_mode": "live_playback_exercised",
                 "active_speech_observed": True,
             },
+            "full_loop": {
+                "path": "runtime/full_loop_regression/latest.json",
+                "label": "8/8 passed",
+                "command": "Hey Jarvis, play Waving Through a Window.",
+                "selected_title": "Dear Evan Hansen | 2017 Tony Awards",
+                "voice_loop_status": "passed",
+                "cleanup_label": "stop ok, close ok",
+                "case_summary": "music_play_waving_through_window, ram_activity_monitor, calendar_today_schedule",
+            },
             "worker_source_kind": "bundled app resources",
             "launch_mode": "regular Dock app",
             "runtime_pid": 123,
@@ -2574,6 +2583,22 @@ class VerifySafeScriptTests(unittest.TestCase):
             "(runtime/regression_prompt_matrix/20260617-233458/summary.json).",
             proof,
         )
+        full_loop_proof = render_overnight_status.proof_items_with_verification(
+            {"label": "91/91 passed"},
+            full_loop={
+                "path": "runtime/full_loop_regression/latest.json",
+                "label": "8/8 passed",
+                "command": "Hey Jarvis, play Waving Through a Window.",
+                "selected_title": "Dear Evan Hansen | 2017 Tony Awards",
+                "voice_loop_status": "passed",
+                "cleanup_label": "stop ok, close ok",
+                "case_summary": "music_play_waving_through_window, ram_activity_monitor, calendar_today_schedule",
+            },
+        )
+        self.assertTrue(any(
+            "cases music_play_waving_through_window, ram_activity_monitor, calendar_today_schedule" in item
+            for item in full_loop_proof
+        ))
         self.assertEqual(render_overnight_status.bundle_label("0.1.439", "439"), "Jarvis 0.1.439 build 439")
         self.assertEqual(render_overnight_status.bundle_label("unknown", "unknown"), "live bundle metadata unavailable")
         self.assertEqual(render_overnight_status.launch_label("unknown"), "not inspected")
