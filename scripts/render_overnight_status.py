@@ -27,6 +27,9 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis now handles the hard Sharpay email prompt properly: `Summarize all the emails from Ms. Sharpay in the past month` keeps the user's all-matching intent, resolves the contact alias, selects recent matching messages instead of just the newest one, and produces an English-first spoken summary.",
+    "Jarvis's music proof now includes the part Leo actually cares about after the song starts: the full-loop runner verifies the native Music app bridge stops playback during cleanup, so a passed test cannot leave hidden music running.",
+    "Jarvis voice QA now understands that visible text and spoken text may intentionally differ: it scores speech transcripts against the exact spoken payload, so screen text can say `Juneteenth` while speech says the clearer `June nineteenth holiday`.",
     "Jarvis can now auto-start the native Music app bridge for playback: if the bridge is down, it opens `Music.app`, waits for `/health`, retries the play command, and records the startup proof before falling back.",
     "Jarvis now has a single pre-build proof gate: `scripts/pre_build_gate.py` runs the Python safety suite, all eight spoken-command full-loop regressions, Chrome test-tab cleanup, and report refresh before a build is treated as saveable.",
     "Jarvis 0.1.454 moves normal music playback proof to the native Music app bridge: `Waving Through a Window` now resolves to the Dear Evan Hansen Tony Awards track, Jarvis confirms actual Music playback before claiming success, Stop Music calls the same bridge, and the new full-loop regression runner can allow real audio actions, verify playback, audit speech payloads, and clean up afterward.",
@@ -1721,11 +1724,11 @@ def headline_section(context: dict[str, Any]) -> str:
     cards = [
         (
             f"Live {bundle}",
-            "Jarvis now has a real full-loop gate for Leo's spoken prompts: audio in, tool route, action proof, speech audit, and cleanup; music playback is proven through the native Music app bridge while older LocalOS/Chrome fallback paths stay honest about activation blocks.",
+            "Jarvis now has a real full-loop gate for Leo's spoken prompts: audio in, tool route, action proof, speech audit, cleanup, and stop-proof music playback through the native Music app bridge.",
         ),
         (
             "Proof",
-            f"{full_loop_label} full-loop real-action checks, {python_tests} Python tests, {context['verification']['label']} safe verifier, plus the older behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks.",
+            f"{full_loop_label} full-loop real-action checks, {python_tests} Python tests, {context['verification']['label']} safe verifier, plus the older behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks. Sharpay email now proves sender_recent matching, and voice QA scores spoken payloads.",
         ),
         (
             "Caveat",
