@@ -214,6 +214,37 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["passed"])
         self.assertIn("Regressed to the old DragonForce false match.", proof["failures"])
 
+    def test_full_loop_memory_proof_accepts_activity_monitor_equivalent(self):
+        proof = full_loop_regression.verify_memory_usage({
+            "tool": "diagnostics.memory_usage",
+            "status": "checked",
+            "activity_monitor_equivalent": True,
+            "vm_stat_available": True,
+            "total_bytes": 16_000_000_000,
+            "used_bytes": 8_000_000_000,
+            "percent_used": 50.0,
+            "used_human": "8.0 GB",
+            "total_human": "16.0 GB",
+            "memory_pressure": "normal",
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertEqual(proof["used_human"], "8.0 GB")
+
+    def test_full_loop_memory_proof_rejects_missing_vm_stat(self):
+        proof = full_loop_regression.verify_memory_usage({
+            "tool": "diagnostics.memory_usage",
+            "status": "checked",
+            "activity_monitor_equivalent": True,
+            "vm_stat_available": False,
+            "total_bytes": 16_000_000_000,
+            "used_bytes": 8_000_000_000,
+            "percent_used": 50.0,
+        })
+
+        self.assertFalse(proof["passed"])
+        self.assertIn("vm_stat was not available for memory proof.", proof["failures"])
+
     def test_voice_loop_stream_can_allow_audio_actions_for_live_regression(self):
         captured_payloads = []
 

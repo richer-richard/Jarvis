@@ -79,3 +79,7 @@ spoken reply, time every stage, and clean up any app/browser state it created.
   at `runtime/full_loop_regression/20260618-225159/summary.json`; it selected
   `Dear Evan Hansen | 2017 Tony Awards`, confirmed Music playback, stopped it,
   and closed the Music window.
+- 2026-06-18 23:13 CST: combined full-loop regression passed 2/2 at
+  `runtime/full_loop_regression/20260618-231308/summary.json`, covering native
+  Music playback plus Activity Monitor-style RAM usage. Full Python safety suite
+  then passed 837/837.
