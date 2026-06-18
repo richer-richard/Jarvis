@@ -28,6 +28,8 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis's Teams proof now reads the visible Chrome window with native OCR even when Chrome page-text Automation is blocked, so it can say the current page is a Geography assignment instead of pretending it found the newest Music assignment.",
+    "Jarvis's Music full-loop proof now watches for hidden `afplay` leftovers: a passed Music test must stop native Music playback and leave no new hidden audio process behind.",
     "Jarvis now handles the hard Sharpay email prompt properly: `Summarize all the emails from Ms. Sharpay in the past month` keeps the user's all-matching intent, resolves the contact alias, selects recent matching messages instead of just the newest one, and produces an English-first spoken summary.",
     "Jarvis's music proof now includes the part Leo actually cares about after the song starts: the full-loop runner verifies the native Music app bridge stops playback during cleanup, so a passed test cannot leave hidden music running.",
     "Jarvis voice QA now understands that visible text and spoken text may intentionally differ: it scores speech transcripts against the exact spoken payload, so screen text can say `Juneteenth` while speech says the clearer `June nineteenth holiday`.",
@@ -1744,7 +1746,7 @@ def headline_section(context: dict[str, Any]) -> str:
         ),
         (
             "Proof",
-            f"{full_loop_label} full-loop real-action checks, {python_tests} Python tests, {context['verification']['label']} safe verifier, plus the older behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks. Sharpay email now proves sender_recent matching, and voice QA scores spoken payloads.",
+            f"{full_loop_label} full-loop real-action checks, {python_tests} Python tests, {context['verification']['label']} safe verifier, plus the older behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks. Sharpay email proves sender_recent matching, Teams proves wrong-subject OCR honesty, Music proves no hidden afplay leftovers, and voice QA scores spoken payloads.",
         ),
         (
             "Caveat",
