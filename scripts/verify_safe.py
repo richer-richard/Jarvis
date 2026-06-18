@@ -27,6 +27,7 @@ from jarvis.config import MAX_REQUEST_BYTES  # noqa: E402
 
 PYTHON = sys.executable or "python3"
 BASE_URL = os.environ.get("JARVIS_URL") or os.environ.get("JARVIS_BASE_URL") or "http://127.0.0.1:8765"
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 REPORT_DIR = PROJECT_ROOT / "runtime" / "verification"
 TEMP_APP_SIGKILL_RETRY_DELAYS = (0.0, 0.5, 1.5, 3.0, 5.0, 8.0)
 USAGE = """Usage: python3 scripts/verify_safe.py [--help]
@@ -89,10 +90,17 @@ def run_command(
         )
 
     output = f"{completed.stdout}\n{completed.stderr}"
-    passed = completed.returncode == expected_returncode and (expect is None or expect in output)
-    summary = "passed" if passed else f"failed with exit code {completed.returncode}"
-    if expect and expect not in output:
-        summary = f"missing expected text: {expect}"
+    output_matches = expect is None or expect in output
+    passed = completed.returncode == expected_returncode and output_matches
+    if passed:
+        summary = "passed"
+    else:
+        problems: list[str] = []
+        if completed.returncode != expected_returncode:
+            problems.append(f"failed with exit code {completed.returncode}")
+        if expect and not output_matches:
+            problems.append(f"missing expected text: {expect}")
+        summary = "; ".join(problems) if problems else "failed"
 
     return CheckResult(
         name=name,
@@ -155,7 +163,133 @@ def temp_app_command_needs_transient_retry(result: CheckResult) -> bool:
     )
 
 
+def parse_window_self_test_output(text: str) -> dict[str, Any]:
+    clean = str(text or "").strip()
+    if not clean:
+        return {}
+    candidates = [clean]
+    start = clean.find("{")
+    end = clean.rfind("}")
+    if 0 <= start < end:
+        candidates.append(clean[start : end + 1])
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def latest_window_self_test_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    snapshots = payload.get("snapshots")
+    if not isinstance(snapshots, list):
+        return {}
+    for item in reversed(snapshots):
+        if isinstance(item, dict):
+            return item
+    return {}
+
+
+def run_window_self_test(
+    name: str,
+    args: list[str],
+    *,
+    timeout: int = 120,
+    env: dict[str, str] | None = None,
+) -> CheckResult:
+    started = time.monotonic()
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    output_path = Path(tempfile.mkstemp(prefix="jarvis-window-self-test-", suffix=".log")[1])
+
+    try:
+        with output_path.open("w", encoding="utf-8") as handle:
+            completed = subprocess.run(
+                args,
+                cwd=PROJECT_ROOT,
+                env=merged_env,
+                text=True,
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                check=False,
+            )
+    except subprocess.TimeoutExpired as error:
+        captured = tail(output_path.read_text(encoding="utf-8")) if output_path.exists() else ""
+        return CheckResult(
+            name=name,
+            passed=False,
+            summary=f"Timed out after {timeout}s",
+            stdout_tail=captured or tail(error.stdout or ""),
+            stderr_tail=tail(error.stderr or ""),
+            duration_seconds=round(time.monotonic() - started, 3),
+        )
+    finally:
+        if output_path.exists():
+            captured_output = output_path.read_text(encoding="utf-8")
+            output_path.unlink(missing_ok=True)
+        else:
+            captured_output = ""
+
+    payload = parse_window_self_test_output(captured_output)
+    snapshot = latest_window_self_test_snapshot(payload)
+    session_locked = bool(snapshot.get("session_locked"))
+    panel_visible = bool(snapshot.get("panel_is_visible"))
+    label = str(snapshot.get("label") or "unknown")
+    try:
+        window_count = int(snapshot.get("window_count") or 0)
+    except (TypeError, ValueError):
+        window_count = 0
+
+    if session_locked:
+        passed = True
+        summary = (
+            "session locked; bundled window probe created the Jarvis panel, "
+            f"but live foreground visibility is blocked by the lock screen ({label}, windows={window_count})"
+        )
+    elif completed.returncode == 0 and panel_visible and window_count > 0:
+        passed = True
+        summary = f"bundled window probe saw a visible Jarvis panel at {label} with {window_count} window(s)"
+    elif snapshot:
+        passed = False
+        summary = (
+            "bundled window probe did not keep a visible Jarvis panel "
+            f"(panel_visible={panel_visible}, session_locked={session_locked}, windows={window_count}, label={label})"
+        )
+    else:
+        passed = False
+        summary = (
+            f"failed with exit code {completed.returncode}; missing window self-test JSON"
+            if completed.returncode
+            else "missing window self-test JSON"
+        )
+
+    return CheckResult(
+        name=name,
+        passed=passed,
+        summary=summary,
+        returncode=completed.returncode,
+        stdout_tail=tail(captured_output),
+        stderr_tail="",
+        duration_seconds=round(time.monotonic() - started, 3),
+    )
+
+
+def normalize_base_url(base_url: str = BASE_URL) -> str:
+    value = str(base_url or "http://127.0.0.1:8765").rstrip("/")
+    if value.endswith("/api/command"):
+        value = value.removesuffix("/api/command")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in LOOPBACK_HOSTS:
+        raise ValueError("verifier only talks to loopback Jarvis workers")
+    return value
+
+
 def get_json(path: str, timeout: int = 20, base_url: str = BASE_URL) -> Any:
+    base_url = normalize_base_url(base_url)
     with urllib.request.urlopen(f"{base_url}{path}", timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -166,6 +300,7 @@ def post_json(
     timeout: int = 20,
     base_url: str = BASE_URL,
 ) -> Any:
+    base_url = normalize_base_url(base_url)
     if path == "/api/command":
         payload = {key: value for key, value in payload.items() if key != "speak"}
         payload = {**payload, "suppress_speech": True}
@@ -203,16 +338,26 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def speech_preview_matches_reply(reply: Any, preview: Any) -> bool:
-    """Return true when the TTS preview is a substantial spoken-prefix of the visible reply."""
+def speech_text_matches_reply(reply: Any, speech_text: Any) -> bool:
+    """Return true when the auditable TTS text matches the visible reply."""
     reply_text = normalize_speech_check_text(reply)
-    preview_text = normalize_speech_check_text(preview)
-    if not reply_text or not preview_text:
+    speech_check_text = normalize_speech_check_text(speech_text)
+    if not reply_text or not speech_check_text:
         return False
     minimum_preview_chars = min(len(reply_text), 60)
-    if len(preview_text) < minimum_preview_chars:
+    if len(speech_check_text) < minimum_preview_chars:
         return False
-    return reply_text.startswith(preview_text) or preview_text.startswith(reply_text)
+    return reply_text.startswith(speech_check_text)
+
+
+def speech_preview_matches_reply(reply: Any, preview: Any) -> bool:
+    """Backward-compatible wrapper for older verifier reports with only previews."""
+    return speech_text_matches_reply(reply, preview)
+
+
+def auditable_speech_text(speech: dict[str, Any]) -> str:
+    """Prefer full spoken text, falling back to the older preview field."""
+    return str(speech.get("spoken_text") or speech.get("text_preview") or "").strip()
 
 
 def normalize_speech_check_text(value: Any) -> str:
@@ -221,6 +366,10 @@ def normalize_speech_check_text(value: Any) -> str:
 
 
 def wait_for_health(timeout: int = 15, base_url: str = BASE_URL) -> bool:
+    try:
+        base_url = normalize_base_url(base_url)
+    except ValueError:
+        return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -324,6 +473,7 @@ def start_temporary_worker() -> tuple[subprocess.Popen[str], str, float]:
 
 
 def host_port(base_url: str) -> tuple[str, int]:
+    base_url = normalize_base_url(base_url)
     parsed = urlparse(base_url)
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -344,6 +494,7 @@ def http_response(
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
 ) -> tuple[int, str, dict[str, str]]:
+    base_url = normalize_base_url(base_url)
     parsed = urlparse(base_url)
     connection = HTTPConnection(parsed.hostname or "127.0.0.1", parsed.port or 80, timeout=10)
     try:
@@ -917,6 +1068,21 @@ def run_bundle_checks(results: list[CheckResult], base_url: str) -> None:
     )
 
 
+def run_output_bundle_window_check(results: list[CheckResult], base_url: str) -> None:
+    executable = PROJECT_ROOT / "output" / "Jarvis.app" / "Contents" / "MacOS" / "jarvis-menu-bar"
+    if not executable.exists():
+        results.append(CheckResult("output_bundle_window_self_test", False, f"missing bundled executable at {executable}"))
+        return
+    results.append(
+        run_window_self_test(
+            "output_bundle_window_self_test",
+            [str(executable), "--window-self-test"],
+            env={"JARVIS_BASE_URL": base_url},
+            timeout=90,
+        )
+    )
+
+
 def run_swift_cold_start_cleanup_check(results: list[CheckResult]) -> None:
     port = free_local_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -1236,110 +1402,102 @@ def check_endpoint_wake_audition_corpus(base_url: str) -> str:
 
 
 def check_endpoint_model_context(base_url: str) -> str:
-    original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
-    post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
-    try:
-        data = post_json(
-            "/api/command",
-            {"command": "what do you feed the first model for hello Jarvis"},
-            base_url=base_url,
-        )
-        result = data.get("result") or {}
-        input_policy = result.get("input_source_policy") if isinstance(result.get("input_source_policy"), dict) else {}
-        possible_sources = input_policy.get("current_message_possible_sources") or []
-        require(data.get("tool") == "diagnostics.model_context", f"tool was {data.get('tool')}")
-        require(result.get("called_fast_model") is False, "model context diagnostic should not call fast model")
-        require(result.get("called_middle_model") is False, "model context diagnostic should not call middle model")
-        require(result.get("played_audio") is False, "model context diagnostic should not play audio")
-        require(input_policy.get("fast_model_told_message_may_be_dictation") is True, "fast model dictation policy missing")
-        require(input_policy.get("middle_planner_told_message_may_be_dictation") is True, "middle planner dictation policy missing")
-        require("native speech-recognition transcript" in possible_sources, f"possible sources were {possible_sources}")
-    finally:
-        post_json("/api/speech/mute", {"muted": original_mute}, base_url=base_url)
+    data = post_json(
+        "/api/command",
+        {
+            "command": "what do you feed the first model for hello Jarvis",
+            "suppress_speech": True,
+        },
+        base_url=base_url,
+    )
+    result = data.get("result") or {}
+    input_policy = result.get("input_source_policy") if isinstance(result.get("input_source_policy"), dict) else {}
+    possible_sources = input_policy.get("current_message_possible_sources") or []
+    require(data.get("tool") == "diagnostics.model_context", f"tool was {data.get('tool')}")
+    require(result.get("called_fast_model") is False, "model context diagnostic should not call fast model")
+    require(result.get("called_middle_model") is False, "model context diagnostic should not call middle model")
+    require(result.get("played_audio") is False, "model context diagnostic should not play audio")
+    require(input_policy.get("fast_model_told_message_may_be_dictation") is True, "fast model dictation policy missing")
+    require(input_policy.get("middle_planner_told_message_may_be_dictation") is True, "middle planner dictation policy missing")
+    require("native speech-recognition transcript" in possible_sources, f"possible sources were {possible_sources}")
     return "model context exposes dictation input policy without calling models"
 
 
 def check_endpoint_voice_loop_echo(base_url: str) -> str:
-    original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
-    post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
-    try:
-        data = post_json(
-            "/api/command",
-            {"command": "voice loop: Hey Jarvis | Yes sir? | status"},
-            base_url=base_url,
-        )
-        result = data.get("result") or {}
-        route_preview = result.get("route_preview") or {}
-        require(data.get("tool") == "voice.loop_simulation", f"tool was {data.get('tool')}")
-        require(result.get("status") == "command_previewed", f"status was {result.get('status')}")
-        require(result.get("command") == "status", f"command was {result.get('command')}")
-        require(result.get("command_source") == "followup_utterance", f"command source was {result.get('command_source')}")
-        require(result.get("ignored_echo_utterance_indices") == [1], f"ignored echoes were {result.get('ignored_echo_utterance_indices')}")
-        require(route_preview.get("tool") == "system.status", f"route tool was {route_preview.get('tool')}")
-        require(route_preview.get("executed") is False, f"route executed was {route_preview.get('executed')}")
-    finally:
-        post_json("/api/speech/mute", {"muted": original_mute}, base_url=base_url)
+    data = post_json(
+        "/api/command",
+        {
+            "command": "voice loop: Hey Jarvis | Yes sir? | status",
+            "suppress_speech": True,
+        },
+        base_url=base_url,
+    )
+    result = data.get("result") or {}
+    route_preview = result.get("route_preview") or {}
+    require(data.get("tool") == "voice.loop_simulation", f"tool was {data.get('tool')}")
+    require(result.get("status") == "command_previewed", f"status was {result.get('status')}")
+    require(result.get("command") == "status", f"command was {result.get('command')}")
+    require(result.get("command_source") == "followup_utterance", f"command source was {result.get('command_source')}")
+    require(result.get("ignored_echo_utterance_indices") == [1], f"ignored echoes were {result.get('ignored_echo_utterance_indices')}")
+    require(route_preview.get("tool") == "system.status", f"route tool was {route_preview.get('tool')}")
+    require(route_preview.get("executed") is False, f"route executed was {route_preview.get('executed')}")
     return "voice loop ignored wake greeting echo and captured follow-up command"
 
 
 def check_endpoint_voice_loop_repeated_wake(base_url: str) -> str:
-    original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
-    post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
-    try:
-        data = post_json(
-            "/api/command",
-            {"command": "voice loop: Hey Jarvis | Hey Jarvis | status"},
-            base_url=base_url,
-        )
-        result = data.get("result") or {}
-        route_preview = result.get("route_preview") or {}
-        require(data.get("tool") == "voice.loop_simulation", f"tool was {data.get('tool')}")
-        require(result.get("status") == "command_previewed", f"status was {result.get('status')}")
-        require(result.get("command") == "status", f"command was {result.get('command')}")
-        require(result.get("command_source") == "followup_utterance", f"command source was {result.get('command_source')}")
-        require(
-            result.get("ignored_repeated_wake_utterance_indices") == [1],
-            f"ignored repeated wakes were {result.get('ignored_repeated_wake_utterance_indices')}",
-        )
-        require(route_preview.get("tool") == "system.status", f"route tool was {route_preview.get('tool')}")
-        require(route_preview.get("executed") is False, f"route executed was {route_preview.get('executed')}")
-    finally:
-        post_json("/api/speech/mute", {"muted": original_mute}, base_url=base_url)
+    data = post_json(
+        "/api/command",
+        {
+            "command": "voice loop: Hey Jarvis | Hey Jarvis | status",
+            "suppress_speech": True,
+        },
+        base_url=base_url,
+    )
+    result = data.get("result") or {}
+    route_preview = result.get("route_preview") or {}
+    require(data.get("tool") == "voice.loop_simulation", f"tool was {data.get('tool')}")
+    require(result.get("status") == "command_previewed", f"status was {result.get('status')}")
+    require(result.get("command") == "status", f"command was {result.get('command')}")
+    require(result.get("command_source") == "followup_utterance", f"command source was {result.get('command_source')}")
+    require(
+        result.get("ignored_repeated_wake_utterance_indices") == [1],
+        f"ignored repeated wakes were {result.get('ignored_repeated_wake_utterance_indices')}",
+    )
+    require(route_preview.get("tool") == "system.status", f"route tool was {route_preview.get('tool')}")
+    require(route_preview.get("executed") is False, f"route executed was {route_preview.get('executed')}")
     return "voice loop ignored repeated wake phrase and captured follow-up command"
 
 
 def check_endpoint_wake_debug(base_url: str) -> str:
-    original_mute = bool(get_json("/api/speech/mute", base_url=base_url).get("muted", False))
-    post_json("/api/speech/mute", {"muted": True}, base_url=base_url)
-    try:
-        payload = {
-            "app": {
-                "wake": {
-                    "recent_events": [
-                        {
-                            "event": "command_captured",
-                            "transcript": "status",
-                            "command": "status",
-                            "detector_detected": "false",
-                            "detector_score": "0.000000",
-                            "detector_threshold": "0.86",
-                        }
-                    ]
-                }
+    payload = {
+        "app": {
+            "wake": {
+                "recent_events": [
+                    {
+                        "event": "command_captured",
+                        "transcript": "status",
+                        "command": "status",
+                        "detector_detected": "false",
+                        "detector_score": "0.000000",
+                        "detector_threshold": "0.86",
+                    }
+                ]
             }
         }
-        data = post_json(
-            "/api/command",
-            {"command": f"analyze wake debug JSON {json.dumps(payload)}"},
-            base_url=base_url,
-        )
-        result = data.get("result") or {}
-        require(data.get("tool") == "voice.wake_debug", f"tool was {data.get('tool')}")
-        require(result.get("status") == "analyzed", f"status was {result.get('status')}")
-        require(result.get("captured_commands") == ["status"], f"captured commands were {result.get('captured_commands')}")
-        require(result.get("recorded_audio") is False, "wake debug should not record audio")
-    finally:
-        post_json("/api/speech/mute", {"muted": original_mute}, base_url=base_url)
+    }
+    data = post_json(
+        "/api/command",
+        {
+            "command": f"analyze wake debug JSON {json.dumps(payload)}",
+            "suppress_speech": True,
+        },
+        base_url=base_url,
+    )
+    result = data.get("result") or {}
+    require(data.get("tool") == "voice.wake_debug", f"tool was {data.get('tool')}")
+    require(result.get("status") == "analyzed", f"status was {result.get('status')}")
+    require(result.get("captured_commands") == ["status"], f"captured commands were {result.get('captured_commands')}")
+    require(result.get("recorded_audio") is False, "wake debug should not record audio")
     return "wake debug analyzed pasted Copy Chat JSON without recording audio"
 
 
@@ -1394,8 +1552,8 @@ def check_endpoint_speech_mute(base_url: str) -> str:
         require(final_speech.get("spoken") is False, f"quiet speech spoken was {final_speech}")
         require(final_speech.get("reason") == "final", f"final speech reason was {final_speech}")
         require(
-            speech_preview_matches_reply(final_reply, final_speech.get("text_preview")),
-            "final speech preview was not a substantial prefix of the final visible reply",
+            speech_text_matches_reply(final_reply, auditable_speech_text(final_speech)),
+            "final speech text was not a substantial prefix of the final visible reply",
         )
     finally:
         post_json("/api/speech/mute", {"muted": original_muted}, base_url=base_url)
@@ -1667,6 +1825,7 @@ def run_checks() -> dict[str, Any]:
         run_swift_worker_concurrency_check(results)
         run_swift_worker_autostart_disabled_check(results)
         run_bundle_checks(results, active_base_url)
+        run_output_bundle_window_check(results, active_base_url)
     finally:
         if worker_process is not None:
             worker_process.terminate()

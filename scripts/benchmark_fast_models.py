@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Benchmark Jarvis fast-chat model candidates with identical prompts."""
+"""Benchmark Jarvis fast-chat model candidates with identical prompts.
+
+Dry-run is the default. Use --execute-network only after external model calls
+have been explicitly approved. Local Ollama model discovery/benchmarking is
+also opt-in.
+"""
 
 from __future__ import annotations
 
@@ -116,20 +121,29 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=int, default=FAST_MODEL_TIMEOUT_SECONDS)
     parser.add_argument("--max-groq-models", type=int, default=0, help="0 means all listed Groq models.")
+    parser.add_argument("--execute-network", action="store_true", help="Discover and benchmark cloud fast-model candidates.")
+    parser.add_argument("--include-local-ollama", action="store_true", help="Also discover and benchmark installed local Ollama models. Off by default.")
     args = parser.parse_args()
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    candidates = collect_candidates(args.max_groq_models)
+    candidates = collect_candidates(args.max_groq_models, include_local_ollama=args.include_local_ollama) if args.execute_network else []
     started = time.strftime("%Y%m%d-%H%M%S")
-    results = [benchmark_model(candidate, timeout=args.timeout) for candidate in candidates]
+    results = [benchmark_model(candidate, timeout=args.timeout) for candidate in candidates] if args.execute_network else []
     ranked = sorted(results, key=rank_key)
 
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "execute_network": bool(args.execute_network),
+        "include_local_ollama": bool(args.include_local_ollama),
         "timeout_seconds": args.timeout,
         "prompt_count": len(PROMPTS),
         "candidates": candidates,
         "ranked": [asdict(result) for result in ranked],
+        "notes": [
+            "Dry-run mode does not call ollama list, Groq /models, Groq chat, or Ollama generate.",
+            "Executed cloud benchmarks do not call ollama list or Ollama generate unless --include-local-ollama is set.",
+            "Re-run with --execute-network after approval to benchmark models.",
+        ] if not args.execute_network else [],
     }
     json_path = REPORT_DIR / f"fast-model-benchmark-{started}.json"
     md_path = REPORT_DIR / f"fast-model-benchmark-{started}.md"
@@ -137,7 +151,10 @@ def main() -> int:
     md_path.write_text(render_markdown(report), encoding="utf-8")
 
     best = ranked[0] if ranked else None
-    print(f"Benchmarked {len(results)} candidates across {len(PROMPTS)} prompts")
+    if args.execute_network:
+        print(f"Benchmarked {len(results)} candidates across {len(PROMPTS)} prompts")
+    else:
+        print("Dry run only. Re-run with --execute-network after approval to benchmark models.")
     if best:
         print(
             "Best:",
@@ -152,9 +169,9 @@ def main() -> int:
     return 0
 
 
-def collect_candidates(max_groq_models: int) -> list[dict[str, str]]:
+def collect_candidates(max_groq_models: int, *, include_local_ollama: bool) -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
-    ollama = shutil.which("ollama")
+    ollama = shutil.which("ollama") if include_local_ollama else None
     if ollama:
         completed = subprocess.run(
             [ollama, "list"],
@@ -342,6 +359,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "# Jarvis Fast Model Benchmark",
         "",
         f"Generated: {report['generated_at']}",
+        f"Executed model calls: `{report.get('execute_network')}`",
         f"Timeout per prompt: {report['timeout_seconds']}s",
         f"Prompts per candidate: {report['prompt_count']}",
         "",

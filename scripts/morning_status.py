@@ -11,12 +11,15 @@ import shlex
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BASE_URL = "http://127.0.0.1:8765"
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MAX_VERIFICATION_AGE_SECONDS = 12 * 60 * 60
 VERIFICATION_HIGHLIGHTS = {
     "endpoint_read_only_shell_allowlist": "shell allowlist routing",
@@ -90,7 +93,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Print a read-only Jarvis morning status summary.")
     parser.add_argument("--base-url", default=None, help="Worker base URL. Defaults to JARVIS_URL, JARVIS_BASE_URL, or http://127.0.0.1:8765.")
     args = parser.parse_args()
-    base_url = normalize_base_url(args.base_url) if args.base_url else base_url_from_environment()
+    try:
+        base_url = normalize_base_url(args.base_url) if args.base_url else base_url_from_environment()
+    except ValueError as error:
+        print(f"Worker: refused unsafe base URL ({error})")
+        return 2
 
     print("Jarvis morning status")
     print(f"Project: {PROJECT_ROOT}")
@@ -209,6 +216,9 @@ def print_latest_verification() -> None:
     highlights = verification_highlights(results)
     if highlights:
         print(f"Verification includes: {', '.join(highlights)}")
+    window_probe = verification_window_probe(results)
+    if window_probe:
+        print(f"Window probe: {window_probe}")
 
 
 def print_requirement_audit() -> None:
@@ -309,7 +319,7 @@ def latency_smoke_summary(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(result, dict):
             ok = False
             continue
-        if result.get("status") == "completed":
+        if latency_status_counts_as_success(result.get("status")):
             completed += 1
         else:
             ok = False
@@ -343,6 +353,10 @@ def latency_smoke_summary(data: dict[str, Any]) -> dict[str, Any]:
         "max_total_seconds": max(total_values) if total_values else 0.0,
         "min_after_first_chars_per_second": min(after_first_cps_values) if after_first_cps_values else 0.0,
     }
+
+
+def latency_status_counts_as_success(status: Any) -> bool:
+    return str(status or "").strip() in {"completed", "checked"}
 
 
 def context_smoke_summary(data: dict[str, Any]) -> dict[str, Any]:
@@ -495,7 +509,7 @@ def get_json(url: str, *, timeout: int) -> Any:
 
 
 def base_url_from_environment() -> str:
-    raw = os.environ.get("JARVIS_URL") or os.environ.get("JARVIS_BASE_URL") or "http://127.0.0.1:8765"
+    raw = os.environ.get("JARVIS_URL") or os.environ.get("JARVIS_BASE_URL") or DEFAULT_BASE_URL
     return normalize_base_url(raw)
 
 
@@ -503,6 +517,9 @@ def normalize_base_url(raw: str) -> str:
     value = raw.rstrip("/")
     if value.endswith("/api/command"):
         value = value.removesuffix("/api/command")
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in LOOPBACK_HOSTS:
+        raise ValueError("morning status only talks to loopback Jarvis workers")
     return value
 
 
@@ -513,6 +530,13 @@ def verification_highlights(results: list[dict[str, Any]]) -> list[str]:
         for check_name, label in VERIFICATION_HIGHLIGHTS.items()
         if check_name in passed_names
     ]
+
+
+def verification_window_probe(results: list[dict[str, Any]]) -> str:
+    for result in results:
+        if result.get("name") == "output_bundle_window_self_test":
+            return str(result.get("summary") or "").strip()
+    return ""
 
 
 def verification_action(ok: bool, age_seconds: float, max_age_seconds: int = MAX_VERIFICATION_AGE_SECONDS) -> str | None:

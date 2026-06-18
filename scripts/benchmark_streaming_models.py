@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Measure Groq streaming time-to-first-visible-content for Jarvis candidate models."""
+"""Measure Groq streaming time-to-first-visible-content for Jarvis candidate models.
+
+Dry-run is the default. Use --execute-network only after the external Groq
+benchmark has been explicitly approved.
+"""
 
 from __future__ import annotations
 
@@ -34,13 +38,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", nargs="*", default=DEFAULT_MODELS)
     parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--execute-network", action="store_true", help="Actually contact Groq for streaming timings.")
     args = parser.parse_args()
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    results = [stream_model(model, timeout=args.timeout) for model in args.models]
+    results = [
+        stream_model(model, timeout=args.timeout) if args.execute_network else dry_run_model(model)
+        for model in args.models
+    ]
     generated = time.strftime("%Y%m%d-%H%M%S")
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "execute_network": bool(args.execute_network),
         "prompt": PROMPT,
         "results": results,
     }
@@ -59,6 +68,19 @@ def main() -> int:
         )
     print(f"Report: {md_path}")
     return 0
+
+
+def dry_run_model(model: str) -> dict[str, object]:
+    return {
+        "model": model,
+        "status": "dry_run",
+        "first_visible_token_seconds": None,
+        "first_token_seconds": None,
+        "total_seconds": None,
+        "chars": 0,
+        "reply": "",
+        "note": "No network request was sent. Re-run with --execute-network after approval.",
+    }
 
 
 def stream_model(model: str, *, timeout: int) -> dict[str, object]:
@@ -138,6 +160,7 @@ def render_markdown(report: dict[str, object]) -> str:
         "# Jarvis Streaming Model Benchmark",
         "",
         f"Generated: {report['generated_at']}",
+        f"Executed network calls: `{report.get('execute_network')}`",
         f"Prompt: `{report['prompt']}`",
         "",
         "| Model | Status | First Visible | Total | Chars | Reply |",

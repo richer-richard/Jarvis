@@ -114,8 +114,15 @@ def _localos_music_play_summary(result: dict[str, Any], *, from_your_pick: bool 
     if status == "playing":
         return f"Started Local OS Music playback{suffix}."
     if status == "queued":
-        return f"Queued Local OS Music playback{suffix}."
+        return f"Asked Local OS Music to start playback{suffix}; playback is not confirmed yet."
     return f"Tried Local OS Music playback{suffix}."
+
+
+def _localos_music_stop_summary(result: dict[str, Any]) -> str:
+    reply = str(result.get("reply") or "").strip()
+    if reply:
+        return reply
+    return "Stopped Jarvis music playback." if result.get("executed") else "Tried to stop Jarvis music playback."
 
 
 NATURAL_LANGUAGE_TOOL_SPECS = [
@@ -861,7 +868,8 @@ class Planner:
         if _looks_like_stop_speaking(lower):
             return self._result(text, "voice.stop_speaking", "Stopped Jarvis speech playback.", assessment, stop_speaking(), True)
         if _looks_like_music_stop_request(lower):
-            return self._result(text, "localos.music_stop", "Stopped Jarvis music playback.", assessment, localos_music_stop(), True)
+            stop_result = localos_music_stop()
+            return self._result(text, "localos.music_stop", _localos_music_stop_summary(stop_result), assessment, stop_result, True)
         if _looks_like_remote_worker_status(lower):
             return self._result(text, "diagnostics.remote_worker", "Read remote MacBook Air worker status.", assessment, remote_worker_status(), True)
         if _looks_like_elevation_status(lower):
@@ -1541,7 +1549,7 @@ class Planner:
             return self._result(
                 text,
                 "localos.music_stop",
-                "Stopped Jarvis music playback.",
+                _localos_music_stop_summary(stop_result),
                 assessment,
                 stop_result,
                 True,
@@ -4900,7 +4908,12 @@ def _history_shows_codex_waiting(history: list[dict[str, str]] | None) -> bool:
     if not history:
         return False
     for item in reversed(history[-12:]):
-        content = str(item.get("content") or "").lower()
+        role = str(item.get("role") or "").strip().lower()
+        if role == "jarvis":
+            role = "assistant"
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or item.get("text") or "").lower()
         if not content:
             continue
         if "codex" not in content and "agents.md" not in content:

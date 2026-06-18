@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreGraphics
 import Foundation
 import JarvisClient
 import SwiftUI
@@ -45,6 +46,10 @@ struct JarvisMenuBarApp {
         }
         if CommandLine.arguments.contains("--worker-autostart-disabled-self-test") {
             runWorkerAutostartDisabledSelfTest()
+            return
+        }
+        if CommandLine.arguments.contains("--window-self-test") {
+            runWindowSelfTest()
             return
         }
         if CommandLine.arguments.contains("--self-test") {
@@ -239,6 +244,50 @@ struct JarvisMenuBarApp {
 
         RunLoop.main.run()
     }
+
+    @MainActor
+    private static func runWindowSelfTest() {
+        let app = NSApplication.shared
+        let delegate = JarvisAppDelegate(selfTestMode: true)
+        app.delegate = delegate
+        app.setActivationPolicy(.regular)
+        app.finishLaunching()
+
+        Task { @MainActor in
+            delegate.debugOpenPanelForSelfTest()
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            var snapshots: [[String: Any]] = []
+            snapshots.append(delegate.debugWindowSnapshot(label: "after_open_panel"))
+
+            delegate.debugStartStatusHelperForSelfTest()
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            snapshots.append(delegate.debugWindowSnapshot(label: "after_status_helper"))
+
+            delegate.debugRefreshModelForSelfTest()
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            snapshots.append(delegate.debugWindowSnapshot(label: "after_refresh"))
+
+            let finalSnapshot = snapshots.last ?? [:]
+            let snapshot: [String: Any] = [
+                "snapshots": snapshots,
+            ]
+            do {
+                let data = try JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys])
+                if let text = String(data: data, encoding: .utf8) {
+                    print(text)
+                }
+            } catch {
+                fputs("Jarvis window self-test failed to encode snapshot: \(error)\n", stderr)
+                Foundation.exit(1)
+            }
+            let windowCount = finalSnapshot["window_count"] as? Int ?? 0
+            let panelVisible = finalSnapshot["panel_is_visible"] as? Bool ?? false
+            let sessionLocked = finalSnapshot["session_locked"] as? Bool ?? false
+            Foundation.exit(windowCount > 0 && panelVisible && !sessionLocked ? 0 : 1)
+        }
+
+        RunLoop.main.run()
+    }
 }
 
 @MainActor
@@ -253,31 +302,45 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKeyService: JarvisHotKeyService?
     private var hotKeyStatus: HotKeyRegistrationResult?
     private var statusHelperProcess: Process?
+    private var shouldKeepStatusHelperRunning = false
     private var cancellables: Set<AnyCancellable> = []
+    private let selfTestMode: Bool
+    private static let statusHelperRestartDelayNanoseconds: UInt64 = 250_000_000
+    private static let panelDefaultSize = NSSize(width: 900, height: 900)
+    private static let panelMinimumSize = NSSize(width: 860, height: 860)
+
+    init(selfTestMode: Bool = false) {
+        self.selfTestMode = selfTestMode
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        model.onSpeechMuteStateChanged = { [weak self] in
-            self?.updateSpeechMuteMenuItem()
-        }
-        model.onSpeechPlaybackLikelyStarted = { [weak self] in
-            self?.startStatusHelper()
-        }
-        model.$summonSurface
-            .receive(on: RunLoop.main)
-            .sink { [weak self] surface in
-                self?.syncSummonSurface(surface)
-            }
-            .store(in: &cancellables)
-        registerStatusHelperNotifications()
         configureMainMenu()
         if Self.menuBarItemEnabled {
             configureStatusItem()
         }
-        configureHotKey()
-        startStatusHelper()
-        model.startWorkerMonitoring()
-        model.refresh()
-        openPanel()
+        if !selfTestMode {
+            model.onSpeechMuteStateChanged = { [weak self] in
+                self?.updateSpeechMuteMenuItem()
+            }
+            model.onSpeechPlaybackLikelyStarted = { [weak self] in
+                self?.startStatusHelper()
+            }
+            model.$summonSurface
+                .receive(on: RunLoop.main)
+                .sink { [weak self] surface in
+                    self?.syncSummonSurface(surface)
+                }
+                .store(in: &cancellables)
+            registerStatusHelperNotifications()
+            configureHotKey()
+            startStatusHelper()
+            model.startWorkerMonitoring()
+            model.refresh()
+            openPanelWindow(refreshModel: true)
+            return
+        }
+        openPanelWindow(refreshModel: false)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -387,7 +450,7 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     static func menuBarItemEnabled(environment: [String: String]) -> Bool {
-        JarvisMenuBarApp.environmentFlag("JARVIS_SHOW_MAIN_STATUS_ITEM", environment: environment) == true
+        false
     }
 
     static func speechMuteMenuTitle(muted: Bool) -> String {
@@ -478,11 +541,15 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openPanel() {
+        openPanelWindow(refreshModel: true)
+    }
+
+    private func openPanelWindow(refreshModel: Bool) {
         if panel == nil {
             let rootView = JarvisPanelView(model: model)
             let hostingController = NSHostingController(rootView: rootView)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 680, height: 720),
+                contentRect: NSRect(origin: .zero, size: Self.panelDefaultSize),
                 styleMask: [.titled, .closable, .resizable, .miniaturizable],
                 backing: .buffered,
                 defer: false
@@ -491,13 +558,18 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             window.level = .normal
             window.contentViewController = hostingController
             window.isReleasedWhenClosed = false
+            window.minSize = Self.panelMinimumSize
+            window.setContentSize(Self.panelDefaultSize)
             window.center()
             panel = window
         }
 
         panel?.makeKeyAndOrderFront(nil)
+        panel?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
-        model.refresh()
+        if refreshModel {
+            model.refresh()
+        }
     }
 
     @objc private func closeWindow() {
@@ -579,6 +651,7 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func startStatusHelper() {
+        shouldKeepStatusHelperRunning = true
         if statusHelperProcess?.isRunning == true {
             return
         }
@@ -603,6 +676,14 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Task { @MainActor in
                 if self?.statusHelperProcess === terminatedProcess {
                     self?.statusHelperProcess = nil
+                    if self?.shouldKeepStatusHelperRunning == true {
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: Self.statusHelperRestartDelayNanoseconds)
+                            if self?.shouldKeepStatusHelperRunning == true {
+                                self?.startStatusHelper()
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -615,6 +696,7 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func stopStatusHelper() {
+        shouldKeepStatusHelperRunning = false
         guard let process = statusHelperProcess else {
             return
         }
@@ -645,6 +727,47 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func handleStatusHelperQuit(_ notification: Notification) {
         quit()
+    }
+
+    fileprivate func debugOpenPanelForSelfTest() {
+        openPanelWindow(refreshModel: false)
+    }
+
+    fileprivate func debugStartStatusHelperForSelfTest() {
+        startStatusHelper()
+    }
+
+    fileprivate func debugRefreshModelForSelfTest() {
+        model.refresh()
+    }
+
+    fileprivate func debugWindowSnapshot(label: String) -> [String: Any] {
+        let windows = NSApp.windows
+        return [
+            "activation_policy": NSApp.activationPolicy().rawValue,
+            "is_active": NSApp.isActive,
+            "label": label,
+            "panel_exists": panel != nil,
+            "panel_is_visible": panel?.isVisible ?? false,
+            "panel_title": panel?.title ?? "",
+            "session_locked": Self.sessionScreenIsLocked(),
+            "window_count": windows.count,
+            "window_titles": windows.map(\.title),
+            "window_visibility": windows.map(\.isVisible),
+        ]
+    }
+
+    private static func sessionScreenIsLocked() -> Bool {
+        guard let info = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+            return false
+        }
+        if let locked = info["CGSSessionScreenIsLocked"] as? Bool {
+            return locked
+        }
+        if let lockedNumber = info["CGSSessionScreenIsLocked"] as? NSNumber {
+            return lockedNumber.intValue != 0
+        }
+        return false
     }
 }
 

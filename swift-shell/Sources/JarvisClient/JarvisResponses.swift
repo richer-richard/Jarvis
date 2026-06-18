@@ -20,6 +20,14 @@ public struct SpeechStatusResponse: Decodable, Sendable {
     public let speech: JSONValue?
 }
 
+public struct StreamStatusEvent: Decodable, Sendable {
+    public let text: String
+    public let tool: String?
+    public let kind: String?
+    public let replaceStreamingPreview: Bool?
+    public let speech: JSONValue?
+}
+
 public struct SpeechMuteResponse: Decodable, Sendable {
     public let tool: String?
     public let status: String?
@@ -28,6 +36,12 @@ public struct SpeechMuteResponse: Decodable, Sendable {
     public let previousMuted: Bool?
     public let activeSpeech: Bool?
     public let interruptedPrevious: Bool?
+    public let automaticTtsEnabled: Bool?
+    public let statusSpeechEnabled: Bool?
+    public let ttsProvider: String?
+    public let ttsAvailable: Bool?
+    public let automaticSpeechAvailable: Bool?
+    public let ttsUnavailableReason: String?
     public let reply: String?
 }
 

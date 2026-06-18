@@ -16,8 +16,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from jarvis.wake import DEFAULT_WAKE_THRESHOLD, score_wake_transcript
+from scripts.render_overnight_status import normalize_base_url
+from scripts.report_refresh import refresh_report_surfaces_quietly
 
 REPORT_DIR = PROJECT_ROOT / "runtime" / "wake_threshold"
+DEFAULT_BASE_URL = "http://127.0.0.1:8765"
 
 WAKE_CASES = [
     {"label": "exact hey jarvis", "transcript": "hey jarvis status", "detected": True, "command": "status"},
@@ -35,9 +38,16 @@ WAKE_CASES = [
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--threshold", type=float, default=DEFAULT_WAKE_THRESHOLD)
     parser.add_argument("--no-report", action="store_true")
+    parser.add_argument("--no-refresh-report", action="store_true")
     args = parser.parse_args()
+    try:
+        base_url = normalize_base_url(args.base_url)
+    except ValueError as error:
+        print(f"Refused unsafe base URL: {error}", file=sys.stderr)
+        return 2
 
     report = run_wake_threshold_smoke(threshold=args.threshold)
     if not args.no_report:
@@ -45,9 +55,15 @@ def main() -> int:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         json_path = REPORT_DIR / f"wake-threshold-{stamp}.json"
         md_path = REPORT_DIR / f"wake-threshold-{stamp}.md"
+        latest_json_path = REPORT_DIR / "latest.json"
+        latest_md_path = REPORT_DIR / "latest.md"
         json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         md_path.write_text(render_markdown(report), encoding="utf-8")
+        latest_json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        latest_md_path.write_text(render_markdown(report), encoding="utf-8")
         print(f"Report: {md_path}")
+        if not args.no_refresh_report:
+            refresh_report_surfaces_quietly(base_url)
     summary = report["summary"]
     print(
         f"status={summary['status']} cases={summary['passed']}/{summary['total']} "

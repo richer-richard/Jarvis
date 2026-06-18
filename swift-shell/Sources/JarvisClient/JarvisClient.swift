@@ -9,6 +9,7 @@ public struct JarvisClient: Sendable {
     private static let commandTimeout: TimeInterval = 240
     private static let planTimeout: TimeInterval = 20
     private static let quickTimeout: TimeInterval = 10
+    private static let readinessTimeout: TimeInterval = 20
     private static let nativeOCRTimeout: TimeInterval = 30
 
     public init(baseURL: URL) {
@@ -30,6 +31,9 @@ public struct JarvisClient: Sendable {
                 throw JarvisClientError.invalidURL(urlString)
             }
             let url = normalizedURL(rawURL)
+            guard isLoopbackURL(url) else {
+                throw JarvisClientError.nonLoopbackURL(url.absoluteString)
+            }
             if isCommandEndpoint(url) {
                 return JarvisClient(commandURL: url)
             }
@@ -40,6 +44,9 @@ public struct JarvisClient: Sendable {
             throw JarvisClientError.invalidURL(baseURLString)
         }
         let baseURL = normalizedURL(rawBaseURL)
+        guard isLoopbackURL(baseURL) else {
+            throw JarvisClientError.nonLoopbackURL(baseURL.absoluteString)
+        }
         if isCommandEndpoint(baseURL) {
             return JarvisClient(commandURL: baseURL)
         }
@@ -58,6 +65,14 @@ public struct JarvisClient: Sendable {
         url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).hasSuffix("api/command")
     }
 
+    public static func isLoopbackURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "http",
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+
     public func send(command: String, history: [[String: String]] = []) async throws -> CommandResponse {
         var request = URLRequest(url: commandURL)
         request.httpMethod = "POST"
@@ -70,7 +85,7 @@ public struct JarvisClient: Sendable {
     public func sendStreaming(
         command: String,
         history: [[String: String]] = [],
-        onStatus: @escaping @MainActor (String) -> Void = { _ in },
+        onStatus: @escaping @MainActor (StreamStatusEvent) -> Void = { _ in },
         onDelta: @escaping @MainActor (String) -> Void
     ) async throws -> CommandResponse {
         let url = baseURL
@@ -112,10 +127,21 @@ public struct JarvisClient: Sendable {
                     await onDelta(text)
                 }
             } else if eventName == "status" {
-                if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let text = object["text"] as? String,
-                   !text.isEmpty {
-                    await onStatus(text)
+                if let status = try? decoder.decode(StreamStatusEvent.self, from: data),
+                   !status.text.isEmpty {
+                    await onStatus(status)
+                } else if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let text = object["text"] as? String,
+                          !text.isEmpty {
+                    await onStatus(
+                        StreamStatusEvent(
+                            text: text,
+                            tool: object["tool"] as? String,
+                            kind: object["kind"] as? String,
+                            replaceStreamingPreview: object["replaceStreamingPreview"] as? Bool,
+                            speech: nil
+                        )
+                    )
                 }
             } else if eventName == "final" {
                 finalResponse = try decoder.decode(CommandResponse.self, from: data)
@@ -214,11 +240,11 @@ public struct JarvisClient: Sendable {
     }
 
     public func readiness() async throws -> ReadinessResponse {
-        try await get(["api", "readiness"], as: ReadinessResponse.self)
+        try await get(["api", "readiness"], timeout: Self.readinessTimeout, as: ReadinessResponse.self)
     }
 
     public func preflight() async throws -> PreflightResponse {
-        try await get(["api", "preflight"], as: PreflightResponse.self)
+        try await get(["api", "preflight"], timeout: Self.readinessTimeout, as: PreflightResponse.self)
     }
 
     public func codexActivity() async throws -> CodexActivityResponse {
@@ -292,6 +318,30 @@ public struct JarvisClient: Sendable {
         return try await perform(request, as: CommandResponse.self)
     }
 
+    public func readChromeActivePage(
+        command: String,
+        maxChars: Int = 6000,
+        suppressSpeech: Bool = false
+    ) async throws -> CommandResponse {
+        let url = baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("browser")
+            .appendingPathComponent("read-page")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = Self.nativeOCRTimeout
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "command": command,
+                "max_chars": max(1, maxChars),
+                "suppress_speech": suppressSpeech,
+            ],
+            options: []
+        )
+        return try await perform(request, as: CommandResponse.self)
+    }
+
     public func speakStatus(_ text: String) async throws -> SpeechStatusResponse {
         let url = baseURL
             .appendingPathComponent("api")
@@ -328,12 +378,12 @@ public struct JarvisClient: Sendable {
         return try await perform(request, as: SpeechMuteResponse.self)
     }
 
-    private func get<T: Decodable>(_ path: [String], as type: T.Type) async throws -> T {
+    private func get<T: Decodable>(_ path: [String], timeout: TimeInterval = Self.quickTimeout, as type: T.Type) async throws -> T {
         let url = path.reduce(baseURL) { partial, component in
             partial.appendingPathComponent(component)
         }
         var request = URLRequest(url: url)
-        request.timeoutInterval = Self.quickTimeout
+        request.timeoutInterval = timeout
         return try await perform(request, as: type)
     }
 
@@ -400,7 +450,7 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
         self.windowTitle = windowTitle
     }
 
-    var jsonObject: [String: Any] {
+    public var jsonObject: [String: Any] {
         var value: [String: Any] = [
             "source": source,
             "ocr_engine": ocrEngine,
@@ -435,6 +485,7 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
 
 public enum JarvisClientError: Error, CustomStringConvertible {
     case invalidURL(String)
+    case nonLoopbackURL(String)
     case missingResponse
     case streamMissingFinal
     case httpStatus(Int, String)
@@ -443,6 +494,8 @@ public enum JarvisClientError: Error, CustomStringConvertible {
         switch self {
         case .invalidURL(let value):
             return "Invalid URL: \(value)"
+        case .nonLoopbackURL(let value):
+            return "Jarvis client only talks to loopback workers: \(value)"
         case .missingResponse:
             return "Missing HTTP response."
         case .streamMissingFinal:

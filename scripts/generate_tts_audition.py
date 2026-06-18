@@ -128,7 +128,12 @@ def edge_command(output_dir: Path) -> Path | None:
     return Path(found) if found else None
 
 
-def candidate_pool(output_dir: Path, max_samples: int | None) -> tuple[list[Candidate], list[dict[str, Any]]]:
+def candidate_pool(
+    output_dir: Path,
+    max_samples: int | None,
+    *,
+    include_online_voices: bool = False,
+) -> tuple[list[Candidate], list[dict[str, Any]]]:
     unavailable: list[dict[str, Any]] = []
     macos_names = available_macos_voice_names()
     candidates: list[Candidate] = []
@@ -141,7 +146,10 @@ def candidate_pool(output_dir: Path, max_samples: int | None) -> tuple[list[Cand
     else:
         unavailable.append({"provider": "macos_say", "voice": "*", "reason": "macOS say is unavailable or did not list voices"})
 
-    if edge_command(output_dir):
+    if not include_online_voices:
+        for candidate in EDGE_CANDIDATES:
+            unavailable.append({"provider": candidate.provider, "voice": candidate.voice, "reason": "online voices require --include-online-voices"})
+    elif edge_command(output_dir):
         candidates.extend(EDGE_CANDIDATES)
     else:
         for candidate in EDGE_CANDIDATES:
@@ -1216,7 +1224,17 @@ def html_page(samples: list[dict[str, Any]], sample_text: str, generated_at: str
     )
 
 
-def generate(output_dir: Path, text: str, max_samples: int | None) -> dict[str, Any]:
+def generate(
+    output_dir: Path,
+    text: str,
+    max_samples: int | None,
+    *,
+    include_online_voices: bool = False,
+    allow_external_output_dir: bool = False,
+) -> dict[str, Any]:
+    output_dir = output_dir.resolve()
+    if not allow_external_output_dir and not is_project_relative(output_dir):
+        raise ValueError("output_dir must stay inside the Jarvis project unless allow_external_output_dir is True")
     output_dir.mkdir(parents=True, exist_ok=True)
     samples_dir = output_dir / "samples"
     if samples_dir.exists():
@@ -1224,7 +1242,7 @@ def generate(output_dir: Path, text: str, max_samples: int | None) -> dict[str, 
             old_file.unlink()
     samples_dir.mkdir(parents=True, exist_ok=True)
 
-    candidates, unavailable = candidate_pool(output_dir, max_samples)
+    candidates, unavailable = candidate_pool(output_dir, max_samples, include_online_voices=include_online_voices)
     generated_at = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     generated: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -1275,6 +1293,7 @@ def generate(output_dir: Path, text: str, max_samples: int | None) -> dict[str, 
         "sample_text": text,
         "seed": SEED,
         "sample_count": len(generated),
+        "include_online_voices": include_online_voices,
         "samples": generated,
         "failures": failures,
         "unavailable": unavailable,
@@ -1299,14 +1318,33 @@ def generate(output_dir: Path, text: str, max_samples: int | None) -> dict[str, 
     return report
 
 
+def is_project_relative(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(PROJECT_ROOT)
+    except ValueError:
+        return False
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate numbered TTS samples and a ranking HTML page.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--text", default=DEFAULT_SAMPLE_TEXT)
     parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument("--include-online-voices", action="store_true", help="Also try online Edge TTS voices.")
+    parser.add_argument("--allow-external-output-dir", action="store_true", help="Allow writing/cleaning samples outside this Jarvis project.")
     args = parser.parse_args()
+    output_dir = args.output_dir.resolve()
+    if not args.allow_external_output_dir and not is_project_relative(output_dir):
+        parser.error("--output-dir must stay inside the Jarvis project unless --allow-external-output-dir is set")
 
-    report = generate(args.output_dir.resolve(), args.text, args.max_samples)
+    report = generate(
+        output_dir,
+        args.text,
+        args.max_samples,
+        include_online_voices=args.include_online_voices,
+        allow_external_output_dir=args.allow_external_output_dir,
+    )
     print(f"Generated {report['sample_count']} samples")
     print(args.output_dir.resolve() / "index.html")
     if report["failures"]:

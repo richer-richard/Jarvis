@@ -34,6 +34,7 @@ from .planner import NATURAL_LANGUAGE_TOOL_SPECS, Planner, email_request_status_
 from .safety import classify_command, policy_summary
 from .self_check import run_self_checks
 from .tools import (
+    browser_read_page,
     cleanup_background_audio,
     codex_activity_snapshot,
     localos_music_pending_control,
@@ -59,6 +60,12 @@ OVERNIGHT_STATUS_DIR = PROJECT_ROOT / "runtime" / "overnight_status"
 MAX_VERIFICATION_AGE_SECONDS = 12 * 60 * 60
 MAX_WAKE_SAMPLE_BYTES = 8 * 1024 * 1024
 MAX_LOCALOS_MUSIC_SNAPSHOT_BYTES = 256 * 1024
+STATUS_ROUTE_CACHE_TTL_SECONDS = 2.0
+SYSTEM_STATUS_CACHE_TTL_SECONDS = 1.0
+LOCALOS_MUSIC_CORS_PATHS = {
+    "/api/integrations/localos/music/control",
+    "/api/integrations/localos/music/snapshot",
+}
 
 
 class JarvisServer:
@@ -71,6 +78,12 @@ class JarvisServer:
         )
         self.mode_updated_at = time.time()
         self._mode_lock = threading.RLock()
+        self._system_status_cache_ttl_seconds = SYSTEM_STATUS_CACHE_TTL_SECONDS
+        self._system_status_cache: dict[str, Any] | None = None
+        self._system_status_cache_lock = threading.RLock()
+        self._status_route_cache_ttl_seconds = STATUS_ROUTE_CACHE_TTL_SECONDS
+        self._status_route_cache: dict[str, Any] | None = None
+        self._status_route_cache_lock = threading.RLock()
         self.tts_prewarm = prewarm_tts_async(reason="server_startup")
 
     def command(
@@ -80,6 +93,7 @@ class JarvisServer:
         *,
         suppress_speech: bool = False,
         suppress_audio_actions: bool = False,
+        defer_final_speech: bool = False,
     ) -> dict[str, Any]:
         audio_token = set_audio_actions_suppressed(suppress_audio_actions)
         try:
@@ -104,7 +118,10 @@ class JarvisServer:
                     },
                 )
                 data["audit_event_id"] = event.id
-                _attach_auto_speech(data, reason="final", suppress=suppress_speech)
+                if defer_final_speech:
+                    _attach_stream_final_speech(data, suppress=suppress_speech)
+                else:
+                    _attach_auto_speech(data, reason="final", suppress=suppress_speech)
                 return data
 
             planned = self.planner.handle(command, history=history, use_model_router=True)
@@ -124,7 +141,10 @@ class JarvisServer:
                 },
             )
             data["audit_event_id"] = event.id
-            _attach_auto_speech(data, reason="final", suppress=suppress_speech)
+            if defer_final_speech:
+                _attach_stream_final_speech(data, suppress=suppress_speech)
+            else:
+                _attach_auto_speech(data, reason="final", suppress=suppress_speech)
             return data
         finally:
             reset_audio_actions_suppressed(audio_token)
@@ -165,6 +185,7 @@ class JarvisServer:
                     command,
                     suppress_speech=suppress_speech,
                     suppress_audio_actions=suppress_audio_actions,
+                    defer_final_speech=True,
                 ),
             }
             return
@@ -173,6 +194,18 @@ class JarvisServer:
         if preview.get("tool") != "conversation.fast_local":
             status_text = _stream_status_text(preview)
             preview_tool = str(preview.get("tool") or "")
+            preview_result = preview.get("result") if isinstance(preview.get("result"), dict) else {}
+            preview_plan = preview_result.get("plan") if isinstance(preview_result.get("plan"), dict) else {}
+            preview_action = str(preview_plan.get("action") or preview_result.get("action") or "")
+            preview_reply = str(preview_plan.get("reply") or preview_result.get("reply") or "").strip()
+            if preview_tool == "quick.local_control" and preview_action in {
+                "conversation.greeting",
+                "conversation.acknowledgement",
+            } and preview_reply:
+                yield {
+                    "event": "delta",
+                    "data": {"text": preview_reply},
+                }
             if status_text and preview_tool != "quick.local_control":
                 if preview_tool == "voice.stop_speaking":
                     speech = {"spoken": False, "status": "suppressed_for_stop_speaking", "reason": "status"}
@@ -185,6 +218,8 @@ class JarvisServer:
                     "data": {
                         "text": status_text,
                         "tool": preview_tool,
+                        "kind": "preview",
+                        "replace_streaming_preview": False,
                         "speech": speech,
                     },
                 }
@@ -195,6 +230,7 @@ class JarvisServer:
                     history=history,
                     suppress_speech=suppress_speech,
                     suppress_audio_actions=suppress_audio_actions,
+                    defer_final_speech=True,
                 ),
             }
             return
@@ -240,6 +276,8 @@ class JarvisServer:
                     "data": {
                         "text": status_text,
                         "tool": selected_tool,
+                        "kind": "tool_request",
+                        "replace_streaming_preview": True,
                         "speech": speech,
                     },
                 }
@@ -261,13 +299,13 @@ class JarvisServer:
                     "confirmation": None,
                 }
                 data["audit_event_id"] = self._record_command_result(data).id
-                _attach_auto_speech(data, reason="final", suppress=suppress_speech)
+                _attach_stream_final_speech(data, suppress=suppress_speech)
                 yield {"event": "final", "data": data}
                 return
             data = planned.to_dict()
             event = self._record_command_result(data)
             data["audit_event_id"] = event.id
-            _attach_auto_speech(data, reason="final", suppress=suppress_speech)
+            _attach_stream_final_speech(data, suppress=suppress_speech)
             yield {"event": "final", "data": data}
             return
 
@@ -292,7 +330,7 @@ class JarvisServer:
         }
         event = self._record_command_result(data)
         data["audit_event_id"] = event.id
-        _attach_auto_speech(data, reason="final", suppress=suppress_speech)
+        _attach_stream_final_speech(data, suppress=suppress_speech)
         yield {"event": "final", "data": data}
 
     def _record_command_result(self, data: dict[str, Any]):
@@ -393,6 +431,7 @@ class JarvisServer:
         command: str,
         text: str,
         diagnostics: dict[str, Any] | None = None,
+        suppress_speech: bool = False,
     ) -> dict[str, Any]:
         with self._mode_lock:
             is_paused = self.paused
@@ -461,7 +500,84 @@ class JarvisServer:
             },
         )
         data["audit_event_id"] = event.id
-        _attach_auto_speech(data, reason="final", suppress=False)
+        _attach_auto_speech(data, reason="final", suppress=suppress_speech)
+        return data
+
+    def native_browser_read_page(
+        self,
+        *,
+        command: str,
+        max_chars: int | None = None,
+        suppress_speech: bool = False,
+    ) -> dict[str, Any]:
+        with self._mode_lock:
+            is_paused = self.paused
+        assessment = classify_command(command).to_dict()
+        if is_paused:
+            assessment["decision"] = "paused"
+            assessment["reasons"] = [*assessment.get("reasons", []), "Jarvis command execution is paused."]
+            data = self._paused_result(command, assessment)
+        elif assessment.get("blocked"):
+            data = {
+                "command": command,
+                "tool": "policy.block",
+                "summary": "Command blocked by safety policy.",
+                "assessment": assessment,
+                "result": {},
+                "executed": False,
+                "confirmation": None,
+            }
+        elif assessment.get("requires_typed_confirmation"):
+            data = {
+                "command": command,
+                "tool": "policy.strong_confirmation",
+                "summary": "Command requires strong confirmation and was not executed.",
+                "assessment": assessment,
+                "result": {"next_step": "Show a typed confirmation prompt in the Jarvis UI."},
+                "executed": False,
+                "confirmation": None,
+            }
+        elif assessment.get("requires_confirmation"):
+            data = {
+                "command": command,
+                "tool": "policy.confirmation",
+                "summary": "Command requires confirmation and was not executed.",
+                "assessment": assessment,
+                "result": {"next_step": "Show a confirmation prompt in the Jarvis UI."},
+                "executed": False,
+                "confirmation": None,
+            }
+        else:
+            result = browser_read_page(max_chars=max_chars, command=command)
+            data = {
+                "command": command,
+                "tool": "browser.read_page",
+                "summary": (
+                    "Read current Chrome page text locally."
+                    if result.get("status") == "read"
+                    else "Tried reading current Chrome page text locally."
+                ),
+                "assessment": assessment,
+                "result": result,
+                "executed": True,
+                "confirmation": None,
+            }
+
+        event = self.audit.record(
+            command=command,
+            risk_level=int(data["assessment"]["risk_level"]),
+            risk_label=str(data["assessment"]["risk_label"]),
+            tool=data["tool"],
+            decision=str(data["assessment"]["decision"]),
+            summary=data["summary"],
+            details={
+                "executed": data["executed"],
+                "result": _audit_safe_result(data["tool"], data["result"]),
+                "confirmation": data.get("confirmation"),
+            },
+        )
+        data["audit_event_id"] = event.id
+        _attach_auto_speech(data, reason="final", suppress=suppress_speech)
         return data
 
     def speak_status(self, text: str) -> dict[str, Any]:
@@ -515,13 +631,78 @@ class JarvisServer:
                 ],
             }
 
-    def readiness(self) -> dict[str, Any]:
-        status = system_status()
-        mode = self.mode()
-        audit_status = self.audit.status()
-        registry = tool_registry()
-        self_check = run_self_checks()
+    def health(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "status": self._cached_system_status(),
+            "mode": self.mode(),
+        }
 
+    def _cached_system_status(self) -> dict[str, Any]:
+        with self._system_status_cache_lock:
+            now = time.time()
+            cache = self._system_status_cache
+            if cache and now - float(cache["generated_at"]) <= self._system_status_cache_ttl_seconds:
+                return cache["status"]
+            status = system_status()
+            self._system_status_cache = {"generated_at": now, "status": status}
+            return status
+
+    def readiness(self) -> dict[str, Any]:
+        return self._cached_status_routes()["readiness"]
+
+    def preflight(self) -> dict[str, Any]:
+        return self._cached_status_routes()["preflight"]
+
+    def _cached_status_routes(self) -> dict[str, Any]:
+        with self._status_route_cache_lock:
+            now = time.time()
+            cache = self._status_route_cache
+            if cache and now - float(cache["generated_at"]) <= self._status_route_cache_ttl_seconds:
+                return cache
+
+            status = self._cached_system_status()
+            mode = self.mode()
+            audit_status = self.audit.status()
+            registry = tool_registry()
+            self_check = run_self_checks()
+            verification = _latest_verification_summary()
+            policy = policy_summary()
+
+            readiness = self._build_readiness_payload(
+                status=status,
+                mode=mode,
+                audit_status=audit_status,
+                registry=registry,
+                self_check=self_check,
+                verification=verification,
+                generated_at=now,
+            )
+            preflight = self._build_preflight_payload(
+                readiness=readiness,
+                status=status,
+                registry=registry,
+                policy=policy,
+                generated_at=now,
+            )
+            self._status_route_cache = {
+                "generated_at": now,
+                "readiness": readiness,
+                "preflight": preflight,
+            }
+            return self._status_route_cache
+
+    def _build_readiness_payload(
+        self,
+        *,
+        status: dict[str, Any],
+        mode: dict[str, Any],
+        audit_status: dict[str, Any],
+        registry: dict[str, Any],
+        self_check: dict[str, Any],
+        verification: dict[str, Any],
+        generated_at: float,
+    ) -> dict[str, Any]:
         tools = registry["tools"]
         unavailable_tools = [tool for tool in tools if not tool.get("available")]
         unavailable_tool_ids = [tool["id"] for tool in unavailable_tools]
@@ -550,7 +731,7 @@ class JarvisServer:
 
         return {
             "ok": bool(self_check["ok"] and not audit_status.get("unreadable_lines")),
-            "generated_at": time.time(),
+            "generated_at": generated_at,
             "mode": mode,
             "worker": {
                 "project_root": status["project_root"],
@@ -574,15 +755,19 @@ class JarvisServer:
                 "failed": failed_checks,
             },
             "audit": audit_status,
-            "verification": _latest_verification_summary(),
+            "verification": verification,
             "notes": notes,
         }
 
-    def preflight(self) -> dict[str, Any]:
-        readiness = self.readiness()
-        status = system_status()
-        registry = tool_registry()
-        policy = policy_summary()
+    def _build_preflight_payload(
+        self,
+        *,
+        readiness: dict[str, Any],
+        status: dict[str, Any],
+        registry: dict[str, Any],
+        policy: dict[str, Any],
+        generated_at: float,
+    ) -> dict[str, Any]:
         tool_ids = {tool["id"] for tool in registry["tools"]}
         required_tools = {
             "planner.preview",
@@ -713,7 +898,7 @@ class JarvisServer:
 
         return {
             "ok": ok,
-            "generated_at": time.time(),
+            "generated_at": generated_at,
             "mode": readiness["mode"],
             "summary": summary,
             "checks": checks,
@@ -747,6 +932,8 @@ class JarvisServer:
             "Command execution is paused." if paused else "Command execution is enabled."
         )
         self.mode_updated_at = time.time()
+        with self._status_route_cache_lock:
+            self._status_route_cache = None
         return self.mode()
 
     def _paused_result(self, command: str, assessment: dict[str, Any]) -> dict[str, Any]:
@@ -904,6 +1091,28 @@ def _attach_auto_speech(data: dict[str, Any], *, reason: str, suppress: bool = F
         data["speech"] = speech
 
 
+def _deferred_follow_up_speech_result(*, reason: str) -> dict[str, Any]:
+    return {
+        "spoken": False,
+        "status": "deferred_to_follow_up",
+        "reason": reason,
+    }
+
+
+def _stream_should_defer_final_speech(data: dict[str, Any]) -> bool:
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return False
+    return result.get("defer_stream_final_speech") is True
+
+
+def _attach_stream_final_speech(data: dict[str, Any], *, suppress: bool = False) -> None:
+    if _stream_should_defer_final_speech(data):
+        data["speech"] = _deferred_follow_up_speech_result(reason="final")
+        return
+    _attach_auto_speech(data, reason="final", suppress=suppress)
+
+
 def _suppressed_speech_result(*, reason: str, text: str = "") -> dict[str, Any]:
     result = {
         "spoken": False,
@@ -915,6 +1124,7 @@ def _suppressed_speech_result(*, reason: str, text: str = "") -> dict[str, Any]:
         result.update(
             {
                 "text_preview": sanitized,
+                "spoken_text": sanitized,
                 "text_length": len(sanitized),
             }
         )
@@ -940,15 +1150,29 @@ def _should_auto_speak(data: dict[str, Any]) -> bool:
 
 
 def _speech_text_from_result(result: dict[str, Any]) -> str:
-    for key in ("spoken_summary", "reply", "email_summary"):
+    for key in ("spoken_summary", "email_summary", "reply"):
         value = result.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            sanitized = _sanitize_spoken_text(value)
+            if sanitized:
+                return value.strip()
     return ""
 
 
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "JarvisPrototype/0.1"
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        if not self._host_header_allowed():
+            self._send_json({"error": "Host header must be loopback"}, status=HTTPStatus.FORBIDDEN)
+            return
+        route = urlparse(self.path)
+        if route.path in LOCALOS_MUSIC_CORS_PATHS:
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self._send_common_headers(cors=True)
+            self.end_headers()
+            return
+        self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_GET(self) -> None:  # noqa: N802
         self._handle_read_request(head_only=False)
@@ -977,7 +1201,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_file(STATIC_DIR / route.path.removeprefix("/static/"), head_only=head_only)
             return
         if route.path == "/api/health":
-            self._send_json({"ok": True, "status": system_status(), "mode": STATE.mode()}, head_only=head_only)
+            self._send_json(STATE.health(), head_only=head_only)
             return
         if route.path == "/api/mode":
             self._send_json(STATE.mode(), head_only=head_only)
@@ -1089,6 +1313,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 command = str(payload.get("command", "read the visible screen"))
                 text = str(payload.get("text", ""))
                 diagnostics = payload.get("diagnostics", {})
+                suppress_speech = payload.get("suppress_speech") is True or payload.get("speak") is False
                 if not isinstance(diagnostics, dict):
                     diagnostics = {}
             except RequestBodyTooLarge:
@@ -1105,6 +1330,31 @@ class RequestHandler(BaseHTTPRequestHandler):
                     command=command,
                     text=text[:12000],
                     diagnostics=diagnostics,
+                    suppress_speech=suppress_speech,
+                )
+            )
+            return
+        if route.path == "/api/browser/read-page":
+            try:
+                payload = self._read_json_payload()
+                command = str(payload.get("command", "read the current Chrome page"))
+                raw_max_chars = payload.get("max_chars")
+                suppress_speech = payload.get("suppress_speech") is True or payload.get("speak") is False
+                max_chars = int(raw_max_chars) if raw_max_chars not in (None, "") else None
+            except RequestBodyTooLarge:
+                self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return
+            except UnsupportedContentType:
+                self._send_json({"error": "Content-Type must be application/json"}, status=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+                return
+            except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._send_json({"error": f"Invalid JSON: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(
+                STATE.native_browser_read_page(
+                    command=command,
+                    max_chars=max_chars,
+                    suppress_speech=suppress_speech,
                 )
             )
             return
@@ -1316,6 +1566,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         if cors:
             self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; "
@@ -1559,7 +1812,7 @@ def _conversation_history_from_payload(payload: dict[str, Any], *, current_comma
         text = " ".join(str(raw_text or "").split())
         if role == "jarvis":
             role = "assistant"
-        if role not in {"user", "assistant", "system"} or not text:
+        if role not in {"user", "assistant"} or not text:
             continue
         if role == "user" and text == current_clean:
             continue

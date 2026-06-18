@@ -61,11 +61,18 @@ struct JarvisBrowserPanelView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Text(browser.isLoading ? "Loading" : model.browserStatusText)
+                Text(model.browserStatusText)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if browser.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 if model.browserAuthenticatedLane {
                     Text("Chrome Handoff")
                         .font(.caption2.weight(.semibold))
@@ -74,6 +81,13 @@ struct JarvisBrowserPanelView: View {
                         .padding(.vertical, 3)
                         .background(.blue.opacity(0.12), in: Capsule())
                 }
+            }
+            if !model.browserHintText.isEmpty {
+                Text(model.browserHintText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             JarvisWebView(targetURL: model.browserTargetURL, controller: browser)

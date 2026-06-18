@@ -19,7 +19,7 @@ struct JarvisPanelView: View {
             readinessFooter
         }
         .padding(18)
-        .frame(minWidth: 760, minHeight: model.isBrowserVisible ? 900 : 760)
+        .frame(minWidth: 860, minHeight: model.isBrowserVisible ? 980 : 860)
         .task {
             model.refresh()
         }
@@ -48,6 +48,8 @@ struct JarvisPanelView: View {
                 StatusChip(label: model.connection)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var chatSection: some View {
@@ -61,7 +63,7 @@ struct JarvisPanelView: View {
                 }
                 .padding(.vertical, 6)
             }
-            .frame(minHeight: 340)
+            .frame(minHeight: 280)
             .onChange(of: model.messages.count) { _, _ in
                 guard let last = model.messages.last else {
                     return
@@ -181,7 +183,10 @@ struct JarvisPanelView: View {
     }
 
     private var readinessFooter: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let pendingPermissionLabels = model.permissions
+            .filter { !$0.isReady }
+            .map(\.label)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
                 Button(model.isPaused ? "Resume" : "Pause") {
                     model.togglePause()
@@ -210,7 +215,17 @@ struct JarvisPanelView: View {
 
                 Spacer()
 
-                StatusChip(label: model.permissionText)
+                VStack(alignment: .trailing, spacing: 2) {
+                    StatusChip(label: model.permissionText)
+                    if !pendingPermissionLabels.isEmpty {
+                        Text("Pending: \(pendingPermissionLabels.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
 
             HStack(alignment: .top, spacing: 12) {

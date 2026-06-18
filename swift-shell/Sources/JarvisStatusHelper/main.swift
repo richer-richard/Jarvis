@@ -60,6 +60,18 @@ struct JarvisStatusHelperApp {
             fputs("Jarvis status helper self-test failed: audio unmute title changed.\n", stderr)
             Foundation.exit(1)
         }
+        guard !JarvisStatusHelperDelegate.shouldOpenStatusMenu(eventType: .leftMouseUp, modifierFlags: []) else {
+            fputs("Jarvis status helper self-test failed: left-click should open the Jarvis window.\n", stderr)
+            Foundation.exit(1)
+        }
+        guard JarvisStatusHelperDelegate.shouldOpenStatusMenu(eventType: .rightMouseUp, modifierFlags: []) else {
+            fputs("Jarvis status helper self-test failed: right-click should open the emergency menu.\n", stderr)
+            Foundation.exit(1)
+        }
+        guard JarvisStatusHelperDelegate.shouldOpenStatusMenu(eventType: .leftMouseUp, modifierFlags: [.control]) else {
+            fputs("Jarvis status helper self-test failed: Control-click should open the emergency menu.\n", stderr)
+            Foundation.exit(1)
+        }
         guard MainAppNotification.openPanel.rawValue == "local.leo.jarvis.statusHelper.openPanel",
               MainAppNotification.runStatus.rawValue == "local.leo.jarvis.statusHelper.runStatus",
               MainAppNotification.toggleWakeListener.rawValue == "local.leo.jarvis.statusHelper.toggleWakeListener",
@@ -78,13 +90,14 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
     private let appBundleURL: URL?
     private let parentPID: pid_t?
     private var statusItem: NSStatusItem?
+    private var statusMenu: NSMenu?
     private var speechMuteItem: NSMenuItem?
     private var knownMuted: Bool = false
     private var parentMonitor: Timer?
 
     init(arguments: [String]) {
         let parsed = Self.parseArguments(arguments)
-        if let baseURL = parsed.baseURL {
+        if let baseURL = parsed.baseURL, JarvisClient.isLoopbackURL(baseURL) {
             client = JarvisClient(baseURL: baseURL)
         } else {
             client = (try? JarvisClient.fromEnvironment()) ?? JarvisClient(baseURL: URL(string: "http://127.0.0.1:8765")!)
@@ -130,6 +143,9 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
         item.button?.imageScaling = .scaleProportionallyDown
         item.button?.toolTip = "Jarvis"
         item.button?.setAccessibilityLabel("Jarvis")
+        item.button?.target = self
+        item.button?.action = #selector(statusItemClicked(_:))
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
         let menu = NSMenu()
         menu.delegate = self
@@ -150,12 +166,42 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
         for item in menu.items {
             item.target = self
         }
-        item.menu = menu
+        statusMenu = menu
         statusItem = item
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         refreshSpeechMuteTitle()
+    }
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        if Self.shouldOpenStatusMenu(eventType: event?.type, modifierFlags: event?.modifierFlags ?? []) {
+            showStatusMenu(from: sender)
+            return
+        }
+        openPanel()
+    }
+
+    fileprivate static func shouldOpenStatusMenu(
+        eventType: NSEvent.EventType?,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> Bool {
+        eventType == .rightMouseUp || modifierFlags.contains(.control)
+    }
+
+    private func showStatusMenu(from sender: NSStatusBarButton? = nil) {
+        guard let statusMenu else {
+            openPanel()
+            return
+        }
+        refreshSpeechMuteTitle()
+        let sourceView = sender ?? statusItem?.button
+        guard let sourceView else {
+            openPanel()
+            return
+        }
+        statusMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sourceView.bounds.height + 4), in: sourceView)
     }
 
     private func refreshSpeechMuteTitle() {

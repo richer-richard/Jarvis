@@ -103,15 +103,15 @@ struct JarvisSummonOverlayView: View {
         case .transcribing:
             return "Cleaning up the dictation."
         case .thinking:
-            return "Choosing the best route."
+            return "Finding the best way to help."
         case .answering:
-            return "Writing the response."
+            return "Preparing the answer."
         case .speaking:
             return "Reading the answer aloud."
         case .complete:
             return "Ready for the next command."
         case .error:
-            return "The debug window has details."
+            return "Check the Jarvis window for details."
         }
     }
 

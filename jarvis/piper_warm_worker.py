@@ -42,9 +42,9 @@ def _chunk_text(text: str) -> list[str]:
     clean = re.sub(r"\s+", " ", text.strip())
     if not clean:
         return []
-    first_target = 90
-    later_target = 320
-    if len(clean) <= first_target:
+    first_target = 180
+    later_target = 420
+    if len(clean) <= later_target:
         return [clean]
     pieces = re.split(r"(?<=[.!?;])\s+", clean)
     chunks: list[str] = []

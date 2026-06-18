@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Run a local closed-loop voice QA probe for Jarvis.
 
-The probe synthesizes a spoken command, transcribes that audio through the
-Jarvis.app Speech framework identity, sends the recognized command to Jarvis
-with speech muted, then synthesizes/transcribes the visible reply so the report
-can compare what was printed with what TTS would say.
+The unattended default uses local STT and per-request speech/action suppression,
+so it does not ask macOS for Apple Speech permission or make Jarvis speak while
+testing. Apple Speech is available only with explicit opt-in flags.
 """
 
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import difflib
 import json
 import os
@@ -21,12 +21,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from jarvis.wake import detect_wake_command  # noqa: E402
+from scripts.render_overnight_status import normalize_base_url  # noqa: E402
+from scripts.report_refresh import refresh_report_surfaces_quietly  # noqa: E402
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
@@ -37,11 +40,16 @@ PIPER_PYTHON = PIPER_BIN.parent / "python"
 PIPER_MODEL = PROJECT_ROOT / "runtime" / "tts_models" / "piper" / "en_US-ryan-high.onnx"
 PIPER_CONFIG = PROJECT_ROOT / "runtime" / "tts_models" / "piper" / "en_US-ryan-high.onnx.json"
 JARVIS_APP = PROJECT_ROOT / "output" / "Jarvis.app"
+VISIBLE_SCREEN_PROBE = JARVIS_APP / "Contents" / "MacOS" / "jarvis-visible-screen-probe"
+VISIBLE_SCREEN_FOLLOW_UP_RETRY_ATTEMPTS = 4
+VISIBLE_SCREEN_FOLLOW_UP_RETRY_DELAY_SECONDS = 1.6
+VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS = 1.2
+SPEECH_AUDIT_MAX_WORKERS = 2
 LOCAL_STT_ROOT = PROJECT_ROOT / "runtime" / "stt_models" / "faster_whisper"
 LOCAL_STT_PYTHON = LOCAL_STT_ROOT / ".venv" / "bin" / "python"
 LOCAL_STT_MODEL = "tiny.en"
 INTERNAL_SPEECH_LEAK_PATTERNS: list[tuple[str, str, str]] = [
-    ("hidden_tool_call", "Hidden tool call syntax", r"\\\s*tool\s*[\(\{]"),
+    ("hidden_tool_call", "Hidden tool call syntax", r"\\\s*[A-Za-z][A-Za-z0-9_.-]*\s*[\(\{]"),
     ("json_tool_key", "Raw JSON tool key", r"[\"']tool[\"']\s*:"),
     ("selected_tool", "Selected-tool field", r"\bselected[_\s-]?tool\b"),
     ("status_text", "Status-text field", r"\bstatus[_\s-]?text\b"),
@@ -54,6 +62,42 @@ INTERNAL_SPEECH_LEAK_PATTERNS: list[tuple[str, str, str]] = [
         r"\b(?:app|browser|codex|conversation|diagnostics|files|memory|outlook|quick|screen|shell|system|teams|terminal|tools|ui|voice|workflow)\.[a-z0-9_]+\b",
     ),
 ]
+
+NUMBER_WORD_VALUES: dict[str, int] = {
+    "zero": 0,
+    "oh": 0,
+    "o": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+
+TENS_WORD_VALUES: dict[str, int] = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
 NORMALIZED_INTERNAL_SPEECH_PHRASES = {
     "backslash tool": "Hidden tool call syntax",
     "selected tool": "Selected-tool field",
@@ -161,8 +205,13 @@ def main() -> int:
     parser.add_argument(
         "--stt-provider",
         choices=("auto", "apple", "local"),
-        default="auto",
-        help="auto tries Apple Speech first, apple uses only the app-bundle Speech path, local uses faster-whisper only.",
+        default="local",
+        help="local is the unattended default; auto tries Apple Speech first, and apple uses only the app-bundle Speech path.",
+    )
+    parser.add_argument(
+        "--allow-apple-speech",
+        action="store_true",
+        help="Allow the harness to use the Jarvis.app Apple Speech path if it is already authorized.",
     )
     parser.add_argument(
         "--no-permission-prompts",
@@ -173,6 +222,16 @@ def main() -> int:
         "--speech-audit-only",
         action="store_true",
         help="Skip wake-command synthesis and audit only the exact speech payloads Jarvis would produce for --command.",
+    )
+    parser.add_argument(
+        "--exercise-live-speech",
+        action="store_true",
+        help="Let Jarvis actually speak during the probe, then verify that the live playback path was exercised. This still does not capture room audio.",
+    )
+    parser.add_argument(
+        "--allow-audio-actions",
+        action="store_true",
+        help="Allow live audio/app actions such as Music playback. The default suppresses them for quiet unattended probes.",
     )
     parser.add_argument(
         "--expect-tool",
@@ -187,54 +246,91 @@ def main() -> int:
         help="Require the visible final reply to contain this text, case-insensitively. May be passed more than once.",
     )
     parser.add_argument(
+        "--expect-visible-not-contains",
+        action="append",
+        default=[],
+        help="Require the visible final reply to avoid this text, case-insensitively. May be passed more than once.",
+    )
+    parser.add_argument(
         "--expect-routed-contains",
         action="append",
         default=[],
         help="Require the STT-routed command to contain this text, case-insensitively. May be passed more than once.",
     )
+    parser.add_argument(
+        "--no-refresh-report",
+        action="store_true",
+        help="Do not refresh the master report/workboard after writing voice-loop artifacts.",
+    )
     args = parser.parse_args()
+    if args.no_permission_prompts and args.stt_provider != "local":
+        parser.error("--no-permission-prompts can only be combined with --stt-provider local")
+    if args.stt_provider in {"auto", "apple"} and not args.allow_apple_speech:
+        parser.error("--stt-provider auto/apple requires --allow-apple-speech")
+    try:
+        base_url = normalize_base_url(args.base_url)
+    except ValueError as error:
+        print(f"Refused unsafe base URL: {error}", file=sys.stderr)
+        return 2
+    no_permission_prompts = args.no_permission_prompts or args.stt_provider == "local"
 
     run_dir = allocate_run_dir(Path(args.output_dir).resolve())
 
     if args.speech_audit_only:
         report = run_speech_audit(
             command_text=args.command,
-            base_url=args.base_url.rstrip("/"),
+            base_url=base_url,
             run_dir=run_dir,
             length_scale=args.length_scale,
             timeout=args.timeout,
             stt_provider=args.stt_provider,
-            no_permission_prompts=args.no_permission_prompts,
+            no_permission_prompts=no_permission_prompts,
             expect_tools=args.expect_tool,
             expect_visible_contains=args.expect_visible_contains,
+            expect_visible_not_contains=args.expect_visible_not_contains,
             expect_routed_contains=args.expect_routed_contains,
+            exercise_live_speech=args.exercise_live_speech,
+            allow_audio_actions=args.allow_audio_actions,
         )
     else:
         report = run_voice_loop(
             command_text=args.command,
-            base_url=args.base_url.rstrip("/"),
+            base_url=base_url,
             run_dir=run_dir,
             length_scale=args.length_scale,
             timeout=args.timeout,
             stt_provider=args.stt_provider,
-            no_permission_prompts=args.no_permission_prompts,
+            no_permission_prompts=no_permission_prompts,
             expect_tools=args.expect_tool,
             expect_visible_contains=args.expect_visible_contains,
             expect_routed_contains=args.expect_routed_contains,
+            exercise_live_speech=args.exercise_live_speech,
+            allow_audio_actions=args.allow_audio_actions,
         )
 
     report_path = run_dir / "report.json"
     latest_path = Path(args.output_dir).resolve() / "latest.json"
+    latest_md_path = Path(args.output_dir).resolve() / "latest.md"
     global_latest_path = REPORT_DIR / "latest.json"
+    global_latest_md_path = REPORT_DIR / "latest.md"
+    markdown = render_markdown(report)
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    global_latest_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     latest_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    latest_md_path.write_text(markdown, encoding="utf-8")
     if latest_path != global_latest_path:
         global_latest_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    if latest_md_path != global_latest_md_path:
+        global_latest_md_path.write_text(markdown, encoding="utf-8")
+    if not args.no_refresh_report:
+        refresh_report_surfaces_quietly(base_url)
 
     result = report.get("result", {})
     print(f"Report: {report_path}")
     if args.speech_audit_only:
         audit = result.get("speech_audit") if isinstance(result.get("speech_audit"), dict) else {}
+        speech_runtime = result.get("speech_runtime") if isinstance(result.get("speech_runtime"), dict) else {}
         transcripts = [
             str(item.get("transcript") or "").strip()
             for item in audit.get("items", [])
@@ -242,16 +338,96 @@ def main() -> int:
         ]
         print(f"Speech audit status: {audit.get('status')}")
         print(f"Payloads: {audit.get('payload_count')} | Leaks: {audit.get('leak_count')}")
+        print(
+            "Speech mode: "
+            f"{speech_runtime.get('mode') or ('live_playback_exercised' if args.exercise_live_speech else 'suppressed_for_probe')}"
+        )
+        if speech_runtime:
+            print(
+                "Live playback requested: "
+                f"{speech_runtime.get('playback_requested')} | Active observed: {speech_runtime.get('active_observed')}"
+            )
         print(f"Visible reply: {result.get('visible_reply_preview')!r}")
         if transcripts:
             print(f"Speech transcript: {transcripts[-1]!r}")
     else:
+        speech_runtime = result.get("speech_runtime") if isinstance(result.get("speech_runtime"), dict) else {}
         print(f"Command transcript: {result.get('command_transcript')!r}")
         print(f"Routed command: {result.get('routed_command')!r}")
         print(f"Visible reply: {result.get('visible_reply_preview')!r}")
         print(f"Reply transcript: {result.get('reply_transcript')!r}")
         print(f"Similarity: {result.get('reply_similarity')}")
+        print(
+            "Speech mode: "
+            f"{speech_runtime.get('mode') or ('live_playback_exercised' if args.exercise_live_speech else 'suppressed_for_probe')}"
+        )
+        if speech_runtime:
+            print(
+                "Live playback requested: "
+                f"{speech_runtime.get('playback_requested')} | Active observed: {speech_runtime.get('active_observed')}"
+            )
     return 0 if result.get("status") == "passed" else 1
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    """Render a compact human-readable summary for the latest voice-loop probe."""
+    result = report.get("result") if isinstance(report.get("result"), dict) else {}
+    input_data = report.get("input") if isinstance(report.get("input"), dict) else {}
+    status = str(result.get("status") or "unknown")
+    mode = "speech audit" if input_data.get("speech_audit_only") else "closed loop"
+    speech_runtime = result.get("speech_runtime") if isinstance(result.get("speech_runtime"), dict) else {}
+    speech_mode = str(
+        speech_runtime.get("mode")
+        or ("live_playback_exercised" if input_data.get("exercise_live_speech") else "suppressed_for_probe")
+    )
+    lines = [
+        "# Latest Jarvis Voice Loop QA",
+        "",
+        f"- Status: {status}",
+        f"- Mode: {mode}",
+        f"- Speech mode: {speech_mode}",
+        f"- Command: {str(input_data.get('command_text') or '').strip() or '(none)'}",
+        f"- STT provider: {str(input_data.get('stt_provider') or 'local')}",
+    ]
+    if speech_runtime:
+        lines.extend(
+            [
+                f"- Live playback requested: {bool(speech_runtime.get('playback_requested'))}",
+                f"- Active speech observed: {bool(speech_runtime.get('active_observed'))}",
+            ]
+        )
+    if input_data.get("speech_audit_only"):
+        audit = result.get("speech_audit") if isinstance(result.get("speech_audit"), dict) else {}
+        lines.extend(
+            [
+                f"- Tool: {str(result.get('command_response_tool') or '')}",
+                f"- Final visible tool: {str(result.get('final_visible_tool') or '')}",
+                f"- Spoken payloads: {int(audit.get('payload_count') or 0)}",
+                f"- Speech leaks: {int(audit.get('leak_count') or 0)}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- Command transcript: {str(result.get('command_transcript') or '')}",
+                f"- Routed command: {str(result.get('routed_command') or '')}",
+                f"- Visible reply: {str(result.get('visible_reply_preview') or '')}",
+                f"- Reply transcript: {str(result.get('reply_transcript') or '')}",
+                f"- Reply similarity: {float(result.get('reply_similarity') or 0.0):.3f}",
+            ]
+        )
+    visible_screen_follow_up = (
+        result.get("visible_screen_follow_up")
+        if isinstance(result.get("visible_screen_follow_up"), dict)
+        else {}
+    )
+    if visible_screen_follow_up.get("attempted") or visible_screen_follow_up.get("used"):
+        lines.append(
+            "- Visible-screen follow-up: "
+            f"{str(visible_screen_follow_up.get('status') or 'unknown')}"
+            f" via {str(visible_screen_follow_up.get('tool') or 'n/a')}"
+        )
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def allocate_run_dir(output_dir: Path) -> Path:
@@ -281,8 +457,12 @@ def run_voice_loop(
     no_permission_prompts: bool = False,
     expect_tools: list[str] | None = None,
     expect_visible_contains: list[str] | None = None,
+    expect_visible_not_contains: list[str] | None = None,
     expect_routed_contains: list[str] | None = None,
+    exercise_live_speech: bool = False,
+    allow_audio_actions: bool = False,
 ) -> dict[str, Any]:
+    base_url = normalize_base_url(base_url)
     started = time.monotonic()
     stage_timings: list[dict[str, Any]] = []
     command_audio = run_dir / "01-command.wav"
@@ -301,8 +481,11 @@ def run_voice_loop(
             "length_scale": length_scale,
             "stt_provider": stt_provider,
             "no_permission_prompts": no_permission_prompts,
+            "exercise_live_speech": exercise_live_speech,
+            "allow_audio_actions": allow_audio_actions,
             "expect_tools": expect_tools or [],
             "expect_visible_contains": expect_visible_contains or [],
+            "expect_visible_not_contains": expect_visible_not_contains or [],
             "expect_routed_contains": expect_routed_contains or [],
         },
         "artifacts": {
@@ -347,6 +530,12 @@ def run_voice_loop(
                 "command_transcript": command_transcript,
                 "wake_route": route,
                 "routed_command": "",
+                "speech_runtime": inspect_live_speech_runtime(
+                    [],
+                    base_url=base_url,
+                    timeout=min(timeout, 4.0),
+                    exercise_live_speech=exercise_live_speech,
+                ),
             }
             return report
 
@@ -355,7 +544,8 @@ def run_voice_loop(
             base_url,
             route["command"],
             timeout=timeout,
-            suppress_speech=True,
+            suppress_speech=not exercise_live_speech,
+            suppress_audio_actions=not allow_audio_actions,
         )
         stage_timings.append(stage_timing("jarvis_stream", stage_started))
         command_response = final_response_from_stream_events(stream_events)
@@ -363,19 +553,51 @@ def run_voice_loop(
             raise RuntimeError("Jarvis stream did not return a final response.")
 
         stage_started = time.monotonic()
-        visible_reply = extract_visible_reply(command_response)
+        visible_screen_follow_up = run_native_visible_screen_follow_up(
+            command_text=route["command"],
+            command_response=command_response,
+            base_url=base_url,
+            run_dir=run_dir,
+            timeout=timeout,
+        )
+        if visible_screen_follow_up.get("attempted"):
+            stage_timings.append(stage_timing("native_visible_screen_followup", stage_started))
+        effective_response = (
+            visible_screen_follow_up.get("response")
+            if isinstance(visible_screen_follow_up.get("response"), dict)
+            else command_response
+        )
+        visible_reply = extract_visible_reply(effective_response)
         expectation = evaluate_expectations(
             command_response=command_response,
             visible_reply=visible_reply,
             routed_command=route["command"],
             expect_tools=expect_tools or [],
             expect_visible_contains=expect_visible_contains or [],
+            expect_visible_not_contains=expect_visible_not_contains or [],
             expect_routed_contains=expect_routed_contains or [],
         )
         stage_timings.append(stage_timing("expectations", stage_started))
         stage_started = time.monotonic()
+        speech_runtime = inspect_live_speech_runtime(
+            stream_events,
+            base_url=base_url,
+            timeout=min(timeout, 4.0),
+            exercise_live_speech=exercise_live_speech,
+        )
+        stage_timings.append(stage_timing("live_speech_runtime", stage_started))
+        stage_started = time.monotonic()
+        speech_payloads = speech_payloads_from_stream_events(stream_events)
+        if isinstance(visible_screen_follow_up.get("response"), dict):
+            speech_payloads.extend(
+                speech_payloads_from_direct_response(
+                    visible_screen_follow_up["response"],
+                    source="final",
+                    reason="visible_screen_followup",
+                )
+            )
         speech_audit = audit_spoken_payloads(
-            speech_payloads_from_stream_events(stream_events),
+            speech_payloads,
             run_dir=run_dir,
             length_scale=length_scale,
             timeout=timeout,
@@ -431,7 +653,7 @@ def run_voice_loop(
             "status": status,
             "warnings": warnings,
             "total_seconds": round(time.monotonic() - started, 3),
-            "measurement_contract": measurement_contract(),
+            "measurement_contract": measurement_contract(exercise_live_speech=exercise_live_speech),
             "stage_timings": stage_timings,
             "command_tts": command_tts,
             "command_stt": command_transcription,
@@ -439,10 +661,13 @@ def run_voice_loop(
             "wake_route": route,
             "routed_command": route["command"],
             "command_response_tool": command_response.get("tool"),
+            "final_visible_tool": effective_response.get("tool") if isinstance(effective_response, dict) else "",
             "visible_reply_preview": visible_reply[:500],
             "expectation": expectation,
             "stream_event_count": len(stream_events),
+            "speech_runtime": speech_runtime,
             "speech_audit": speech_audit,
+            "visible_screen_follow_up": compact_visible_screen_follow_up(visible_screen_follow_up),
             "reply_audio_source": reply_audio_source,
             "reply_tts": reply_tts,
             "reply_stt": reply_transcription,
@@ -456,7 +681,7 @@ def run_voice_loop(
             "error": f"{type(error).__name__}: {error}",
             "total_seconds": round(time.monotonic() - started, 3),
             "stage_timings": stage_timings,
-            "measurement_contract": measurement_contract(),
+            "measurement_contract": measurement_contract(exercise_live_speech=exercise_live_speech),
         }
         return report
 
@@ -465,13 +690,123 @@ def stage_timing(name: str, started: float) -> dict[str, Any]:
     return {"stage": name, "duration_seconds": round(time.monotonic() - started, 3)}
 
 
-def measurement_contract() -> dict[str, Any]:
+def measurement_contract(*, exercise_live_speech: bool = False) -> dict[str, Any]:
     return {
         "audio_input": "Synthesized command WAV transcribed by the selected STT provider.",
-        "jarvis_speech_output": "Exact Jarvis speech payloads synthesized to WAV and transcribed.",
+        "jarvis_speech_output": (
+            "Exact Jarvis speech payloads were synthesized to WAV and transcribed."
+            if not exercise_live_speech
+            else "Exact Jarvis speech payloads were synthesized to WAV and transcribed, and the live playback path was exercised in Jarvis."
+        ),
+        "live_playback_exercised": bool(exercise_live_speech),
         "physical_speaker_capture": False,
         "physical_microphone_capture": False,
-        "notes": "This verifies the sound files Jarvis would hear/say, not room acoustics or Mac speaker loopback.",
+        "notes": (
+            "This verifies the sound files Jarvis would hear/say, not room acoustics or Mac speaker loopback."
+            if not exercise_live_speech
+            else "This verifies the live speech path plus the sound files Jarvis would hear/say, but it still does not capture room acoustics or Mac speaker loopback."
+        ),
+    }
+
+
+def speech_statuses_from_stream_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    statuses: list[dict[str, Any]] = []
+    for index, event in enumerate(events):
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        speech = data.get("speech")
+        if not isinstance(speech, dict) or not speech:
+            continue
+        statuses.append(
+            {
+                "source": str(event.get("event") or ""),
+                "event_index": index,
+                "spoken": bool(speech.get("spoken")),
+                "status": str(speech.get("status") or ""),
+                "provider": str(speech.get("provider") or ""),
+                "reason": str(speech.get("reason") or ""),
+                "text_preview": speech_payload_text(speech, fallback=data.get("text"))[:200],
+            }
+        )
+    return statuses
+
+
+def compact_speech_state(state: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(state, dict):
+        return {}
+    keys = (
+        "status",
+        "muted",
+        "active_speech",
+        "automatic_tts_enabled",
+        "automatic_speech_available",
+        "tts_provider",
+        "tts_available",
+        "speech_reason",
+        "reply",
+    )
+    return {key: state.get(key) for key in keys if key in state}
+
+
+def fetch_speech_state(base_url: str, *, timeout: float) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/api/speech/mute",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        return {"status": "unavailable", "error": f"{type(error).__name__}: {error}"}
+
+
+def inspect_live_speech_runtime(
+    events: list[dict[str, Any]],
+    *,
+    base_url: str,
+    timeout: float,
+    exercise_live_speech: bool,
+) -> dict[str, Any]:
+    payload_statuses = speech_statuses_from_stream_events(events)
+    playback_requested = bool(exercise_live_speech and any(item.get("spoken") for item in payload_statuses))
+    if not exercise_live_speech:
+        return {
+            "mode": "suppressed_for_probe",
+            "playback_requested": False,
+            "active_observed": False,
+            "payload_statuses": payload_statuses,
+            "poll_count": 0,
+        }
+
+    poll_timeout = max(0.2, min(timeout, 4.0))
+    deadline = time.monotonic() + poll_timeout
+    polls: list[dict[str, Any]] = []
+    active_observed = False
+    saw_active_then_idle = False
+    while True:
+        state = compact_speech_state(fetch_speech_state(base_url, timeout=min(timeout, 5.0)))
+        polls.append(state)
+        is_active = bool(state.get("active_speech"))
+        if is_active:
+            active_observed = True
+        elif active_observed:
+            saw_active_then_idle = True
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.12)
+
+    return {
+        "mode": "live_playback_exercised",
+        "playback_requested": playback_requested,
+        "active_observed": active_observed,
+        "payload_statuses": payload_statuses,
+        "poll_count": len(polls),
+        "saw_active_then_idle": saw_active_then_idle,
+        "initial_state": polls[0] if polls else {},
+        "final_state": polls[-1] if polls else {},
     }
 
 
@@ -498,8 +833,12 @@ def run_speech_audit(
     no_permission_prompts: bool = False,
     expect_tools: list[str] | None = None,
     expect_visible_contains: list[str] | None = None,
+    expect_visible_not_contains: list[str] | None = None,
     expect_routed_contains: list[str] | None = None,
+    exercise_live_speech: bool = False,
+    allow_audio_actions: bool = False,
 ) -> dict[str, Any]:
+    base_url = normalize_base_url(base_url)
     started = time.monotonic()
     report: dict[str, Any] = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -511,8 +850,11 @@ def run_speech_audit(
             "stt_provider": stt_provider,
             "no_permission_prompts": no_permission_prompts,
             "speech_audit_only": True,
+            "exercise_live_speech": exercise_live_speech,
+            "allow_audio_actions": allow_audio_actions,
             "expect_tools": expect_tools or [],
             "expect_visible_contains": expect_visible_contains or [],
+            "expect_visible_not_contains": expect_visible_not_contains or [],
             "expect_routed_contains": expect_routed_contains or [],
         },
     }
@@ -521,20 +863,55 @@ def run_speech_audit(
             base_url,
             command_text,
             timeout=timeout,
-            suppress_speech=True,
+            suppress_speech=not exercise_live_speech,
+            suppress_audio_actions=not allow_audio_actions,
         )
         command_response = final_response_from_stream_events(stream_events)
-        visible_reply = extract_visible_reply(command_response) if command_response else ""
+        visible_screen_follow_up = run_native_visible_screen_follow_up(
+            command_text=command_text,
+            command_response=command_response,
+            base_url=base_url,
+            run_dir=run_dir,
+            timeout=timeout,
+        )
+        effective_response = (
+            visible_screen_follow_up.get("response")
+            if isinstance(visible_screen_follow_up.get("response"), dict)
+            else command_response
+        )
+        visible_reply = extract_visible_reply(effective_response) if effective_response else ""
+        response_result = command_response_result_summary(command_response or {})
+        stream_timing = stream_timing_summary(
+            stream_events,
+            command_response=command_response or {},
+            visible_reply=visible_reply,
+        )
         expectation = evaluate_expectations(
             command_response=command_response or {},
             visible_reply=visible_reply,
             routed_command=command_text,
             expect_tools=expect_tools or [],
             expect_visible_contains=expect_visible_contains or [],
+            expect_visible_not_contains=expect_visible_not_contains or [],
             expect_routed_contains=expect_routed_contains or [],
         )
+        speech_runtime = inspect_live_speech_runtime(
+            stream_events,
+            base_url=base_url,
+            timeout=min(timeout, 4.0),
+            exercise_live_speech=exercise_live_speech,
+        )
+        speech_payloads = speech_payloads_from_stream_events(stream_events)
+        if isinstance(visible_screen_follow_up.get("response"), dict):
+            speech_payloads.extend(
+                speech_payloads_from_direct_response(
+                    visible_screen_follow_up["response"],
+                    source="final",
+                    reason="visible_screen_followup",
+                )
+            )
         speech_audit = audit_spoken_payloads(
-            speech_payloads_from_stream_events(stream_events),
+            speech_payloads,
             run_dir=run_dir,
             length_scale=length_scale,
             timeout=timeout,
@@ -551,10 +928,15 @@ def run_speech_audit(
             "warnings": warnings,
             "total_seconds": round(time.monotonic() - started, 3),
             "command_response_tool": command_response.get("tool") if command_response else "",
+            "final_visible_tool": effective_response.get("tool") if isinstance(effective_response, dict) else "",
+            "command_response_result": response_result,
             "visible_reply_preview": visible_reply[:500],
             "expectation": expectation,
             "stream_event_count": len(stream_events),
+            "stream_timing": stream_timing,
+            "speech_runtime": speech_runtime,
             "speech_audit": speech_audit,
+            "visible_screen_follow_up": compact_visible_screen_follow_up(visible_screen_follow_up),
         }
         return report
     except Exception as error:
@@ -580,51 +962,29 @@ def audit_spoken_payloads(
     items: list[dict[str, Any]] = []
     warnings: list[str] = []
     all_leaks: list[dict[str, Any]] = []
-    for index, payload in enumerate(payloads, start=1):
-        source = re.sub(r"[^a-z0-9]+", "-", str(payload.get("source") or "speech").lower()).strip("-") or "speech"
-        text = str(payload.get("text") or "").strip()
-        audio_path = audit_dir / f"{index:02d}-{source}.wav"
-        stt_path = audit_dir / f"{index:02d}-{source}-stt.json"
-        local_stt_path = audit_dir / f"{index:02d}-{source}-local-stt.json"
-        intended_leaks = detect_internal_speech_leaks(text, source=f"{source}.intended")
-        item: dict[str, Any] = {
-            "index": index,
-            "source": source,
-            "reason": payload.get("reason"),
-            "tool": payload.get("tool"),
-            "text_preview": text[:500],
-            "intended_leaks": intended_leaks,
-            "audio_path": str(audio_path),
-            "stt_path": str(stt_path),
-            "local_stt_path": str(local_stt_path),
-        }
-        all_leaks.extend(intended_leaks)
-        try:
-            item["tts"] = synthesize(text, audio_path, length_scale=length_scale)
-            transcription = transcribe_audio(
-                audio_path,
-                apple_output_json=stt_path,
-                local_output_json=local_stt_path,
-                timeout=timeout,
-                provider=stt_provider,
-                no_permission_prompts=no_permission_prompts,
-            )
-            transcript = str(transcription.get("transcript") or "").strip()
-            transcript_leaks = detect_internal_speech_leaks(transcript, source=f"{source}.transcript")
-            all_leaks.extend(transcript_leaks)
-            item["stt"] = transcription
-            item["transcript"] = transcript
-            item["transcript_leaks"] = transcript_leaks
-            item["similarity"] = text_similarity(text, transcript)
-            if transcription.get("status") != "completed":
-                warnings.append(f"{source} STT status was {transcription.get('status')}.")
-        except Exception as error:
-            item["stt"] = {
-                "status": "failed",
-                "error": f"{type(error).__name__}: {error}",
-            }
-            warnings.append(f"{source} audit failed: {type(error).__name__}: {error}")
+    worker_inputs = [
+        (
+            index,
+            payload,
+            audit_dir,
+            length_scale,
+            timeout,
+            stt_provider,
+            no_permission_prompts,
+        )
+        for index, payload in enumerate(payloads, start=1)
+    ]
+    worker_count = max(1, min(SPEECH_AUDIT_MAX_WORKERS, len(worker_inputs)))
+    if worker_count == 1:
+        worker_results = [_audit_spoken_payload_item(*worker_input) for worker_input in worker_inputs]
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            worker_results = list(executor.map(lambda args: _audit_spoken_payload_item(*args), worker_inputs))
+
+    for item, item_warnings, item_leaks in worker_results:
         items.append(item)
+        warnings.extend(item_warnings)
+        all_leaks.extend(item_leaks)
 
     if not payloads:
         warnings.append("No spoken payloads were captured from the Jarvis stream.")
@@ -643,6 +1003,62 @@ def audit_spoken_payloads(
     }
 
 
+def _audit_spoken_payload_item(
+    index: int,
+    payload: dict[str, Any],
+    audit_dir: Path,
+    length_scale: float,
+    timeout: float,
+    stt_provider: str,
+    no_permission_prompts: bool,
+) -> tuple[dict[str, Any], list[str], list[dict[str, Any]]]:
+    source = re.sub(r"[^a-z0-9]+", "-", str(payload.get("source") or "speech").lower()).strip("-") or "speech"
+    text = str(payload.get("text") or "").strip()
+    audio_path = audit_dir / f"{index:02d}-{source}.wav"
+    stt_path = audit_dir / f"{index:02d}-{source}-stt.json"
+    local_stt_path = audit_dir / f"{index:02d}-{source}-local-stt.json"
+    intended_leaks = detect_internal_speech_leaks(text, source=f"{source}.intended")
+    item: dict[str, Any] = {
+        "index": index,
+        "source": source,
+        "reason": payload.get("reason"),
+        "tool": payload.get("tool"),
+        "text_preview": text[:500],
+        "intended_leaks": intended_leaks,
+        "audio_path": str(audio_path),
+        "stt_path": str(stt_path),
+        "local_stt_path": str(local_stt_path),
+    }
+    warnings: list[str] = []
+    leaks: list[dict[str, Any]] = list(intended_leaks)
+    try:
+        item["tts"] = synthesize(text, audio_path, length_scale=length_scale)
+        transcription = transcribe_audio(
+            audio_path,
+            apple_output_json=stt_path,
+            local_output_json=local_stt_path,
+            timeout=timeout,
+            provider=stt_provider,
+            no_permission_prompts=no_permission_prompts,
+        )
+        transcript = str(transcription.get("transcript") or "").strip()
+        transcript_leaks = detect_internal_speech_leaks(transcript, source=f"{source}.transcript")
+        leaks.extend(transcript_leaks)
+        item["stt"] = transcription
+        item["transcript"] = transcript
+        item["transcript_leaks"] = transcript_leaks
+        item["similarity"] = text_similarity(text, transcript)
+        if transcription.get("status") != "completed":
+            warnings.append(f"{source} STT status was {transcription.get('status')}.")
+    except Exception as error:
+        item["stt"] = {
+            "status": "failed",
+            "error": f"{type(error).__name__}: {error}",
+        }
+        warnings.append(f"{source} audit failed: {type(error).__name__}: {error}")
+    return item, warnings, leaks
+
+
 def evaluate_expectations(
     *,
     command_response: dict[str, Any],
@@ -650,6 +1066,7 @@ def evaluate_expectations(
     routed_command: str,
     expect_tools: list[str],
     expect_visible_contains: list[str],
+    expect_visible_not_contains: list[str],
     expect_routed_contains: list[str],
 ) -> dict[str, Any]:
     actual_tool = str(command_response.get("tool") or "")
@@ -663,6 +1080,10 @@ def evaluate_expectations(
         needle_norm = normalize_text(needle)
         if needle_norm and needle_norm not in visible_norm:
             failures.append(f"Visible reply did not contain {needle!r}.")
+    for needle in expect_visible_not_contains:
+        needle_norm = normalize_text(needle)
+        if needle_norm and needle_norm in visible_norm:
+            failures.append(f"Visible reply unexpectedly contained {needle!r}.")
     for needle in expect_routed_contains:
         needle_norm = normalize_text(needle)
         if needle_norm and needle_norm not in routed_norm:
@@ -672,6 +1093,7 @@ def evaluate_expectations(
         "expected_tools": clean_tools,
         "actual_tool": actual_tool,
         "expect_visible_contains": [text for text in expect_visible_contains if text],
+        "expect_visible_not_contains": [text for text in expect_visible_not_contains if text],
         "expect_routed_contains": [text for text in expect_routed_contains if text],
         "failures": failures,
     }
@@ -726,7 +1148,7 @@ def speech_payloads_from_stream_events(events: list[dict[str, Any]]) -> list[dic
         event_name = str(event.get("event") or "")
         speech = data.get("speech") if isinstance(data.get("speech"), dict) else {}
         if event_name == "status":
-            text = str(speech.get("text_preview") or data.get("text") or "").strip()
+            text = speech_payload_text(speech, fallback=data.get("text"))
             if text and speech.get("status") != "suppressed_for_stop_speaking":
                 payloads.append(
                     {
@@ -738,7 +1160,7 @@ def speech_payloads_from_stream_events(events: list[dict[str, Any]]) -> list[dic
                     }
                 )
         elif event_name == "final":
-            text = str(speech.get("text_preview") or "").strip()
+            text = speech_payload_text(speech)
             if text:
                 payloads.append(
                     {
@@ -752,11 +1174,117 @@ def speech_payloads_from_stream_events(events: list[dict[str, Any]]) -> list[dic
     return payloads
 
 
+def speech_payloads_from_direct_response(
+    response: dict[str, Any],
+    *,
+    source: str = "final",
+    reason: str | None = None,
+) -> list[dict[str, Any]]:
+    speech = response.get("speech") if isinstance(response.get("speech"), dict) else {}
+    text = speech_payload_text(speech)
+    if not text or speech.get("status") == "suppressed_for_stop_speaking":
+        return []
+    return [
+        {
+            "source": source,
+            "event_index": None,
+            "reason": reason or speech.get("reason") or source,
+            "tool": response.get("tool"),
+            "text": text,
+        }
+    ]
+
+
+def speech_payload_text(speech: dict[str, Any], *, fallback: Any = "") -> str:
+    """Return the full spoken text when available, falling back to older previews."""
+    return str(speech.get("spoken_text") or speech.get("text_preview") or fallback or "").strip()
+
+
 def final_response_from_stream_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     for event in reversed(events):
         if event.get("event") == "final" and isinstance(event.get("data"), dict):
             return event["data"]
     return {}
+
+
+def command_response_result_summary(command_response: dict[str, Any]) -> dict[str, Any]:
+    result = command_response.get("result") if isinstance(command_response.get("result"), dict) else {}
+    return {
+        "backend": result.get("backend"),
+        "model": result.get("model"),
+        "status": result.get("status"),
+        "duration_seconds": result.get("duration_seconds"),
+        "first_visible_token_seconds": result.get("first_visible_token_seconds"),
+        "fallback_used": bool(result.get("fallback_used")),
+        "primary_fallback_used": bool(result.get("primary_fallback_used")),
+        "fallback_trigger": result.get("fallback_trigger"),
+        "primary_status": result.get("primary_status"),
+        "tool_catalog_compacted": bool(result.get("tool_catalog_compacted")),
+    }
+
+
+def stream_timing_summary(
+    events: list[dict[str, Any]],
+    *,
+    command_response: dict[str, Any],
+    visible_reply: str,
+) -> dict[str, Any]:
+    first_status_seconds: float | None = None
+    first_final_seconds: float | None = None
+    first_visible_seconds: float | None = None
+    first_speech_payload_seconds: float | None = None
+    for event in events:
+        seconds = _stream_event_seconds(event)
+        if seconds is None:
+            continue
+        event_name = str(event.get("event") or "")
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        speech = data.get("speech") if isinstance(data.get("speech"), dict) else {}
+        if event_name == "status" and first_status_seconds is None:
+            first_status_seconds = seconds
+        if event_name == "final" and first_final_seconds is None:
+            first_final_seconds = seconds
+        spoken_text = speech_payload_text(speech, fallback=data.get("text"))
+        if spoken_text and speech.get("status") != "suppressed_for_stop_speaking" and first_speech_payload_seconds is None:
+            first_speech_payload_seconds = seconds
+        visible_text = stream_event_visible_text(event_name, data, visible_reply=visible_reply)
+        if visible_text and first_visible_seconds is None:
+            first_visible_seconds = seconds
+    result_summary = command_response_result_summary(command_response)
+    if first_visible_seconds is None:
+        first_visible_seconds = _optional_float(result_summary.get("first_visible_token_seconds"))
+    return {
+        "first_status_seconds": first_status_seconds,
+        "first_final_seconds": first_final_seconds,
+        "first_visible_seconds": first_visible_seconds,
+        "first_speech_payload_seconds": first_speech_payload_seconds,
+    }
+
+
+def stream_event_visible_text(event_name: str, data: dict[str, Any], *, visible_reply: str) -> str:
+    if event_name == "status":
+        return str(data.get("text") or "").strip()
+    if event_name == "delta":
+        return str(data.get("text") or data.get("delta") or data.get("content") or "").strip()
+    if event_name == "final":
+        final_text = extract_visible_reply(data).strip()
+        if final_text:
+            return final_text
+        return visible_reply.strip()
+    return ""
+
+
+def _stream_event_seconds(event: dict[str, Any]) -> float | None:
+    return _optional_float(event.get("received_at_seconds"))
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def synthesize(text: str, output_wav: Path, *, length_scale: float) -> dict[str, Any]:
@@ -1060,18 +1588,6 @@ def route_transcript(transcript: str) -> dict[str, Any]:
     }
 
 
-def speech_mute_status(base_url: str) -> bool:
-    try:
-        data = get_json(f"{base_url}/api/speech/mute", timeout=5)
-        return bool(data.get("muted", False))
-    except Exception:
-        return False
-
-
-def set_speech_mute(base_url: str, muted: bool) -> None:
-    post_json(f"{base_url}/api/speech/mute", {"muted": muted}, timeout=5)
-
-
 def extract_visible_reply(response: dict[str, Any]) -> str:
     candidates: list[Any] = []
     result = response.get("result")
@@ -1107,12 +1623,50 @@ def text_similarity(left: str, right: str) -> float:
 def normalize_text(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[^a-z0-9]+", " ", text)
-    return " ".join(text.split())
+    tokens = text.split()
+    normalized: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if index + 1 < len(tokens) and token in {"a", "p"} and tokens[index + 1] == "m":
+            normalized.append(f"{token}m")
+            index += 2
+            continue
+        if token in TENS_WORD_VALUES:
+            value = TENS_WORD_VALUES[token]
+            if index + 1 < len(tokens):
+                next_value = NUMBER_WORD_VALUES.get(tokens[index + 1])
+                if next_value is not None and 0 < next_value < 10:
+                    normalized.append(str(value + next_value))
+                    index += 2
+                    continue
+            normalized.append(str(value))
+            index += 1
+            continue
+        if token in NUMBER_WORD_VALUES:
+            normalized.append(str(NUMBER_WORD_VALUES[token]))
+            index += 1
+            continue
+        normalized.append(token)
+        index += 1
 
-
-def get_json(url: str, *, timeout: float) -> dict[str, Any]:
-    with urllib.request.urlopen(url, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    merged: list[str] = []
+    index = 0
+    while index < len(normalized):
+        token = normalized[index]
+        if token.isdigit() and index + 1 < len(normalized):
+            next_token = normalized[index + 1]
+            if next_token == "age":
+                merged.append(f"{token}h")
+                index += 2
+                continue
+            if len(next_token) == 1 and next_token.isalpha():
+                merged.append(f"{token}{next_token}")
+                index += 2
+                continue
+        merged.append(token)
+        index += 1
+    return " ".join(merged)
 
 
 def stream_command_events(
@@ -1121,8 +1675,13 @@ def stream_command_events(
     *,
     timeout: float,
     suppress_speech: bool = True,
+    suppress_audio_actions: bool = True,
 ) -> list[dict[str, Any]]:
-    payload = {"command": command, "suppress_speech": True, "suppress_audio_actions": True}
+    payload = {
+        "command": command,
+        "suppress_speech": True,
+        "suppress_audio_actions": bool(suppress_audio_actions),
+    }
     if not suppress_speech:
         payload["suppress_speech"] = False
     request = urllib.request.Request(
@@ -1134,6 +1693,7 @@ def stream_command_events(
     events: list[dict[str, Any]] = []
     event_name = "message"
     data_lines: list[str] = []
+    started = time.monotonic()
 
     def flush_event() -> None:
         nonlocal event_name, data_lines
@@ -1145,7 +1705,13 @@ def stream_command_events(
             data: Any = json.loads(raw_data)
         except json.JSONDecodeError:
             data = raw_data
-        events.append({"event": event_name, "data": data})
+        events.append(
+            {
+                "event": event_name,
+                "data": data,
+                "received_at_seconds": round(time.monotonic() - started, 3),
+            }
+        )
         event_name = "message"
         data_lines = []
 
@@ -1167,9 +1733,15 @@ def stream_command_events(
     return events
 
 
-def post_json(url: str, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+def post_loopback_json(
+    base_url: str,
+    path: str,
+    payload: dict[str, Any],
+    *,
+    timeout: float,
+) -> dict[str, Any]:
     request = urllib.request.Request(
-        url,
+        f"{base_url.rstrip('/')}{path}",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -1180,6 +1752,502 @@ def post_json(url: str, payload: dict[str, Any], *, timeout: float) -> dict[str,
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {error.code}: {body[:500]}") from error
+
+
+def visible_screen_follow_up_target(command_text: str, command_response: dict[str, Any]) -> dict[str, str] | None:
+    if str(command_response.get("tool") or "") != "teams.assignment":
+        return None
+    lower = str(command_text or "").casefold()
+    if "teams" not in lower or "assignment" not in lower:
+        return None
+    result = command_response.get("result") if isinstance(command_response.get("result"), dict) else {}
+    if result and result.get("automatic_teams_page_inspection_supported") is False:
+        return None
+    return {
+        "reason": "teams_assignment_native_visible_screen",
+        "target_app_name": "Google Chrome",
+        "target_bundle_identifier": "com.google.Chrome",
+    }
+
+
+def run_native_visible_screen_follow_up(
+    *,
+    command_text: str,
+    command_response: dict[str, Any],
+    base_url: str,
+    run_dir: Path,
+    timeout: float,
+) -> dict[str, Any]:
+    target = visible_screen_follow_up_target(command_text, command_response)
+    if not target:
+        return {"attempted": False, "used": False, "status": "not_needed"}
+
+    follow_up_dir = run_dir / "visible-screen-followup"
+    follow_up_dir.mkdir(parents=True, exist_ok=True)
+    capture_path = follow_up_dir / "capture.json"
+    response_path = follow_up_dir / "response.json"
+    started = time.monotonic()
+    result: dict[str, Any] = {
+        "attempted": True,
+        "used": False,
+        "status": "probe_pending",
+        "reason": target["reason"],
+        "target_app_name": target["target_app_name"],
+        "target_bundle_identifier": target["target_bundle_identifier"],
+        "capture_report": str(capture_path),
+        "response_report": str(response_path),
+        "browser_open_attempted": False,
+    }
+    if not VISIBLE_SCREEN_PROBE.exists():
+        return {
+            **result,
+            "status": "probe_missing",
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "error": f"Native visible-screen probe not found at {VISIBLE_SCREEN_PROBE}",
+        }
+
+    initial_browser_page_follow_up = run_browser_page_follow_up(
+        command_text=command_text,
+        base_url=base_url,
+        follow_up_dir=follow_up_dir,
+        timeout=timeout,
+    )
+    result["browser_page_follow_up_initial"] = compact_direct_follow_up(initial_browser_page_follow_up)
+    result["browser_page_follow_up"] = result["browser_page_follow_up_initial"]
+    if initial_browser_page_follow_up.get("status") == "completed":
+        return {
+            **result,
+            **initial_browser_page_follow_up,
+            "attempts": 1,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+    if initial_browser_page_follow_up.get("status") == "browser_permission_blocked":
+        return {
+            **result,
+            **initial_browser_page_follow_up,
+            "attempts": 0,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+    if initial_browser_page_follow_up.get("status") == "login_gate_visible":
+        return {
+            **result,
+            **initial_browser_page_follow_up,
+            "attempts": 0,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+
+    browser_open = open_visible_screen_follow_up_url(command_response, timeout=timeout)
+    result.update(browser_open)
+    if browser_open.get("attempted"):
+        time.sleep(VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS)
+
+    browser_page_follow_up = run_browser_page_follow_up(
+        command_text=command_text,
+        base_url=base_url,
+        follow_up_dir=follow_up_dir,
+        timeout=timeout,
+    )
+    result["browser_page_follow_up"] = compact_direct_follow_up(browser_page_follow_up)
+    if browser_page_follow_up.get("status") == "completed":
+        return {
+            **result,
+            **browser_page_follow_up,
+            "attempts": 1,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+    if browser_page_follow_up.get("status") == "browser_permission_blocked":
+        return {
+            **result,
+            **browser_page_follow_up,
+            "attempts": 0,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+    if browser_page_follow_up.get("status") == "login_gate_visible":
+        return {
+            **result,
+            **browser_page_follow_up,
+            "attempts": 0,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+
+    latest_failure: dict[str, Any] | None = None
+    max_attempts = max(
+        1,
+        1 if browser_page_follow_up.get("status") == "browser_permission_blocked" else VISIBLE_SCREEN_FOLLOW_UP_RETRY_ATTEMPTS,
+    )
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            time.sleep(VISIBLE_SCREEN_FOLLOW_UP_RETRY_DELAY_SECONDS)
+        attempt_result = run_native_visible_screen_follow_up_attempt(
+            command_text=command_text,
+            base_url=base_url,
+            follow_up_dir=follow_up_dir,
+            timeout=timeout,
+            target_app_name=target["target_app_name"],
+            target_bundle_identifier=target["target_bundle_identifier"],
+            attempt=attempt,
+        )
+        if attempt_result.get("status") == "completed":
+            return {
+                **result,
+                **attempt_result,
+                "attempts": attempt,
+                "duration_seconds": round(time.monotonic() - started, 3),
+            }
+        latest_failure = attempt_result
+
+    return {
+        **result,
+        **merge_follow_up_failures(browser_page_follow_up, latest_failure),
+        "attempts": max_attempts,
+        "duration_seconds": round(time.monotonic() - started, 3),
+    }
+
+
+def run_browser_page_follow_up(
+    *,
+    command_text: str,
+    base_url: str,
+    follow_up_dir: Path,
+    timeout: float,
+) -> dict[str, Any]:
+    response_path = follow_up_dir / "browser-read-response.json"
+    try:
+        summary_response = post_loopback_json(
+            base_url,
+            "/api/browser/read-page",
+            {
+                "command": command_text,
+                "max_chars": 6000,
+                "suppress_speech": True,
+            },
+            timeout=timeout,
+        )
+    except Exception as error:
+        return {
+            "used": False,
+            "status": "browser_read_failed",
+            "error": f"{type(error).__name__}: {error}",
+            "response_report": str(response_path),
+        }
+
+    response_path.write_text(json.dumps(summary_response, indent=2, ensure_ascii=False), encoding="utf-8")
+    summary_result = summary_response.get("result") if isinstance(summary_response.get("result"), dict) else {}
+    response_status = str(summary_result.get("status") or "")
+    visible_reply = extract_visible_reply(summary_response)
+    useful = browser_page_follow_up_response_looks_useful(summary_response, command_text=command_text)
+    blocked = response_status in {"automation_not_allowed", "teams_page_text_unavailable"}
+    login_gate_visible = response_status == "visible_screen_login_gate"
+    return {
+        "used": useful,
+        "status": (
+            "completed"
+            if useful
+            else "browser_permission_blocked"
+            if blocked
+            else "login_gate_visible"
+            if login_gate_visible
+            else "response_not_useful"
+        ),
+        "tool": summary_response.get("tool"),
+        "response_status": response_status,
+        "visible_reply_preview": visible_reply[:500],
+        "response": summary_response if useful or blocked or login_gate_visible else None,
+        "response_report": str(response_path),
+    }
+
+
+def run_native_visible_screen_follow_up_attempt(
+    *,
+    command_text: str,
+    base_url: str,
+    follow_up_dir: Path,
+    timeout: float,
+    target_app_name: str,
+    target_bundle_identifier: str,
+    attempt: int,
+) -> dict[str, Any]:
+    capture_path = follow_up_dir / f"capture-{attempt:02d}.json"
+    response_path = follow_up_dir / f"response-{attempt:02d}.json"
+    probe_command = [
+        str(VISIBLE_SCREEN_PROBE),
+        "--target-app-name",
+        target_app_name,
+        "--target-bundle-id",
+        target_bundle_identifier,
+    ]
+    try:
+        completed = subprocess.run(
+            probe_command,
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=max(15.0, timeout + 10.0),
+            check=False,
+        )
+    except Exception as error:
+        return {
+            "used": False,
+            "status": "probe_failed",
+            "error": f"{type(error).__name__}: {error}",
+            "attempt": attempt,
+            "capture_report": str(capture_path),
+            "response_report": str(response_path),
+        }
+
+    stdout = completed.stdout.strip()
+    stderr = completed.stderr.strip()
+    try:
+        capture_payload = json.loads(stdout) if stdout else {
+            "status": "failed",
+            "error": "Native visible-screen probe returned no JSON.",
+            "text": "",
+            "diagnostics": {},
+        }
+    except json.JSONDecodeError as error:
+        capture_payload = {
+            "status": "failed",
+            "error": f"JSONDecodeError: {error}",
+            "text": "",
+            "diagnostics": {},
+        }
+    capture_path.write_text(json.dumps(capture_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    diagnostics = capture_payload.get("diagnostics") if isinstance(capture_payload.get("diagnostics"), dict) else {}
+    captured_text = str(capture_payload.get("text") or "")
+
+    try:
+        summary_response = post_loopback_json(
+            base_url,
+            "/api/screen/visible-text",
+            {
+                "command": command_text,
+                "text": captured_text,
+                "diagnostics": diagnostics,
+                "suppress_speech": True,
+            },
+            timeout=timeout,
+        )
+    except Exception as error:
+        return {
+            "used": False,
+            "status": "summary_failed",
+            "probe_returncode": completed.returncode,
+            "probe_stdout_tail": stdout[-500:],
+            "probe_stderr_tail": stderr[-500:],
+            "capture_status": capture_payload.get("status"),
+            "captured_text_chars": len(captured_text),
+            "error": f"{type(error).__name__}: {error}",
+            "attempt": attempt,
+            "capture_report": str(capture_path),
+            "response_report": str(response_path),
+        }
+
+    response_path.write_text(json.dumps(summary_response, indent=2, ensure_ascii=False), encoding="utf-8")
+    summary_result = summary_response.get("result") if isinstance(summary_response.get("result"), dict) else {}
+    visible_reply = extract_visible_reply(summary_response)
+    summary_status = str(summary_result.get("status") or "")
+    useful = visible_screen_follow_up_response_looks_useful(summary_response, command_text=command_text)
+    return {
+        "used": useful,
+        "status": "completed" if useful else "login_gate_visible" if summary_status == "login_gate_visible" else "response_not_useful",
+        "probe_returncode": completed.returncode,
+        "probe_stdout_tail": stdout[-500:],
+        "probe_stderr_tail": stderr[-500:],
+        "capture_status": capture_payload.get("status"),
+        "captured_text_chars": len(captured_text),
+        "tool": summary_response.get("tool"),
+        "response_status": summary_result.get("status"),
+        "visible_reply_preview": visible_reply[:500],
+        "response": summary_response if useful else None,
+        "attempt": attempt,
+        "capture_report": str(capture_path),
+        "response_report": str(response_path),
+    }
+
+
+def open_visible_screen_follow_up_url(command_response: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    result = command_response.get("result") if isinstance(command_response.get("result"), dict) else {}
+    url = str(result.get("url") or "").strip()
+    if not url or not re.match(r"^https?://", url, flags=re.IGNORECASE):
+        return {"browser_open_attempted": False}
+    target_host = (urlparse(url).hostname or "").lower()
+    applescript = f"""
+set targetURL to "{escape_applescript_string(url)}"
+set targetHost to "{escape_applescript_string(target_host)}"
+tell application "Google Chrome"
+    activate
+    if (count of windows) = 0 then
+        make new window
+    end if
+    set matchedTab to false
+    repeat with w in windows
+        set tabIndex to 1
+        repeat with t in tabs of w
+            set tabURL to URL of t
+            if tabURL is targetURL then
+                set active tab index of w to tabIndex
+                set index of w to 1
+                set matchedTab to true
+                exit repeat
+            end if
+            if (targetHost is "teams.microsoft.com" or targetHost is "teams.cloud.microsoft") and (tabURL contains "teams.microsoft.com" or tabURL contains "teams.cloud.microsoft") then
+                set active tab index of w to tabIndex
+                set index of w to 1
+                set matchedTab to true
+                exit repeat
+            end if
+            set tabIndex to tabIndex + 1
+        end repeat
+        if matchedTab then
+            exit repeat
+        end if
+    end repeat
+    if not matchedTab then
+        tell front window
+            make new tab at end of tabs with properties {{URL:targetURL}}
+            set active tab index to (count of tabs)
+        end tell
+    end if
+end tell
+"""
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", applescript],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=max(10.0, timeout),
+            check=False,
+        )
+        return {
+            "browser_open_attempted": True,
+            "browser_url": url,
+            "browser_open_method": "chrome_existing_session",
+            "browser_open_returncode": completed.returncode,
+            "browser_open_stdout_tail": completed.stdout.strip()[-500:],
+            "browser_open_stderr_tail": completed.stderr.strip()[-500:],
+        }
+    except Exception as error:
+        return {
+            "browser_open_attempted": True,
+            "browser_url": url,
+            "browser_open_error": f"{type(error).__name__}: {error}",
+        }
+
+
+def escape_applescript_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def browser_page_follow_up_response_looks_useful(response: dict[str, Any], *, command_text: str = "") -> bool:
+    if str(response.get("tool") or "") != "browser.read_page":
+        return False
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    status = str(result.get("status") or "")
+    if status in {"automation_not_allowed", "teams_page_text_unavailable", "visible_screen_login_gate"}:
+        return False
+    reply = extract_visible_reply(response).casefold()
+    digest_items = result.get("page_digest_items") if isinstance(result.get("page_digest_items"), list) else []
+    digest_text = " ".join(str(item) for item in digest_items if isinstance(item, str)).casefold()
+    combined_text = " ".join([reply, digest_text]).casefold()
+    lower_command = str(command_text or "").casefold()
+    if "teams" in lower_command and "assignment" in lower_command:
+        markers = ["teams", "assignment", "assignments", "rubric", "due", "classwork", "homework"]
+        if not any(marker in combined_text for marker in markers):
+            return False
+        if status == "read_via_visible_screen" and any(
+            marker in combined_text
+            for marker in ("assignment-related text", "questions i need answered", "newest assignment", "rubric", "due")
+        ):
+            return True
+    if status == "read":
+        return True
+    try:
+        page_text_chars = int(result.get("page_text_chars") or 0)
+    except (TypeError, ValueError):
+        page_text_chars = 0
+    return page_text_chars >= 160
+
+
+def visible_screen_follow_up_response_looks_useful(response: dict[str, Any], *, command_text: str = "") -> bool:
+    if str(response.get("tool") or "") != "screen.visible_text":
+        return False
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    status = str(result.get("status") or "")
+    if status == "login_gate_visible":
+        return False
+    reply = extract_visible_reply(response).casefold()
+    combined_text = " ".join(
+        [
+            reply,
+            " ".join(str(item) for item in (result.get("assignment_digest_items") or []) if isinstance(item, str)),
+            " ".join(str(item) for item in (result.get("page_digest_items") or []) if isinstance(item, str)),
+        ]
+    ).casefold()
+    lock_indicators = [
+        "enter password",
+        "touch id",
+        "unlock",
+        "who's using chrome",
+        "who s using chrome",
+        "profiles",
+    ]
+    if any(indicator in combined_text for indicator in lock_indicators):
+        teams_markers = ["teams", "assignment", "assignments", "rubric", "due", "classwork", "homework"]
+        if not any(marker in combined_text for marker in teams_markers):
+            return False
+    lower_command = str(command_text or "").casefold()
+    if "teams" in lower_command and "assignment" in lower_command:
+        if result.get("detected_assignment_context"):
+            return True
+        if not any(marker in combined_text for marker in ["teams", "assignment", "assignments", "rubric", "due", "classwork", "homework"]):
+            return False
+    if status == "checked":
+        return True
+    assignment_items = result.get("assignment_digest_items") if isinstance(result.get("assignment_digest_items"), list) else []
+    if assignment_items:
+        return True
+    digest_items = result.get("page_digest_items") if isinstance(result.get("page_digest_items"), list) else []
+    if digest_items and status not in {"native_ocr_empty", "native_capture_failed"}:
+        return True
+    try:
+        visible_chars = int(result.get("visible_text_chars") or 0)
+    except (TypeError, ValueError):
+        visible_chars = 0
+    return visible_chars >= 160 and status not in {"native_ocr_empty", "native_capture_failed"}
+
+
+def compact_visible_screen_follow_up(follow_up: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in follow_up.items()
+        if key not in {"response"}
+    }
+
+
+def compact_direct_follow_up(follow_up: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in follow_up.items()
+        if key not in {"response"}
+    }
+
+
+def merge_follow_up_failures(browser_page_follow_up: dict[str, Any], latest_failure: dict[str, Any] | None) -> dict[str, Any]:
+    if browser_page_follow_up.get("status") == "browser_permission_blocked":
+        merged = dict(latest_failure or {})
+        merged.update(
+            {
+                "used": False,
+                "status": "browser_permission_blocked",
+                "tool": browser_page_follow_up.get("tool"),
+                "response_status": browser_page_follow_up.get("response_status"),
+                "visible_reply_preview": browser_page_follow_up.get("visible_reply_preview"),
+                "response": browser_page_follow_up.get("response"),
+            }
+        )
+        return merged
+    return latest_failure or {"status": "probe_failed", "used": False}
 
 
 if __name__ == "__main__":

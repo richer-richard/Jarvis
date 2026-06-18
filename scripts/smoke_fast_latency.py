@@ -14,6 +14,12 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.render_overnight_status import normalize_base_url
+from scripts.report_refresh import refresh_report_surfaces_quietly
+
 REPORT_DIR = PROJECT_ROOT / "runtime" / "model_benchmarks"
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
 DEFAULT_PROMPTS = [
@@ -21,6 +27,7 @@ DEFAULT_PROMPTS = [
     "tell me a short joke",
     "Write five short bullets about making Jarvis feel fast.",
 ]
+SUCCESS_STATUSES = {"completed", "checked"}
 
 
 def main() -> int:
@@ -33,9 +40,14 @@ def main() -> int:
     parser.add_argument("--min-after-first-cps", type=float, default=20.0)
     parser.add_argument("--min-rate-visible-chars", type=int, default=20)
     parser.add_argument("--no-report", action="store_true")
+    parser.add_argument("--no-refresh-report", action="store_true")
     args = parser.parse_args()
 
-    base_url = args.base_url.rstrip("/")
+    try:
+        base_url = normalize_base_url(args.base_url)
+    except ValueError as error:
+        print(f"Refused unsafe base URL: {error}", file=sys.stderr)
+        return 2
     prompts = args.prompts or DEFAULT_PROMPTS
     results = [
         smoke_prompt(prompt, base_url=base_url, timeout=args.timeout)
@@ -59,9 +71,19 @@ def main() -> int:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         json_path = REPORT_DIR / f"localhost-fast-latency-{stamp}.json"
         md_path = REPORT_DIR / f"localhost-fast-latency-{stamp}.md"
+        latest_json_path = REPORT_DIR / "latest.json"
+        latest_md_path = REPORT_DIR / "latest.md"
         json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         md_path.write_text(render_markdown(report), encoding="utf-8")
+        latest_json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        latest_md_path.write_text(render_markdown(report), encoding="utf-8")
         print(f"Report: {md_path}")
+        if not args.no_refresh_report:
+            refresh = refresh_report_surfaces_quietly(base_url)
+            if refresh.get("ok"):
+                print(f"Refreshed Jarvis report surfaces: {base_url}/overnight-report/")
+            else:
+                print(f"Warning: Jarvis report refresh failed: {refresh.get('error')}", file=sys.stderr)
 
     failed = False
     for result in results:
@@ -71,8 +93,15 @@ def main() -> int:
         visible_chars = int(result.get("visible_chars") or 0)
         status = result.get("status")
         prompt = result.get("prompt")
-        print(f"{status:>10} first_visible={first} total={total} after_first_cps={cps} prompt={prompt!r}")
-        if status != "completed":
+        backend = result.get("backend") or ""
+        model = result.get("model") or ""
+        primary_status = result.get("primary_status") or ""
+        fallback_trigger = result.get("fallback_trigger") or ""
+        print(
+            f"{status:>10} first_visible={first} total={total} after_first_cps={cps} "
+            f"backend={backend!r} model={model!r} primary={primary_status!r} trigger={fallback_trigger!r} prompt={prompt!r}"
+        )
+        if not latency_status_counts_as_success(status):
             failed = True
             continue
         if first is None or float(first) > args.max_first_visible:
@@ -87,7 +116,12 @@ def main() -> int:
     return 1 if failed else 0
 
 
+def latency_status_counts_as_success(status: Any) -> bool:
+    return str(status or "").strip() in SUCCESS_STATUSES
+
+
 def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any]:
+    base_url = normalize_base_url(base_url)
     started = time.monotonic()
     first_visible_at: float | None = None
     first_answer_at: float | None = None
@@ -198,6 +232,13 @@ def smoke_prompt(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any
         "tool": final.get("tool") if isinstance(final, dict) else None,
         "backend": result_payload.get("backend") if isinstance(result_payload, dict) else None,
         "model": result_payload.get("model") if isinstance(result_payload, dict) else None,
+        "fallback_used": bool(result_payload.get("fallback_used")) if isinstance(result_payload, dict) else False,
+        "primary_fallback_used": bool(result_payload.get("primary_fallback_used")) if isinstance(result_payload, dict) else False,
+        "fallback_trigger": result_payload.get("fallback_trigger") if isinstance(result_payload, dict) else None,
+        "primary_status": result_payload.get("primary_status") if isinstance(result_payload, dict) else None,
+        "rate_limit_fallback_used": bool(result_payload.get("rate_limit_fallback_used")) if isinstance(result_payload, dict) else False,
+        "retry_used": bool(result_payload.get("retry_used")) if isinstance(result_payload, dict) else False,
+        "tool_catalog_compacted": bool(result_payload.get("tool_catalog_compacted")) if isinstance(result_payload, dict) else False,
         "status_preview": " ".join(status_texts)[:160],
         "reply_preview": reply[:240],
     }
@@ -255,34 +296,6 @@ def error_result(prompt: str, started: float, status: str, message: str) -> dict
     }
 
 
-def speech_mute_status(base_url: str) -> bool:
-    try:
-        data = get_json(f"{base_url}/api/speech/mute")
-        return bool(data.get("muted", False))
-    except Exception:
-        return False
-
-
-def set_speech_mute(base_url: str, muted: bool) -> None:
-    post_json(f"{base_url}/api/speech/mute", {"muted": muted}, timeout=5)
-
-
-def get_json(url: str, *, timeout: float = 5.0) -> dict[str, Any]:
-    with urllib.request.urlopen(url, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def post_json(url: str, payload: dict[str, Any], *, timeout: float = 5.0) -> dict[str, Any]:
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
 def render_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Jarvis Localhost Fast Latency Smoke",
@@ -293,8 +306,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Max total: {report['max_total_seconds']}s",
         f"Min after-first output rate: {report.get('min_after_first_chars_per_second', 20.0)} chars/s for replies with at least {report.get('min_rate_visible_chars', 20)} visible chars",
         "",
-        "| Status | First Visible | Total | After-First Cps | Chars | Backend | Model | Prompt | Reply Preview |",
-        "|---|---:|---:|---:|---:|---|---|---|---|",
+        "| Status | First Visible | Total | After-First Cps | Chars | Backend | Model | Primary | Trigger | Compact | Prompt | Reply Preview |",
+        "|---|---:|---:|---:|---:|---|---|---|---|---|---|---|",
     ]
     for result in report["results"]:
         reply = str(result.get("reply_preview") or result.get("error") or "").replace("\n", " ")[:160]
@@ -302,7 +315,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"| {result.get('status')} | {_format_seconds(result.get('first_visible_seconds'))} | "
             f"{_format_seconds(result.get('total_seconds'))} | {_format_rate(result.get('chars_per_second_after_first_visible'))} | "
             f"{result.get('visible_chars') or 0} | {result.get('backend') or ''} | "
-            f"`{result.get('model') or ''}` | {result.get('prompt')!r} | {reply} |"
+            f"`{result.get('model') or ''}` | {result.get('primary_status') or ''} | "
+            f"{result.get('fallback_trigger') or ''} | {str(bool(result.get('tool_catalog_compacted'))).lower()} | "
+            f"{result.get('prompt')!r} | {reply} |"
         )
     return "\n".join(lines) + "\n"
 

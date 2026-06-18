@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -13,6 +14,12 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.render_overnight_status import normalize_base_url
+from scripts.report_refresh import refresh_report_surfaces_quietly
+
 REPORT_DIR = PROJECT_ROOT / "runtime" / "conversation_context"
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
 DEFAULT_HISTORY = [
@@ -27,17 +34,29 @@ def main() -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--no-report", action="store_true")
+    parser.add_argument("--no-refresh-report", action="store_true")
     args = parser.parse_args()
 
-    report = run_context_smoke(base_url=args.base_url.rstrip("/"), timeout=args.timeout)
+    try:
+        base_url = normalize_base_url(args.base_url)
+    except ValueError as error:
+        print(f"Refused unsafe base URL: {error}", file=sys.stderr)
+        return 2
+    report = run_context_smoke(base_url=base_url, timeout=args.timeout)
     if not args.no_report:
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         json_path = REPORT_DIR / f"conversation-context-{stamp}.json"
         md_path = REPORT_DIR / f"conversation-context-{stamp}.md"
+        latest_json_path = REPORT_DIR / "latest.json"
+        latest_md_path = REPORT_DIR / "latest.md"
         json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         md_path.write_text(render_markdown(report), encoding="utf-8")
+        latest_json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        latest_md_path.write_text(render_markdown(report), encoding="utf-8")
         print(f"Report: {md_path}")
+        if not args.no_refresh_report:
+            refresh_report_surfaces_quietly(base_url)
     result = report["result"]
     print(
         f"{result['status']:>10} used_history={result['used_history']} "
@@ -47,6 +66,7 @@ def main() -> int:
 
 
 def run_context_smoke(*, base_url: str, timeout: float) -> dict[str, Any]:
+    base_url = normalize_base_url(base_url)
     started = time.monotonic()
     final, deltas, error = stream_command(
         base_url,
@@ -97,19 +117,8 @@ def context_reply_uses_history(reply: str) -> bool:
     return "3" in lowered or any(marker in lowered for marker in ("correct", "right", "exactly"))
 
 
-def speech_mute_status(base_url: str) -> bool:
-    try:
-        data = get_json(f"{base_url}/api/speech/mute")
-        return bool(data.get("muted", False))
-    except Exception:
-        return False
-
-
-def set_speech_mute(base_url: str, muted: bool) -> None:
-    post_json(f"{base_url}/api/speech/mute", {"muted": muted}, timeout=5)
-
-
 def stream_command(base_url: str, payload: dict[str, Any], *, timeout: float) -> tuple[dict[str, Any] | None, list[str], str | None]:
+    base_url = normalize_base_url(base_url)
     request = urllib.request.Request(
         f"{base_url}/api/command/stream",
         data=json.dumps(payload).encode("utf-8"),
@@ -156,24 +165,6 @@ def process_event(event_name: str, data_lines: list[str], deltas: list[str], fin
     elif event_name == "final" and isinstance(data, dict):
         return data
     return final
-
-
-def get_json(url: str) -> dict[str, Any]:
-    with urllib.request.urlopen(url, timeout=5) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    return data if isinstance(data, dict) else {}
-
-
-def post_json(url: str, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    return data if isinstance(data, dict) else {}
 
 
 def render_markdown(report: dict[str, Any]) -> str:

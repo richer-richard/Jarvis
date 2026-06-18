@@ -4,13 +4,18 @@ import Foundation
 import JarvisClient
 import Vision
 
-struct NativeOutlookOCRResult: Sendable {
-    let text: String
-    let diagnostics: VisibleOutlookTextDiagnostics
+public struct NativeOutlookOCRResult: Sendable {
+    public let text: String
+    public let diagnostics: VisibleOutlookTextDiagnostics
+
+    public init(text: String, diagnostics: VisibleOutlookTextDiagnostics) {
+        self.text = text
+        self.diagnostics = diagnostics
+    }
 }
 
-enum JarvisNativeOutlookReader {
-    static func readVisibleOutlookText() async throws -> NativeOutlookOCRResult {
+public enum JarvisNativeOutlookReader {
+    public static func readVisibleOutlookText() async throws -> NativeOutlookOCRResult {
         try await focusOutlook()
         try await Task.sleep(nanoseconds: 1_200_000_000)
 
@@ -44,7 +49,7 @@ enum JarvisNativeOutlookReader {
         )
     }
 
-    static func readVisibleScreenText(
+    public static func readVisibleScreenText(
         targetAppName: String? = nil,
         targetBundleIdentifier: String? = nil
     ) async throws -> NativeOutlookOCRResult {
@@ -218,7 +223,10 @@ enum JarvisNativeOutlookReader {
         )
     }
 
-    static func failureDiagnostics(for error: Error, source: String = "native_vision_ocr") -> VisibleOutlookTextDiagnostics {
+    public static func failureDiagnostics(
+        for error: Error,
+        source: String = "native_vision_ocr"
+    ) -> VisibleOutlookTextDiagnostics {
         VisibleOutlookTextDiagnostics(
             source: source,
             lineCount: 0,
@@ -234,13 +242,13 @@ enum JarvisNativeOutlookReader {
     }
 }
 
-enum NativeOutlookReadError: Error, CustomStringConvertible {
+public enum NativeOutlookReadError: Error, CustomStringConvertible {
     case appNotFound(String)
     case screenRecordingDenied
     case captureFailed
     case openAppFailed(String, String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .appNotFound(let appName):
             return "\(appName) was not found by bundle identifier or fallback path."

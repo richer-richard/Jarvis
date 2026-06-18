@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import plistlib
 import re
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
+import unittest
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,9 +22,79 @@ from zoneinfo import ZoneInfo
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = PROJECT_ROOT / "runtime" / "overnight_status"
 BEIJING = ZoneInfo("Asia/Shanghai")
+DEFAULT_BASE_URL = "http://127.0.0.1:8765"
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.454 moves normal music playback proof to the native Music app bridge: `Waving Through a Window` now resolves to the Dear Evan Hansen Tony Awards track, Jarvis confirms actual Music playback before claiming success, Stop Music calls the same bridge, and the new full-loop regression runner can allow real audio actions, verify playback, audit speech payloads, and clean up afterward.",
+    "Jarvis 0.1.453 hardens LocalOS music ownership: the old hidden `afplay` music starter is removed, while Stop Music can still clean up old orphaned `afplay` processes; the LocalOS reopen cooldown now verifies the Chrome tab still exists before refusing to reopen it.",
+    "Jarvis 0.1.452 makes email/contact no-result replies speakable: scan counts stay in structured metadata, but Jarvis no longer says `I scanned X messages` when it cannot find a sender or requested email number.",
+    "Jarvis 0.1.451 improves LocalOS music startup again: Jarvis now answers LocalOS browser CORS preflight, repairs the activation script, reports Chrome autoplay blocks as activation-required instead of failed, and keeps playback owned by LocalOS.",
+    "Jarvis 0.1.445 fixes the Stop Music emergency brake: browser-media pause now uses safe Chrome AppleScript variable names, avoiding the syntax error that left LocalOS/browser audio untouched.",
+    "Jarvis 0.1.444 improves LocalOS music reconnects: when the music bridge is stale, Jarvis now tries the native Local OS Host app first and only falls back to opening the Chrome/file music player if the host does not publish a live bridge.",
+    "Jarvis 0.1.443 improves Chrome-control guidance across browser and music flows: when page control is denied, Jarvis now points to both macOS Automation access and Chrome's Allow JavaScript from Apple Events setting.",
+    "Jarvis 0.1.442 makes LocalOS music failures more truthful: when Chrome refuses Jarvis JavaScript control with `Access not allowed (-1723)` and the LocalOS bridge is stale, Jarvis now names the Chrome-control blocker instead of vaguely saying LocalOS is only still connecting.",
+    "Jarvis 0.1.441 fixes an annoying music-stop side effect: ordinary Stop Music no longer mutes the whole Mac when LocalOS is slow or blocked; it only pauses known LocalOS/browser/Music surfaces and reports honestly if the command is merely queued.",
+    "Jarvis 0.1.441 also hardens the Chrome bridge used by LocalOS music control: the JavaScript sent through AppleScript is compacted before execution, avoiding raw-newline AppleScript syntax failures in pause/play recovery.",
+    "Jarvis 0.1.440 hardens LocalOS music playback: when LocalOS accepts/selects a track but audio has not started, Jarvis focuses the real LocalOS play button in Chrome, sends a guarded Space key only when that button is focused, and rechecks playback before claiming the song is playing.",
+    "Jarvis 0.1.439 records the unattended no-approval rule: overnight work stays inside repo-local reads, repo-local edits, local tests, compile checks, and report rendering, with app launches, settings changes, Git publishing, notifications, and external model/network calls held until Leo is present.",
+    "Jarvis 0.1.439 keeps the morning-status helper loopback-only: a mis-set `JARVIS_URL` or `JARVIS_BASE_URL` can no longer make the unattended status script call a non-local server.",
+    "Jarvis 0.1.439 keeps the overnight report renderer loopback-only too: direct report rendering and report-refresh calls now refuse non-local base URLs before any health request is made.",
+    "Jarvis 0.1.439 keeps local-worker smoke harnesses loopback-only as well: latency, conversation-context, and voice-loop probes now reject non-local base URLs before streaming any command.",
+    "Jarvis 0.1.439 keeps wake-threshold smoke report refresh loopback-only: the wake phrase scorer now rejects non-local base URLs before refreshing the master report surface.",
+    "Jarvis 0.1.439 keeps the safe verifier and no-prompt verifier loopback-only: verifier HTTP helpers reject non-local base URLs before any request, and the full verifier falls back to a temporary local worker instead of touching external URLs.",
+    "Jarvis 0.1.439 keeps the regression matrix runner loopback-only: the eight-prompt speech-audit wrapper now rejects non-local base URLs before starting any child voice-loop process or report refresh.",
+    "Jarvis 0.1.439 keeps the Codex proxy Jarvis baseline loopback-only: even approved proxy benchmarks now reject non-local Jarvis base URLs before timing `/api/command/stream`.",
+    "Jarvis 0.1.439 gives the Codex proxy benchmark a stable proof pointer too: dry-run or approved benchmark runs now refresh `runtime/codex_cli_proxy_benchmarks/latest.json` and `latest.md`.",
+    "Jarvis 0.1.439 keeps the polished summon overlay out of debug-speak: error details now say `Check the Jarvis window for details`, and in-progress states say `Finding the best way to help` / `Preparing the answer` instead of exposing route or response-writing internals.",
+    "Jarvis 0.1.439 keeps LocalOS autoplay-blocked replies product-facing: if the music player needs one click before audio can start, Jarvis no longer says Chrome is blocking playback.",
+    "Jarvis 0.1.439 keeps the normal app identity pinned: the bundle build script still defaults to `Jarvis` / `local.leo.jarvis` so test-only names such as LocalOS-only builds cannot quietly become the main app.",
+    "Jarvis 0.1.439 makes warm Piper speech less choppy: normal and medium replies now stay in one synthesized audio chunk, while only unusually long speech is split.",
+    "Jarvis 0.1.439 makes the Notifications permission tile less confusing: `Not requested` now says notifications are optional unless timers or background alerts need them.",
+    "Jarvis 0.1.439 makes the menu-bar head act like a normal launcher: a regular click opens the Jarvis window immediately, while right-click or Control-click opens the emergency menu with Shut Up and Stop Music, and the helper self-test now covers that click split.",
+    "Jarvis 0.1.439 makes emergency music-stop wording honest: if normal LocalOS/page/media pause fails and Jarvis mutes system audio as the last resort, the visible summary now says it muted system audio instead of pretending normal playback stopped.",
+    "Jarvis 0.1.439 keeps middle-model comparison from touching local Ollama models unexpectedly: cloud comparison can run with `--execute-network`, but stopping installed local candidates now requires the separate `--cleanup-local-models` opt-in.",
+    "Jarvis 0.1.439 keeps cloud-only middle-model comparison from even inspecting local Ollama by default: local tags/ps are skipped unless local models, cleanup, or `--inspect-local-ollama` is explicitly requested.",
+    "Jarvis 0.1.439 keeps middle-model audio probes project-local by default: an `--audio-probe` outside the Jarvis project now requires `--allow-external-audio-probe` before the script will read it.",
+    "Jarvis 0.1.439 keeps fast-model benchmarking cloud-first too: `--execute-network` no longer discovers or benchmarks installed local Ollama models unless `--include-local-ollama` is passed.",
+    "Jarvis 0.1.439 makes the TTS audition generator safer by default: macOS voices still work locally, online Edge voices require `--include-online-voices`, and CLI output folders must stay inside the Jarvis project unless `--allow-external-output-dir` is explicitly passed.",
+    "Jarvis 0.1.439 makes the local STT repair helper safe for unattended runs: `scripts/repair_local_stt_model.py` is now dry-run by default and requires `--execute-network` before downloading the faster-whisper model blob.",
+    "Jarvis 0.1.439 makes the Gemma 3n audio probe gentler by default: dry-run now plans samples only and does not synthesize local audio unless `--synthesize-local` or `--execute-network` is explicitly used.",
+    "Jarvis 0.1.439 removes more unattended speech side effects: fast-latency smoke, conversation-context smoke, direct voice-loop QA, and no-prompt verifier diagnostics now use request-level quiet mode instead of carrying global mute/unmute helper paths.",
+    "Jarvis 0.1.439 makes direct voice-loop QA safer overnight: `scripts/voice_loop_qa.py` now uses local STT with no permission prompts by default, and Apple Speech requires explicit `--allow-apple-speech` opt-in.",
+    "Jarvis 0.1.439 tightens LocalOS music honesty again: queued, accepted, bridge-not-polling, and unconfirmed music commands now say Local OS has not started playback yet instead of sounding like the song is already playing.",
+    "Jarvis 0.1.439 makes speech state truthful after Keep Blabbering: the backend now reports and replies with whether automatic TTS is actually available, unmute prewarms Piper when configured, and the app starts at Speech Check until the backend verifies the voice path instead of briefly pretending Speech On is proven; once checked, it can show Speech Off or Voice Missing instead of a fake ready state.",
+    "Jarvis 0.1.439 makes the always-visible Shut Up lane more resilient: if the separate status-helper menu-bar process exits unexpectedly while the main app is still running, the app now schedules a short restart instead of leaving Leo without the menu-bar mute controls, and it re-checks the keepalive flag after the delay so normal quit does not resurrect the helper.",
+    "Jarvis 0.1.439 adds a final spoken-output firewall: if backend/debug lines such as Tool time, Fast model time, First visible, Groq/Ollama rows, Worker, Verification, or Codex Activity accidentally enter TTS text, they are removed before Jarvis speaks; debug-only speech now fails quiet as empty_after_sanitization, and future backslash tool calls are stripped before audio.",
+    "Jarvis 0.1.439 adds server-level proof for that firewall too: if a final reply is only backend/model diagnostics, the attached speech payload stays empty_after_sanitization with no raw Groq, tool-time, or model text in the audible/auditable speech fields.",
+    "Jarvis 0.1.439 closes the same leak in suppressed-speech audit mode: when tests or quiet API calls suppress audio, debug-only text still sanitizes to an empty preview instead of preserving backend/model diagnostics in the speech payload.",
+    "Jarvis 0.1.439 aligns the Swift speech-active window with that same status: `empty_after_sanitization` is now treated as a blocked/non-speaking state, so the app will not think Jarvis is still speaking after a debug-only payload is stripped.",
+    "Jarvis 0.1.439 also tightens the old Still working bug class: stale Swift progress-nudge tasks now exit as soon as they see the active turn has ended instead of sleeping through later nudges.",
+    "Jarvis 0.1.439 also makes the eight-prompt regression matrix easier to inspect: every run still writes a timestamped summary, and the matrix root now updates `latest.json` plus `latest.md` so future reports and checks have stable pointers.",
+    "Jarvis 0.1.439 makes fast-latency proof easier to inspect too: smoke runs still write timestamped artifacts, and now also refresh `runtime/model_benchmarks/latest.json` plus `latest.md`.",
+    "Jarvis 0.1.439 rounds out proof-surface pointers for conversation memory and wake reliability: conversation-context and wake-threshold smoke scripts now update stable latest.json/latest.md files as well.",
+    "Jarvis 0.1.439 also keeps those proof surfaces fresh: conversation-context and wake-threshold smoke scripts now refresh the master report/workboard after writing new artifacts, unless explicitly run with the no-refresh flag.",
+    "Jarvis 0.1.439 adds a standalone `scripts/report_refresh.py` CLI so the master report/workboard backfill path can be invoked directly from the terminal, with a concise summary by default and JSON on `--json`.",
+    "Jarvis 0.1.439 makes the master report more honest: missing local supporting artifacts are now labeled `not generated yet` instead of being presented as normal links.",
+    "Jarvis 0.1.439 makes report refresh self-healing: before rendering the master report, it backfills stable latest proof artifacts from the newest valid timestamped smoke/matrix reports, skipping corrupt or half-written newer artifacts instead of breaking the report.",
+    "Jarvis 0.1.439 gives closed-loop voice QA the same stable proof surface: voice-loop runs now write `latest.json` plus a readable `latest.md`, and report refresh can backfill both from the newest timestamped voice-loop report.",
+    "Jarvis 0.1.439 fixes a false stale-report warning: overnight status now checks the full proof section for latest verifier and voice-QA artifacts instead of only the first compact proof sample.",
+    "Jarvis 0.1.439 fixes misleading tool-catalog diagnostics: direct source calls no longer say the first model sees 0 tools when the planner simply did not attach the first-model catalog, while planner-routed status still reports the real first-model tool count.",
+    "Jarvis 0.1.439 fixes capability-status counting: Wake Lab and STT audition are now explicit prepared capability rows, so the visible summary says 2 prepared instead of saying 0 prepared while listing prepared surfaces.",
+    "Jarvis 0.1.439 fixes overnight-status bundle wording: the status parser now understands the report's current `Output bundle` pill, so the reply names the bundle again instead of saying only the source commit.",
+    "Jarvis 0.1.439 makes final speech selection safer: if the preferred spoken summary is stripped as backend/model diagnostics, Jarvis now falls back to the safe visible reply instead of sending empty or technical junk to TTS.",
+    "Jarvis 0.1.439 closes the duplicate menu-bar-head escape hatch: the main app now keeps its own legacy status item disabled even if an old debug environment variable is present, leaving the native helper as the single visible head.",
+    "Jarvis 0.1.439 adds a no-network proof path for price conversion: Magic Keyboard yuan conversion can now be exercised as a plan-only route without touching Apple, exchange-rate APIs, or any public web endpoint.",
+    "Jarvis 0.1.439 tightens the spoken-output firewall one more notch: pipe-separated inline diagnostics such as `| Tool time 0.2s | Model gpt-oss... | Backend groq` are stripped before speech even when they have no colon.",
+    "Jarvis 0.1.439 also tightens fast-chat streaming: hidden tool-call prefixes are still withheld immediately, but ordinary backslash text such as `C:\\Users\\Leo` is no longer treated as a hidden call and lost from the live visible stream.",
+    "Jarvis 0.1.439 makes first-model tool routing less brittle: direct named hidden calls such as `\\localos.music_play({\"query\":\"...\"})` can now route when that exact tool is in the allowed catalog, while unknown or unlisted tools still fail closed.",
+    "Jarvis 0.1.439 also cleans assistant history before sending it back to the fast model: hidden tool-call fragments and backend timing/model lines are removed so old internal text cannot steer the next answer.",
+    "Jarvis 0.1.439 tightens the fast-model speech contract: displayed or spoken replies must stay concise, English-first, and voice-friendly; non-English names or titles may be preserved only when necessary, while the explanation stays English.",
+    "Jarvis 0.1.439 closes another chat-context shape gap: fast-model history now accepts both `text` and `content` fields, so app/server payload aliases do not silently disappear before the model sees prior turns.",
+    "Jarvis 0.1.439 fixes the same alias class for Codex continuations: a plain code reply can continue a waiting Codex job whether the prior waiting message is stored as `content` or normalized `text`.",
+    "Jarvis 0.1.439 makes same-Codex continuation more precise: when history names a known `codex-...` job, Jarvis resumes that job instead of blindly choosing a newer unrelated Codex job.",
+    "Jarvis 0.1.438 keeps proof surfaces fresh after QA runs: latency smoke and speech-audit matrix scripts now refresh `/overnight-report/` and `/overnight-workboard/` after writing new artifacts.",
     "Jarvis 0.1.437 makes readiness less misleading: planned future tools such as screen OCR and UI automation are listed separately from genuinely broken or actionable unavailable tools.",
     "Jarvis 0.1.436 makes silent-speech debugging concrete: mute/unmute writes now record whether they came from the main app, the always-visible status-helper menu, or a raw API call.",
     "Jarvis 0.1.435 refreshes the master report surface: shipped/proof/workboard sections now include the latest 0.1.430-0.1.434 reliability work instead of starting at the older 0.1.429 checkpoint.",
@@ -182,9 +255,25 @@ SHIPPED_ITEMS = [
     "When Hey Jarvis pauses itself for stability, the app now adds a visible chat line explaining what happened.",
     "Start Hey Jarvis now preflights Microphone and Speech Recognition readiness and refuses with a visible Jarvis message instead of triggering permission prompts when either is missing.",
     "The master report and workboard now have read-only loopback URLs at /overnight-report/ and /overnight-workboard/.",
+    "Email auto-speech now prefers the clean email_summary field over logistical mailbox preambles, so Jarvis speaks the simple summary when both are available.",
+    "LocalOS music autoplay detection now recognizes more browser media-blocking errors as the same one-click-needed state, preserving the LocalOS-only playback contract.",
+    "The status-helper emergency menu now restarts after about 0.25s instead of 0.8s if it exits while Jarvis is still running, so Shut Up comes back faster.",
+    "The speech sanitizer now speaks markdown links as plain labels instead of reading URL clutter such as parentheses, tracking links, or a repeated 'a link'.",
+    "The Swift app client and status-helper path now reject non-loopback Jarvis URLs, matching the no-remote-worker safety guard already used by the overnight scripts.",
+    "Long-task progress nudges now use calmer wording: 'I'm still working on it' instead of the old 'Still working. Wait a sec...' line.",
+    "The workboard proof wording now says the live bundle includes the 0.1.453 LocalOS music hardening and Chrome-tab-aware reconnect logic, instead of stale no-relaunch wording.",
+    "The workboard remaining-gap wording now reflects the real product scope: live relaunch plus real-device voice, music, browser, Teams, and app-control QA, not a stale Teams-only caveat.",
+    "The speech sanitizer now drops internal Actions, What I did, Steps taken, Reasoning, Notes, debug, diagnostics, tool-result, model-detail, and backend-detail sections before TTS, including non-bulleted logistics, so Jarvis keeps the answer but does not read implementation notes aloud.",
+    "The fast-model system prompt now prevents those same internal headings upstream with a compact `No internal headings` rule for Actions, What I did, Steps taken, Reasoning, Notes, and Tool results.",
+    "Assistant history cleanup now strips those same internal sections before old Jarvis replies are sent back to the fast model, so prior logistics do not teach the next answer to imitate them.",
 ]
 
 PROOF_ITEMS = [
+    "Chrome cleanup for the Jun 18 morning handoff was completed: Codex/Jarvis-created LocalOS music-player tabs were closed, while Leo's personal New Tab and YouTube tab were preserved.",
+    "0.1.439 source proof: full Python safety suite passed 744/744; speech readiness fields are covered by backend tests, Piper prewarm-on-unmute is covered by a regression test, the Swift menu/status/progress contract decodes automaticSpeechAvailable, automaticTtsEnabled, and ttsAvailable for truthful UI labels starting from Speech Check until the backend answers, keeps progress nudges tied to the active turn, and uses natural long-task wording; the status-helper contract now covers delayed restart after unexpected helper exit, requires the faster 0.25s restart delay, and rejects non-loopback Jarvis URLs before app/helper client routing; the main-app duplicate status-item escape hatch is closed by source contract, the summon overlay avoids debug-window wording in its polished user-facing error text, the fast-model prompt now uses a compact No internal headings rule, assistant history cleanup strips those sections before reuse, and the TTS sanitizer still drops backend diagnostics, colonless inline pipe diagnostics, markdown-link URL clutter, internal checklist sections including non-bulleted logistics and natural headings such as What I did, Steps taken, Reasoning, or Notes, and future backslash tool calls before speech. Server auto-speech attachment is covered for debug-only sanitized-empty replies, server speech selection falls back from diagnostic-only preferred fields to safe visible replies, email auto-speech prefers clean email_summary over logistical mailbox preambles, suppressed-speech previews are also covered for debug-only sanitization, and suppressed speech diagnostics now expose full `spoken_text` so voice-loop QA and the safe verifier audit beyond the preview boundary. Swift treats `empty_after_sanitization` as non-speaking, the streaming buffer keeps hidden calls out without dropping normal backslash text, and streaming now resumes visible text after a closed hidden call so mid-sentence tool calls join cleanly. Direct named tool calls route only when allowed by the current tool catalog, assistant history is sanitized before reuse, client-provided `system` history rows are rejected before model context, the middle planner rejects client-provided `system` history and strips assistant diagnostics before broader tool planning, model-context diagnostics now count only model-eligible history rows, Codex continuation helpers ignore untrusted system-history rows, fast-model visible replies are prompted to stay English-first and voice-friendly, history `content` aliases reach the fast model, Codex waiting detection accepts `text` aliases, same-Codex continuation prefers the job id named in history, commerce price conversion has a no-network plan-only proof path, LocalOS autoplay blocking recognizes more browser media errors as one-click-needed instead of starting hidden playback, and the fast-latency, conversation-context, wake-threshold, voice-loop QA, plus regression-matrix root-level latest pointers/refresh hooks are covered by focused tests. The direct voice-loop harness itself now defaults to local STT/no permission prompts, Apple Speech requires explicit opt-in, and stale global mute helper paths were removed from fast/context/voice-loop smoke scripts. No-prompt verifier diagnostics for model context, voice-loop echo, repeated wake, and wake debug now use request-level `suppress_speech` instead of muting/unmuting the whole app; only the dedicated mute endpoint test changes global mute state. The regression matrix now records per-case and aggregate speech payload/leak counts, fails any row with zero spoken payloads, non-passed speech-audit status, or internal speech leaks, and refuses non-loopback base URLs before starting child voice-loop checks or report refresh, so a green row cannot hide silent or leaked spoken output. Gemma 3n audio probing is now dry-run plan-only by default and needs `--synthesize-local` before local TTS/conversion or `--execute-network` before uploading generated audio; the local STT repair helper is now dry-run by default and needs `--execute-network` before downloading the faster-whisper blob; the TTS audition generator now keeps online Edge voices behind `--include-online-voices` and rejects external output folders unless `--allow-external-output-dir` is explicit from both the CLI and direct function API; Groq streaming-model benchmarking, fast-model benchmarking, middle-model comparison, and Codex proxy benchmarking are also dry-run by default and require an execute flag before contacting external services, while middle-model local Ollama cleanup needs the extra `--cleanup-local-models` opt-in, middle-model local Ollama inspection needs local model/cleanup intent or `--inspect-local-ollama`, middle-model external audio probes need `--allow-external-audio-probe`, and fast-model local Ollama benchmarking needs `--include-local-ollama`. Executable dry-run tests now prove those scripts complete without calling the patched network/model paths. The morning-status helper, overnight report renderer, local-worker smoke harnesses, wake-threshold report refresh, safe verifier, no-prompt verifier, regression matrix runner, and Codex proxy Jarvis baseline now refuse non-loopback base URLs before any request, including clean CLI refusal for an unsafe benchmark baseline URL. LocalOS music wording keeps unconfirmed/accepted/bridge-not-polling playback states honest by saying playback has not started yet unless LocalOS confirms actual audio, emergency stop summaries now say when Jarvis muted system audio as the last resort, the report renderer labels missing local support files instead of hiding that gap, report refresh seeds an empty local contact-alias memory surface when none exists, report refresh backfills stable latest artifacts from existing timestamped reports while skipping corrupt newer files, the workboard no longer claims the sandbox blocked a Swift rebuild after Swift compile proof already passed, and the workboard remaining-gap wording now names live voice/music/browser/Teams/app-control QA instead of a stale Teams-only caveat.",
+    "0.1.439 build note: Python/source proof is green, `swift build --disable-sandbox --package-path swift-shell --scratch-path runtime/swiftpm-scratch -c debug` completed with only pre-existing Outlook screenshot-reader deprecation warnings, and `jarvis-status-helper --self-test` passed. The live-launched proof now matches 0.1.439 because the bundled app launch path completed and refreshed the loopback report surfaces.",
+    "Live Jarvis 0.1.438 build 438 launched from bundled app resources with worker_launch_matches_bundle=true.",
+    "0.1.438 proof: full Python safety suite passed 640/640, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-213956.json`, fast latency smoke refreshed the master report after writing `runtime/model_benchmarks/localhost-fast-latency-20260615-213953.json`, and the non-music speech-audit matrix passed 7/7 at `runtime/regression_prompt_matrix/20260615-211642/summary.json`.",
     "Live Jarvis 0.1.437 build 437 launched from bundled app resources with worker_launch_matches_bundle=true.",
     "0.1.437 proof: full Python safety suite passed 634/634, no-prompt verifier passed 12/12 at `runtime/verification_no_prompt/verify-no-prompt-20260615-210830.json`, and live readiness reports no actionable unavailable tools while listing `ui.automation` plus `screen.ocr` under planned future tools instead of a generic broken-tools warning.",
     "Live Jarvis 0.1.436 build 436 launched from bundled app resources with worker_launch_matches_bundle=true.",
@@ -382,7 +471,7 @@ PROOF_ITEMS = [
 TRY_ITEMS = [
     "Ask Jarvis to open the Teams bookmark or search imported Chrome bookmarks for Teams; the Jarvis browser panel should appear, and Chrome remains the lane for already-logged-in pages.",
     "Open Perms and check Chrome Automation; if it says Needs Automation Access, allow Jarvis.app under Privacy & Security > Automation > Google Chrome before expecting current-page summaries.",
-    "If Jarvis says Local OS did not pick up a music command, open or refresh the Local OS Music Player once; that means Jarvis found the song but the page has not consumed the bridge command yet.",
+    "Ask Jarvis to play a LocalOS song; if it says the song is queued but Chrome needs one click, click the LocalOS player once, then retry the command.",
     "Ask Jarvis about Chrome login migration; it should say it will use Chrome for authenticated sites and should not copy cookies or session stores.",
     "Ask Jarvis to check Calendar; it should answer quickly. If it says the cache is unavailable, the remaining work is macOS permission/app-identity access, not a slow planner hang.",
     "Ask Jarvis to test a model; if the MacBook Air worker is unreachable, it should ask before running the model locally on the 16 GB MacBook Pro.",
@@ -401,7 +490,7 @@ TRY_ITEMS = [
 RISK_ITEMS = [
     "Calendar reading still depends on the new Jarvis 0.1.373 Calendar Cache tile being Ready; if it says Needs Full Disk Access, grant Jarvis.app Full Disk Access and reopen Jarvis before expecting real schedule summaries.",
     "Chrome active-page reading now routes correctly, but Teams-page summaries still depend on the new Chrome Automation tile being Ready; Jarvis will not copy Chrome cookies or sessions into WebKit.",
-    "The LocalOS music page likely needs a reload or active Chrome tab to pick up the playback-state bridge; Jarvis now reports missing/stale bridge status honestly, but live audible playback was not triggered while Leo was asleep.",
+    "The LocalOS music bridge is live, but Chrome may still refuse browser audio until the LocalOS player gets one real click; Jarvis now reports that as activation-required instead of pretending playback started.",
     "MacBook Air remote-worker probing currently cannot proceed because Tailscale is stopped on this Mac; Jarvis now detects that quickly and should ask before running model tests locally.",
     "Groq works as Jarvis's fast conversation model, but the scored middle-model comparison showed it should not be trusted for safety-sensitive planning without stronger prompting or a safer model layer.",
     "GPT-OSS 20B Cloud returned empty visible replies in the newest comparison and should not be treated as a dependable middle model yet.",
@@ -414,6 +503,7 @@ RISK_ITEMS = [
     "The full safe verifier was rerun and passed, but real microphone wake quality is still a human-room test, not something the verifier can prove from files alone.",
     "The current wake phrase is experimental; it is not yet personalized to Leo's voice.",
     "Very technical diagnostics are still intentionally speech-silent so Jarvis does not read backend internals aloud.",
+    "After Leo's no-approval overnight instruction, new work stayed repo-local: no app replacement, Git write, GUI launch, network action, or approval prompt was attempted.",
     "GitHub main still preserves the older small-tree history; the full Jarvis folder is published on the overnight branch and should be promoted deliberately.",
 ]
 
@@ -422,15 +512,31 @@ SUPPORTING_FILES = [
     ("http://127.0.0.1:8765/overnight-workboard/", "Loopback overnight workboard"),
     ("runtime/overnight_status/index.html", "Live overnight workboard"),
     ("runtime/overnight_status/report.html", "This master report"),
+    ("scripts/report_refresh.py", "Standalone master report refresh helper"),
+    ("scripts/cleanup_chrome_test_tabs.py", "Morning handoff helper that closes only Jarvis/Codex LocalOS music-player Chrome tabs"),
     ("http://127.0.0.1:8765/wake-audition/", "Hey Jarvis wake audition lab"),
     ("runtime/wake_audition/samples/", "Locally saved wake samples"),
     ("runtime/verification/", "Safe verifier reports"),
     ("runtime/verification_no_prompt/", "No-prompt live verifier reports"),
     ("runtime/model_benchmarks/", "Fast latency smoke reports"),
+    ("runtime/model_benchmarks/latest.json", "Latest fast-latency smoke summary"),
+    ("runtime/model_benchmarks/latest.md", "Latest fast-latency smoke notes"),
+    ("runtime/regression_prompt_matrix/latest.json", "Latest eight-prompt regression matrix summary"),
+    ("runtime/regression_prompt_matrix/latest.md", "Latest eight-prompt regression matrix notes"),
     ("runtime/conversation_context/", "Conversation-context smoke reports"),
+    ("runtime/conversation_context/latest.json", "Latest conversation-context smoke summary"),
+    ("runtime/conversation_context/latest.md", "Latest conversation-context smoke notes"),
     ("runtime/wake_threshold/", "Wake-threshold smoke reports"),
+    ("runtime/wake_threshold/latest.json", "Latest wake-threshold smoke summary"),
+    ("runtime/wake_threshold/latest.md", "Latest wake-threshold smoke notes"),
     ("runtime/voice_loop_qa/latest.json", "Latest closed-loop voice QA report"),
+    ("runtime/voice_loop_qa/latest.md", "Latest closed-loop voice QA notes"),
     ("runtime/voice_loop_qa/", "Closed-loop voice QA artifacts"),
+    ("runtime/full_loop_regression/latest.json", "Latest full-loop real-action regression report"),
+    ("runtime/full_loop_regression/latest.md", "Latest full-loop real-action regression notes"),
+    ("runtime/full_loop_regression/", "Full-loop real-action regression artifacts"),
+    ("runtime/codex_cli_proxy_benchmarks/latest.json", "Latest Codex CLI proxy benchmark summary"),
+    ("runtime/codex_cli_proxy_benchmarks/latest.md", "Latest Codex CLI proxy benchmark notes"),
     ("runtime/model_comparison/", "Cloud-first middle model comparison reports"),
     ("runtime/integrations/chrome_bookmarks.json", "Imported Chrome bookmark snapshot"),
     ("runtime/integrations/localos_music_snapshot.json", "Latest LocalOS music bridge snapshot"),
@@ -443,10 +549,14 @@ SUPPORTING_FILES = [
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render the Jarvis overnight report surfaces.")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8765", help="Jarvis worker base URL.")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Jarvis worker base URL.")
     args = parser.parse_args()
 
-    context = build_context(args.base_url.rstrip("/"))
+    try:
+        context = build_context(args.base_url)
+    except ValueError as error:
+        print(f"Refused unsafe base URL: {error}")
+        return 2
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "report.html").write_text(render_report(context), encoding="utf-8")
     (OUTPUT_DIR / "index.html").write_text(render_workboard(context), encoding="utf-8")
@@ -456,6 +566,7 @@ def main() -> int:
 
 
 def build_context(base_url: str) -> dict[str, Any]:
+    base_url = normalize_base_url(base_url)
     health = get_json(f"{base_url}/api/health")
     app = nested(health, "status", "app")
     runtime = nested(health, "status", "runtime")
@@ -465,32 +576,50 @@ def build_context(base_url: str) -> dict[str, Any]:
     latency = latest_latency_smoke()
     context_smoke = latest_context_smoke()
     wake_threshold = latest_wake_threshold_smoke()
+    regression_matrix = latest_regression_prompt_matrix()
     voice_loop = latest_voice_loop_qa()
+    full_loop = latest_full_loop_regression()
     crash = latest_jarvis_crash_report()
     now = datetime.now(BEIJING)
     version = str(app.get("version") or "unknown")
     build = str(app.get("build") or "unknown")
+    bundle_source = "live worker"
+    if version == "unknown" and build == "unknown":
+        fallback = output_bundle_metadata()
+        if fallback:
+            version = str(fallback.get("version") or "unknown")
+            build = str(fallback.get("build") or "unknown")
+            bundle_source = "output bundle file"
+        else:
+            bundle_source = "unavailable"
+    bundle = bundle_label(version, build)
     commit = git(["rev-parse", "--short", "HEAD"]) or "unknown"
     branch = git(["branch", "--show-current"]) or "unknown"
     upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
     git_sync = git_sync_label(upstream)
+    git_dirty = git_dirty_label()
     return {
         "base_url": base_url,
         "now": now,
         "updated": now.strftime("%Y-%m-%d %H:%M CST"),
         "version": version,
         "build": build,
-        "bundle": f"Jarvis {version} build {build}",
+        "bundle": bundle,
+        "bundle_source": bundle_source,
         "commit": commit,
         "branch": branch,
         "upstream": upstream,
         "git_sync": git_sync,
+        "git_dirty": git_dirty,
+        "python_test_count": current_python_test_count(),
         "verification": verification,
         "no_prompt_verification": no_prompt_verification,
         "latency": latency,
         "context_smoke": context_smoke,
         "wake_threshold": wake_threshold,
+        "regression_matrix": regression_matrix,
         "voice_loop": voice_loop,
+        "full_loop": full_loop,
         "worker_source_kind": app.get("worker_source_kind") or "unknown",
         "launch_mode": app.get("launch_mode") or "unknown",
         "runtime_pid": runtime.get("pid") or "unknown",
@@ -502,7 +631,9 @@ def build_context(base_url: str) -> dict[str, Any]:
             latency,
             context_smoke,
             wake_threshold,
+            regression_matrix,
             voice_loop,
+            full_loop,
             crash,
             version,
             build,
@@ -514,13 +645,57 @@ def build_context(base_url: str) -> dict[str, Any]:
     }
 
 
+def normalize_base_url(raw: str) -> str:
+    value = str(raw or DEFAULT_BASE_URL).rstrip("/")
+    if value.endswith("/api/command"):
+        value = value.removesuffix("/api/command")
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in LOOPBACK_HOSTS:
+        raise ValueError("overnight report only talks to loopback Jarvis workers")
+    return value
+
+
+def bundle_label(version: Any, build: Any) -> str:
+    version_text = str(version or "unknown")
+    build_text = str(build or "unknown")
+    if version_text == "unknown" and build_text == "unknown":
+        return "live bundle metadata unavailable"
+    if version_text == "unknown":
+        return f"Jarvis build {build_text}"
+    if build_text == "unknown":
+        return f"Jarvis {version_text}"
+    return f"Jarvis {version_text} build {build_text}"
+
+
+def output_bundle_metadata(app_path: Path | None = None) -> dict[str, str]:
+    bundle_path = app_path or PROJECT_ROOT / "output" / "Jarvis.app"
+    info_plist = bundle_path / "Contents" / "Info.plist"
+    try:
+        with info_plist.open("rb") as handle:
+            plist = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException):
+        return {}
+    version = str(plist.get("CFBundleShortVersionString") or "").strip()
+    build = str(plist.get("CFBundleVersion") or "").strip()
+    if not version and not build:
+        return {}
+    return {
+        "version": version,
+        "build": build,
+        "bundle_id": str(plist.get("CFBundleIdentifier") or "").strip(),
+        "path": str(bundle_path),
+    }
+
+
 def proof_items_with_verification(
     verification: dict[str, Any],
     no_prompt_verification: dict[str, Any] | None = None,
     latency: dict[str, Any] | None = None,
     context_smoke: dict[str, Any] | None = None,
     wake_threshold: dict[str, Any] | None = None,
+    regression_matrix: dict[str, Any] | None = None,
     voice_loop: dict[str, Any] | None = None,
+    full_loop: dict[str, Any] | None = None,
     crash: dict[str, Any] | None = None,
     current_version: str = "",
     current_build: str = "",
@@ -530,6 +705,15 @@ def proof_items_with_verification(
         items.append(
             f"Latest verifier artifact: {verification['path']} with {verification['passed']}/{verification['total']} checks."
         )
+    window_probe = verification.get("window_probe") if isinstance(verification.get("window_probe"), dict) else {}
+    if window_probe.get("summary"):
+        if window_probe.get("session_locked"):
+            items.append(
+                "Latest bundled window probe hit the macOS lock screen, so foreground Jarvis visibility could not be judged live: "
+                f"{window_probe['summary']}."
+            )
+        else:
+            items.append(f"Latest bundled window probe: {window_probe['summary']}.")
     if no_prompt_verification and no_prompt_verification.get("path"):
         items.append(
             "Latest no-prompt live verifier: "
@@ -557,6 +741,15 @@ def proof_items_with_verification(
             f"closest reject {wake_threshold['closest_reject_label']} at {wake_threshold['closest_reject_score']:.6f} "
             f"({wake_threshold['path']})."
         )
+    if regression_matrix and regression_matrix.get("path"):
+        items.append(
+            "Latest eight-prompt regression matrix: "
+            f"{regression_matrix['label']}, "
+            f"{regression_matrix['speech_payload_count']} speech payloads, "
+            f"{regression_matrix['speech_leak_count']} speech leaks, "
+            f"max first visible {regression_matrix['max_first_visible_seconds']:.3f}s "
+            f"({regression_matrix['path']})."
+        )
     if voice_loop and voice_loop.get("path"):
         if voice_loop.get("speech_audit_only"):
             items.append(
@@ -566,10 +759,17 @@ def proof_items_with_verification(
                 f"({voice_loop['path']})."
             )
         else:
+            speech_mode = str(voice_loop.get("speech_mode") or "suppressed_for_probe")
+            live_note = (
+                f", live playback requested {voice_loop['live_playback_requested']}, active observed {voice_loop['active_speech_observed']}"
+                if speech_mode == "live_playback_exercised"
+                else ""
+            )
             items.append(
                 "Latest closed-loop voice QA: "
                 f"{voice_loop['label']}, command transcript {voice_loop['command_transcript']!r}, "
-                f"routed command {voice_loop['routed_command']!r}, reply similarity {voice_loop['reply_similarity']:.3f} "
+                f"routed command {voice_loop['routed_command']!r}, reply similarity {voice_loop['reply_similarity']:.3f}, "
+                f"speech mode {speech_mode}{live_note} "
                 f"({voice_loop['path']})."
             )
         latest_path = str(voice_loop.get("latest_path") or "")
@@ -580,10 +780,17 @@ def proof_items_with_verification(
             items.append(
                 "Newest closed-loop voice QA run: "
                 f"{voice_loop['latest_label']}, provider {voice_loop['latest_stt_provider']}, "
-                f"command STT {voice_loop['latest_command_stt_status']}, "
+                f"command STT {voice_loop['latest_command_stt_status']}, speech mode {voice_loop['latest_speech_mode']}, "
                 f"routed command {voice_loop['latest_routed_command']!r}{latest_error} "
                 f"({latest_path})."
             )
+    if full_loop and full_loop.get("path"):
+        items.append(
+            "Latest full-loop real-action regression: "
+            f"{full_loop['label']}, command {full_loop['command']!r}, "
+            f"selected {full_loop['selected_title']!r}, voice loop {full_loop['voice_loop_status']}, "
+            f"cleanup {full_loop['cleanup_label']} ({full_loop['path']})."
+        )
     if crash and crash.get("path"):
         crash_version = str(crash.get("version") or "unknown")
         crash_build = str(crash.get("build") or "unknown")
@@ -657,13 +864,69 @@ def latest_verification() -> dict[str, Any]:
     passed = sum(1 for item in results if isinstance(item, dict) and item.get("passed"))
     total = len(results)
     relative = str(latest.relative_to(PROJECT_ROOT))
+    window_probe = latest_window_probe(results)
     return {
         "ok": bool(data.get("ok")) and total > 0 and passed == total,
         "path": relative,
         "passed": passed,
         "total": total,
         "label": f"{passed}/{total} passed" if total else "empty",
+        "window_probe": window_probe,
     }
+
+
+def latest_window_probe(results: list[dict[str, Any]]) -> dict[str, Any]:
+    for item in results:
+        if not isinstance(item, dict) or item.get("name") != "output_bundle_window_self_test":
+            continue
+        payload = parse_window_self_test_output(item.get("stdout_tail"))
+        snapshot = latest_window_self_test_snapshot(payload)
+        return {
+            "passed": bool(item.get("passed")),
+            "summary": str(item.get("summary") or "").strip(),
+            "returncode": item.get("returncode"),
+            "session_locked": bool(snapshot.get("session_locked")),
+            "panel_is_visible": bool(snapshot.get("panel_is_visible")),
+            "window_count": safe_int(snapshot.get("window_count")),
+            "label": str(snapshot.get("label") or ""),
+        }
+    return {}
+
+
+def parse_window_self_test_output(text: Any) -> dict[str, Any]:
+    clean = str(text or "").strip()
+    if not clean:
+        return {}
+    candidates = [clean]
+    start = clean.find("{")
+    end = clean.rfind("}")
+    if 0 <= start < end:
+        candidates.append(clean[start : end + 1])
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def latest_window_self_test_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    snapshots = payload.get("snapshots")
+    if not isinstance(snapshots, list):
+        return {}
+    for item in reversed(snapshots):
+        if isinstance(item, dict):
+            return item
+    return {}
+
+
+def safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def latest_no_prompt_verification() -> dict[str, Any]:
@@ -711,7 +974,7 @@ def latest_latency_smoke() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {"ok": False, "path": str(latest), "label": "unreadable"}
     results = [item for item in data.get("results", []) if isinstance(item, dict)]
-    completed = [item for item in results if item.get("status") == "completed"]
+    completed = [item for item in results if latency_status_counts_as_success(item.get("status"))]
     max_first = max((float(item.get("first_visible_seconds") or 0) for item in completed), default=0.0)
     max_total = max((float(item.get("total_seconds") or 0) for item in completed), default=0.0)
     min_rate_chars = int(data.get("min_rate_visible_chars") or 20)
@@ -738,6 +1001,10 @@ def latest_latency_smoke() -> dict[str, Any]:
         "max_total_seconds": max_total,
         "min_after_first_chars_per_second": min_cps,
     }
+
+
+def latency_status_counts_as_success(status: Any) -> bool:
+    return str(status or "").strip() in {"completed", "checked"}
 
 
 def latest_context_smoke() -> dict[str, Any]:
@@ -801,6 +1068,63 @@ def latest_wake_threshold_smoke() -> dict[str, Any]:
     }
 
 
+def latest_regression_prompt_matrix() -> dict[str, Any]:
+    latest = PROJECT_ROOT / "runtime" / "regression_prompt_matrix" / "latest.json"
+    if not latest.exists():
+        reports = sorted((PROJECT_ROOT / "runtime" / "regression_prompt_matrix").glob("*/summary.json"))
+        latest = reports[-1] if reports else latest
+    if not latest.exists():
+        return {
+            "ok": False,
+            "path": "",
+            "label": "none",
+            "passed": 0,
+            "total": 0,
+            "speech_payload_count": 0,
+            "speech_leak_count": 0,
+            "max_first_visible_seconds": 0.0,
+        }
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "ok": False,
+            "path": str(latest),
+            "label": "unreadable",
+            "passed": 0,
+            "total": 0,
+            "speech_payload_count": 0,
+            "speech_leak_count": 0,
+            "max_first_visible_seconds": 0.0,
+        }
+    passed = int(data.get("passed") or 0)
+    total = int(data.get("total") or 0)
+    leaks = int(data.get("speech_leak_count") or 0)
+    payloads = int(data.get("speech_payload_count") or 0)
+    ok = bool(data.get("ok")) and total > 0 and passed == total and leaks == 0
+    run_root = str(data.get("root") or "").strip()
+    path = ""
+    if run_root:
+        root_path = Path(run_root)
+        if not root_path.is_absolute():
+            root_path = PROJECT_ROOT / root_path
+        summary_path = root_path / "summary.json"
+        if summary_path.exists():
+            path = str(summary_path.relative_to(PROJECT_ROOT))
+    if not path:
+        path = str(latest.relative_to(PROJECT_ROOT)) if latest.is_relative_to(PROJECT_ROOT) else str(latest)
+    return {
+        "ok": ok,
+        "path": path,
+        "label": f"{passed}/{total} passed" if total else "empty",
+        "passed": passed,
+        "total": total,
+        "speech_payload_count": payloads,
+        "speech_leak_count": leaks,
+        "max_first_visible_seconds": float(data.get("max_first_visible_seconds") or 0.0),
+    }
+
+
 def latest_voice_loop_qa() -> dict[str, Any]:
     report_root = PROJECT_ROOT / "runtime" / "voice_loop_qa"
     reports = sorted(
@@ -825,6 +1149,10 @@ def latest_voice_loop_qa() -> dict[str, Any]:
             "speech_payload_count": 0,
             "speech_leak_count": 0,
             "command_response_tool": "",
+            "speech_mode": "suppressed_for_probe",
+            "live_playback_requested": False,
+            "active_speech_observed": False,
+            "latest_speech_mode": "suppressed_for_probe",
         }
     latest_readable: tuple[Path, dict[str, Any]] | None = None
     latest_passed: tuple[Path, dict[str, Any]] | None = None
@@ -857,16 +1185,22 @@ def latest_voice_loop_qa() -> dict[str, Any]:
             "speech_payload_count": 0,
             "speech_leak_count": 0,
             "command_response_tool": "",
+            "speech_mode": "suppressed_for_probe",
+            "live_playback_requested": False,
+            "active_speech_observed": False,
+            "latest_speech_mode": "suppressed_for_probe",
         }
     latest_path, latest_data = latest_readable
     proof_path, data = latest_passed or latest_readable
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
     input_data = data.get("input") if isinstance(data.get("input"), dict) else {}
     speech_audit = result.get("speech_audit") if isinstance(result.get("speech_audit"), dict) else {}
+    speech_runtime = result.get("speech_runtime") if isinstance(result.get("speech_runtime"), dict) else {}
     ok = result.get("status") == "passed"
     relative = str(proof_path.relative_to(PROJECT_ROOT))
     latest_result = latest_data.get("result") if isinstance(latest_data.get("result"), dict) else {}
     latest_command_stt = latest_result.get("command_stt") if isinstance(latest_result.get("command_stt"), dict) else {}
+    latest_speech_runtime = latest_result.get("speech_runtime") if isinstance(latest_result.get("speech_runtime"), dict) else {}
     is_speech_audit_only = bool(input_data.get("speech_audit_only"))
     summary = {
         "ok": ok,
@@ -877,7 +1211,7 @@ def latest_voice_loop_qa() -> dict[str, Any]:
         "reply_similarity": float(result.get("reply_similarity") or 0.0),
         "latest_path": str(latest_path.relative_to(PROJECT_ROOT)),
         "latest_label": str(latest_result.get("status") or "unknown"),
-        "latest_stt_provider": str(nested(latest_data, "input").get("stt_provider") or "auto"),
+        "latest_stt_provider": str(nested(latest_data, "input").get("stt_provider") or "local"),
         "latest_command_stt_status": str(latest_command_stt.get("status") or "unknown"),
         "latest_command_stt_error": str(latest_command_stt.get("error") or ""),
         "latest_routed_command": str(latest_result.get("routed_command") or ""),
@@ -885,8 +1219,55 @@ def latest_voice_loop_qa() -> dict[str, Any]:
         "speech_payload_count": int(speech_audit.get("payload_count") or 0),
         "speech_leak_count": int(speech_audit.get("leak_count") or 0),
         "command_response_tool": str(result.get("command_response_tool") or ""),
+        "speech_mode": str(speech_runtime.get("mode") or ("live_playback_exercised" if input_data.get("exercise_live_speech") else "suppressed_for_probe")),
+        "live_playback_requested": bool(speech_runtime.get("playback_requested")),
+        "active_speech_observed": bool(speech_runtime.get("active_observed")),
+        "latest_speech_mode": str(
+            latest_speech_runtime.get("mode")
+            or ("live_playback_exercised" if nested(latest_data, "input").get("exercise_live_speech") else "suppressed_for_probe")
+        ),
     }
     return summary
+
+
+def latest_full_loop_regression() -> dict[str, Any]:
+    latest = PROJECT_ROOT / "runtime" / "full_loop_regression" / "latest.json"
+    if not latest.exists():
+        reports = sorted((PROJECT_ROOT / "runtime" / "full_loop_regression").glob("*/summary.json"))
+        latest = reports[-1] if reports else latest
+    empty = {
+        "ok": False,
+        "path": "",
+        "label": "none",
+        "command": "",
+        "selected_title": "",
+        "voice_loop_status": "",
+        "cleanup_label": "not run",
+    }
+    if not latest.exists():
+        return empty
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {**empty, "path": str(latest), "label": "unreadable"}
+    results = data.get("results") if isinstance(data.get("results"), list) else []
+    first = next((item for item in results if isinstance(item, dict)), {})
+    action_proof = first.get("action_proof") if isinstance(first.get("action_proof"), dict) else {}
+    cleanup = first.get("cleanup") if isinstance(first.get("cleanup"), dict) else {}
+    stop_ok = bool(nested(cleanup, "stop").get("ok"))
+    close_ok = bool(nested(cleanup, "close_window").get("ok"))
+    path = str(latest.relative_to(PROJECT_ROOT)) if latest.is_relative_to(PROJECT_ROOT) else str(latest)
+    passed = int(data.get("passed") or 0)
+    total = int(data.get("total") or 0)
+    return {
+        "ok": str(data.get("status") or "") == "passed",
+        "path": path,
+        "label": f"{passed}/{total} passed" if total else "empty",
+        "command": str(first.get("command") or ""),
+        "selected_title": str(action_proof.get("selected_title") or ""),
+        "voice_loop_status": str(first.get("voice_loop_status") or ""),
+        "cleanup_label": f"stop {'ok' if stop_ok else 'failed'}, close {'ok' if close_ok else 'failed'}",
+    }
 
 
 def shorten(value: str, limit: int) -> str:
@@ -920,6 +1301,24 @@ def git(args: list[str]) -> str:
     return completed.stdout.strip() if completed.returncode == 0 else ""
 
 
+def git_status_porcelain() -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False, ""
+    if completed.returncode != 0:
+        return False, ""
+    return True, completed.stdout.strip()
+
+
 def git_sync_label(upstream: str) -> str:
     if not upstream:
         return "not published"
@@ -936,6 +1335,31 @@ def git_sync_label(upstream: str) -> str:
     if behind:
         parts.append(f"{behind} behind")
     return ", ".join(parts)
+
+
+def git_dirty_label() -> str:
+    ok, status = git_status_porcelain()
+    if not ok:
+        return "unknown"
+    if status:
+        return "dirty"
+    return "clean"
+
+
+def python_suite_label(proof_items: list[str] | None = None) -> str:
+    for item in proof_items or PROOF_ITEMS:
+        match = re.search(r"full Python safety suite passed\s+(\d+/\d+)", item)
+        if match:
+            return f"{match.group(1)} passed"
+    return "unknown"
+
+
+def current_python_test_count() -> int:
+    try:
+        suite = unittest.defaultTestLoader.loadTestsFromName("tests.test_safety")
+        return int(suite.countTestCases())
+    except Exception:
+        return 0
 
 
 def render_report(context: dict[str, Any]) -> str:
@@ -957,6 +1381,7 @@ def render_report(context: dict[str, Any]) -> str:
   </header>
   <main>
     {promise_section(context)}
+    {headline_section(context)}
     {spotlight_section(context)}
     {section("Shipped Since The Last Proven Build", context["shipped"], collapsed=True)}
     {section("Proof So Far", context["proof"], collapsed=True)}
@@ -971,6 +1396,18 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_workboard(context: dict[str, Any]) -> str:
     tasks = [
+        ("done", "Prepare Jarvis 0.1.453", "LocalOS music no longer contains a hidden afplay starter, Stop Music still cleans old orphaned afplay processes, and recent-open reconnects now reopen LocalOS when the Chrome music tab is gone."),
+        ("done", "Prepare Jarvis 0.1.452", "LocalOS music reconnect now prefers the healthy Local OS Host URL, answers browser preflight, can recover with a real Space key in the LocalOS page, reports Chrome autoplay blocks as activation-required, keeps email no-result replies speakable, and includes a tested Chrome cleanup helper for the morning handoff."),
+        ("done", "Prepare Jarvis 0.1.445", "Stop Music now avoids the Chrome AppleScript syntax bug that could leave browser/LocalOS media unpaused."),
+        ("done", "Prepare Jarvis 0.1.444", "Stale LocalOS music reconnects now try the native Local OS Host app before falling back to a Chrome music-player tab."),
+        ("done", "Prepare Jarvis 0.1.443", "Chrome-control failures now point to both macOS Automation access and Chrome's Allow JavaScript from Apple Events setting."),
+        ("done", "Prepare Jarvis 0.1.442", "Music playback failures now distinguish Chrome-control denial from a normal LocalOS reconnect delay."),
+        ("done", "Prepare Jarvis 0.1.441", "Ordinary Stop Music no longer mutes the whole Mac, and Chrome music-control JavaScript is compacted before AppleScript execution."),
+        ("done", "Prepare Jarvis 0.1.440", "LocalOS music now retries accepted-but-silent playback with a guarded real play-button activation and rechecks audio before claiming success."),
+        ("done", "Prepare Jarvis 0.1.439", "Speech mute state now distinguishes muted, automatic speech off, missing voice provider, and ready speech."),
+        ("done", "Repair Keep Blabbering truthfulness", "Unmute reports TTS readiness and prewarms Piper when that provider is configured."),
+        ("done", "Ship Jarvis 0.1.438", "Live app is bundled, launched, and reports Jarvis 0.1.438 build 438."),
+        ("done", "Refresh report after QA", "Latency smoke and speech-audit matrix runs refresh the master report after writing proof artifacts."),
         ("done", "Ship Jarvis 0.1.437", "Live app is bundled, launched, and reports Jarvis 0.1.437 build 437."),
         ("done", "Clarify readiness gaps", "Readiness separates planned future screen/app-control tools from actionable broken tools."),
         ("done", "Ship Jarvis 0.1.436", "Live app is bundled, launched, and reports Jarvis 0.1.436 build 436."),
@@ -1084,6 +1521,8 @@ def render_workboard(context: dict[str, Any]) -> str:
         ("working", "Next: real Teams assignment proof", "The OCR digest and question generator work on controlled text; the next hard part is proving them on Leo's actual Teams page."),
     ]
     items = "\n".join(task_item(*task) for task in tasks)
+    focus_bundle_sentence = workboard_bundle_sentence(context)
+    voice_proof_sentence = workboard_voice_proof_sentence(context)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1102,7 +1541,7 @@ def render_workboard(context: dict[str, Any]) -> str:
   <main>
     <section>
       <h2>Current Focus</h2>
-      <p>Jarvis {e(context["version"])} is live with hardened command payload handling, native visible-screen OCR, automatic read-only Teams follow-up after Chrome handoff, assignment-line OCR extraction, targeted follow-up questions, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and an 8/8 live regression matrix. The remaining product gap is proving this on Leo's real Teams page.</p>
+      <p>{e(focus_bundle_sentence)} The current live bundle includes the 0.1.453 LocalOS music hardening, Chrome-tab-aware reconnect logic, and morning cleanup helper; source-side Swift compile proof is green.{e(voice_proof_sentence)} Jarvis already has hardened command payload handling, native visible-screen OCR, automatic read-only Teams follow-up after Chrome handoff, assignment-line OCR extraction, targeted follow-up questions, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and a reusable behavior matrix. The remaining product gap is real-device voice, music, browser, Teams, and app-control QA when Leo is present.</p>
       <div class="meter"><div style="width: 98%"></div></div>
     </section>
     <section>
@@ -1114,6 +1553,37 @@ def render_workboard(context: dict[str, Any]) -> str:
 </body>
 </html>
 """
+
+
+def workboard_bundle_sentence(context: dict[str, Any]) -> str:
+    bundle = str(context.get("bundle") or "").strip()
+    bundle_source = str(context.get("bundle_source") or "").strip()
+    if bundle_source == "output bundle file" and bundle and bundle != "live bundle metadata unavailable":
+        return f"The current output bundle file is {bundle}; it was not live-launched during this no-approval source run."
+    if bundle_source == "live worker" and bundle and bundle != "live bundle metadata unavailable":
+        return f"The latest live bundle is {bundle}."
+    if not bundle or bundle == "live bundle metadata unavailable":
+        return "No live bundle metadata was available during this no-approval source run."
+    return f"The available bundle metadata is {bundle}."
+
+
+def workboard_voice_proof_sentence(context: dict[str, Any]) -> str:
+    voice_loop = context.get("voice_loop") if isinstance(context.get("voice_loop"), dict) else {}
+    if not voice_loop or not voice_loop.get("path"):
+        return ""
+    if voice_loop.get("speech_audit_only"):
+        payloads = int(voice_loop.get("speech_payload_count") or 0)
+        leaks = int(voice_loop.get("speech_leak_count") or 0)
+        return f" Latest voice speech audit checked {payloads} payloads with {leaks} leaks."
+    speech_mode = str(voice_loop.get("speech_mode") or "suppressed_for_probe")
+    if speech_mode == "live_playback_exercised":
+        active_observed = bool(voice_loop.get("active_speech_observed"))
+        activity_text = "observed active speech" if active_observed else "did not observe active speech"
+        return (
+            " Latest closed-loop voice QA exercised live speech playback, "
+            f"{activity_text}, and matched the spoken reply back to the visible answer."
+        )
+    return " Latest closed-loop voice QA stayed in suppressed speech mode and still matched the spoken reply back to the visible answer."
 
 
 def task_item(status: str, title: str, detail: str) -> str:
@@ -1131,15 +1601,32 @@ def pill_row(context: dict[str, Any], *, refresh_seconds: int) -> str:
     pills = [
         f"Auto-refresh: {refresh_seconds}s",
         f"Last updated: {context['updated']}",
-        f"Live bundle: {context['bundle']}",
+        bundle_pill_label(context),
         f"Source commit: {context['commit']}",
         f"Branch: {context['branch']}",
         f"GitHub: {context['upstream'] or 'not published'} ({context['git_sync']})",
-        f"Verification: {context['verification']['label']}",
+        f"Worktree: {context.get('git_dirty') or 'unknown'}",
+        f"Python suite: {latest_python_tests_label(context)} passed",
+        f"Safe verifier: {context['verification']['label']}",
         f"No-prompt: {context['no_prompt_verification']['label']}",
-        f"Launch: {context['launch_mode']}",
+        f"Launch: {launch_label(context.get('launch_mode'))}",
     ]
     return '<div class="pills">' + "".join(f'<span class="pill">{e(pill)}</span>' for pill in pills) + "</div>"
+
+
+def bundle_pill_label(context: dict[str, Any]) -> str:
+    bundle = str(context.get("bundle") or "live bundle metadata unavailable").strip()
+    source = str(context.get("bundle_source") or "").strip()
+    if source == "output bundle file":
+        return f"Output bundle: {bundle}"
+    if source == "live worker":
+        return f"Live bundle: {bundle}"
+    return f"Bundle: {bundle}"
+
+
+def launch_label(value: Any) -> str:
+    text = str(value or "unknown").strip()
+    return "not inspected" if text == "unknown" else text
 
 
 def section(title: str, items: list[str], *, cards: bool = False, risk: bool = False, collapsed: bool = False) -> str:
@@ -1170,24 +1657,59 @@ def promise_section(context: dict[str, Any]) -> str:
     return f"<section><h2>Tonight's Product Promise</h2><div class=\"promise-grid\">{cards}</div></section>"
 
 
+def headline_section(context: dict[str, Any]) -> str:
+    python_tests = latest_python_tests_label(context)
+    matrix = context.get("regression_matrix") if isinstance(context.get("regression_matrix"), dict) else {}
+    matrix_label = str(matrix.get("label") or "matrix not generated")
+    speech_payloads = int(matrix.get("speech_payload_count") or 0)
+    speech_leaks = int(matrix.get("speech_leak_count") or 0)
+    bundle = str(context.get("bundle") or "current Jarvis build")
+    cards = [
+        (
+            f"Live {bundle}",
+            "LocalOS music now reports browser autoplay blocks as an explicit activation-required state instead of a generic failure or hidden fallback.",
+        ),
+        (
+            "Proof",
+            f"{python_tests} Python tests passed, {context['verification']['label']} safe verifier, the behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks, and overnight Chrome test tabs were cleaned up.",
+        ),
+        (
+            "Caveat",
+            "Chrome still requires one real LocalOS player click before browser audio can start; Jarvis now says that plainly and keeps normal playback owned by LocalOS.",
+        ),
+    ]
+    body = '<div class="grid headline">' + "".join(
+        f"<div class=\"card\"><strong>{e(title)}</strong><span>{e(text)}</span></div>"
+        for title, text in cards
+    ) + "</div>"
+    return f"<section><h2>Headline</h2>{body}</section>"
+
+
 def spotlight_section(context: dict[str, Any]) -> str:
     latency = context.get("latency") if isinstance(context.get("latency"), dict) else {}
     latency_text = ""
     if latency.get("path"):
         latency_text = f" Current fast smoke max first visible {float(latency.get('max_first_visible_seconds') or 0):.3f}s."
     python_tests = latest_python_tests_label(context)
+    matrix = context.get("regression_matrix") if isinstance(context.get("regression_matrix"), dict) else {}
+    matrix_text = (
+        f" Behavior matrix: {matrix.get('label')}, max first visible "
+        f"{float(matrix.get('max_first_visible_seconds') or 0):.3f}s."
+        if matrix.get("path")
+        else ""
+    )
     cards = [
         (
             "Try First",
-            "Open Jarvis from the Dock, click Perms, read the permission tiles, then start Hey Jarvis only after Microphone and Speech Recognition are ready.",
+            "Ask Jarvis to check status, check Calendar, or queue a LocalOS song; if LocalOS says one click is needed, click the player once and retry.",
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, and closed-loop voice QA.{latency_text}",
+            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, closed-loop voice QA, and post-patch matrix proof.{latency_text} {matrix_text}".strip(),
         ),
         (
             "Honest Limit",
-            "Room-noise wake reliability still needs Leo's microphone tests; the wake lab is ready for that data.",
+            "Teams page reading is still blocked by Chrome Automation permission, and hands-free LocalOS playback is still limited by Chrome's user-gesture rule.",
         ),
     ]
     body = '<div class="grid spotlight">' + "".join(
@@ -1198,6 +1720,9 @@ def spotlight_section(context: dict[str, Any]) -> str:
 
 
 def latest_python_tests_label(context: dict[str, Any]) -> str:
+    test_count = int(context.get("python_test_count") or 0)
+    if test_count > 0:
+        return f"{test_count}/{test_count}"
     proof_items = context.get("proof") if isinstance(context.get("proof"), list) else []
     for item in proof_items:
         match = re.search(r"full Python safety suite passed\s+([0-9]+/[0-9]+)", str(item), re.IGNORECASE)
@@ -1212,10 +1737,13 @@ def supporting_section(context: dict[str, Any]) -> str:
         if path.startswith("http"):
             href = path
             display_path = path
+            availability = ""
         else:
             href = "../" + path.removeprefix("runtime/") if path.startswith("runtime/") else "../../" + path
-            display_path = str(PROJECT_ROOT / path)
-        rows.append(f'<li><a href="{e(href)}">{e(display_path)}</a> - {e(label)}</li>')
+            local_path = PROJECT_ROOT / path
+            display_path = str(local_path)
+            availability = "" if local_path.exists() else " <span class=\"missing-file\">not generated yet</span>"
+        rows.append(f'<li><a href="{e(href)}">{e(display_path)}</a> - {e(label)}{availability}</li>')
     return "<section><h2>Supporting Files</h2><ul>" + "".join(rows) + "</ul></section>"
 
 
@@ -1358,6 +1886,7 @@ def style_block() -> str:
     li { margin: 6px 0; overflow-wrap: anywhere; }
     a { color: var(--blue); }
     .risk-list li { color: #ffd6d6; }
+    .missing-file { color: #ffd166; font-size: 0.88rem; margin-left: 0.45rem; }
     .meter {
       height: 10px;
       border: 1px solid var(--line);

@@ -214,10 +214,22 @@ LOCALOS_ROOT = PROJECT_ROOT.parent / "localOSroot"
 LOCALOS_SHELL_PATH = LOCALOS_ROOT / "localOS" / "index.html"
 LOCALOS_MUSIC_PLAYER_PATH = LOCALOS_ROOT / "localOS" / "localFiles" / "HTMLfiles" / "!musicPlayer.html"
 LOCALOS_MUSIC_MP3_DIR = LOCALOS_ROOT / "localOS" / "localFiles" / "mp3"
+LOCALOS_HOST_APP_PATH = LOCALOS_ROOT / "desktop-tauri" / "dist" / "Local OS Host.app"
+LOCALOS_HOST_BASE_URL = "http://127.0.0.1:8787"
+LOCALOS_HOST_HEALTH_URL = "http://127.0.0.1:8787/__planechat__/health"
+LOCALOS_MUSIC_PLAYER_HOST_URL = f"{LOCALOS_HOST_BASE_URL}/localFiles/HTMLfiles/!musicPlayer.html"
 LOCALOS_MUSIC_SNAPSHOT_PATH = RUNTIME_DIR / "integrations" / "localos_music_snapshot.json"
 LOCALOS_MUSIC_CONTROL_PATH = RUNTIME_DIR / "integrations" / "localos_music_control.json"
 LOCALOS_MUSIC_PLAYER_OPEN_MARK_PATH = RUNTIME_DIR / "integrations" / "localos_music_player_open.json"
 LOCALOS_NATIVE_MUSIC_STATE_PATH = RUNTIME_DIR / "integrations" / "localos_native_music.json"
+DEFAULT_LOCALOS_MUSIC_MP3_DIR = LOCALOS_MUSIC_MP3_DIR
+DEFAULT_LOCALOS_MUSIC_SNAPSHOT_PATH = LOCALOS_MUSIC_SNAPSHOT_PATH
+DEFAULT_LOCALOS_MUSIC_CONTROL_PATH = LOCALOS_MUSIC_CONTROL_PATH
+DEFAULT_LOCALOS_NATIVE_MUSIC_STATE_PATH = LOCALOS_NATIVE_MUSIC_STATE_PATH
+MUSIC_APP_BRIDGE_BASE_URL = os.environ.get("JARVIS_MUSIC_APP_BRIDGE_URL", "http://127.0.0.1:47879").rstrip("/")
+MUSIC_APP_BRIDGE_TOKEN_FILE = Path(
+    os.environ.get("JARVIS_MUSIC_APP_BRIDGE_TOKEN_FILE", "~/Library/Application Support/Music/control-token.txt")
+).expanduser()
 CODEX_PROXY_BENCHMARK_DIR = RUNTIME_DIR / "codex_cli_proxy_benchmarks"
 LOCALOS_MUSIC_SNAPSHOT_MAX_TRACKS = 25
 LOCALOS_MUSIC_LIBRARY_MAX_TRACKS = 500
@@ -229,6 +241,8 @@ LOCALOS_MUSIC_PLAYER_RECENT_SNAPSHOT_SECONDS = 180
 LOCALOS_MUSIC_CHROME_DIRECT_CONFIRM_SECONDS = 2.5
 LOCALOS_MUSIC_CHROME_DIRECT_SCRIPT_TIMEOUT_SECONDS = 4.0
 LOCALOS_MUSIC_CHROME_DIRECT_NEW_TAB_DELAY_SECONDS = 1.2
+LOCALOS_MUSIC_USER_ACTIVATION_CONFIRM_SECONDS = 1.8
+LOCALOS_MUSIC_USER_ACTIVATION_SCRIPT_TIMEOUT_SECONDS = 3.0
 BROWSER_FIELD_DELIMITER = "\n---JARVIS_BROWSER_FIELD---\n"
 BROWSER_PAGE_TEXT_LIMIT = 6000
 CHROME_USER_DATA_DIR = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
@@ -1368,13 +1382,14 @@ def latest_latency_status() -> dict[str, Any]:
     first_values: list[float] = []
     total_values: list[float] = []
     after_first_cps_values: list[float] = []
+    fallback_count = 0
     prompt_summaries: list[dict[str, Any]] = []
     ok = bool(results)
     for result in results:
         if not isinstance(result, dict):
             ok = False
             continue
-        if result.get("status") == "completed":
+        if str(result.get("status") or "").strip() in {"completed", "checked"}:
             completed_count += 1
         else:
             ok = False
@@ -1394,6 +1409,8 @@ def latest_latency_status() -> dict[str, Any]:
             after_first_cps_values.append(cps)
         if visible_chars >= min_rate_visible_chars and (cps is None or cps < min_after_first_cps):
             ok = False
+        if bool(result.get("fallback_used")) or bool(result.get("primary_fallback_used")):
+            fallback_count += 1
         prompt_summaries.append(
             {
                 "prompt": str(result.get("prompt") or "")[:160],
@@ -1402,6 +1419,13 @@ def latest_latency_status() -> dict[str, Any]:
                 "total_seconds": total,
                 "visible_chars": visible_chars,
                 "chars_per_second_after_first_visible": cps,
+                "backend": str(result.get("backend") or ""),
+                "model": str(result.get("model") or ""),
+                "primary_status": str(result.get("primary_status") or ""),
+                "fallback_trigger": str(result.get("fallback_trigger") or ""),
+                "fallback_used": bool(result.get("fallback_used")),
+                "primary_fallback_used": bool(result.get("primary_fallback_used")),
+                "tool_catalog_compacted": bool(result.get("tool_catalog_compacted")),
             }
         )
     if completed_count != len(results):
@@ -1420,6 +1444,8 @@ def latest_latency_status() -> dict[str, Any]:
         reply += f", max total {max_total:.3f}s"
     if min_after_first is not None:
         reply += f", min after-first output {min_after_first:.1f} chars/s"
+    if fallback_count:
+        reply += f", fallback on {fallback_count}/{len(results)} prompts"
     reply += f". Report: {_relative_project_path(latest)}."
     return {
         **base,
@@ -1430,6 +1456,7 @@ def latest_latency_status() -> dict[str, Any]:
         "age_seconds": round(max(0.0, time.time() - latest.stat().st_mtime), 3),
         "prompt_count": len(results),
         "completed_count": completed_count,
+        "fallback_count": fallback_count,
         "max_first_visible_seconds": round(max_first, 3) if max_first is not None else None,
         "max_total_seconds": round(max_total, 3) if max_total is not None else None,
         "min_after_first_chars_per_second": round(min_after_first, 1) if min_after_first is not None else None,
@@ -1533,11 +1560,14 @@ def _sanitize_spoken_text(text: str) -> str:
     spoken = str(text or "").replace("\x00", " ")
     spoken = _strip_fast_chat_hidden_call_fragments(spoken)
     spoken = re.sub(r"(?is)<think>.*?</think>", " ", spoken)
+    spoken = _strip_spoken_diagnostic_fragments(spoken)
+    spoken = _strip_spoken_internal_sections(spoken)
+    spoken = re.sub(r"\[([^\]\n]{1,120})\]\(\s*(?:https?://|www\.)[^)\s]+[^)]*\)", r"\1", spoken, flags=re.IGNORECASE)
     spoken = re.sub(r"(?i)\bhttps?://\S+|\bwww\.\S+", "a link", spoken)
     spoken = re.sub(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "an email address", spoken)
     spoken = _english_only_spoken_text(spoken)
     spoken = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", "", spoken)
-    spoken = re.sub(r"(?im)^\s*(?:summary|action|actions|details?|link|subject|sender|from)\s*:\s*", "", spoken)
+    spoken = re.sub(r"(?im)^\s*(?:summary|answer|result|reply|action|actions|details?|link|subject|sender|from)\s*:\s*", "", spoken)
     spoken = re.sub(r"[*_`#>]+", "", spoken)
     spoken = re.sub(r"\s*\n+\s*", ", ", spoken)
     spoken = re.sub(r"\s*[:;]\s*", ", ", spoken)
@@ -1548,6 +1578,64 @@ def _sanitize_spoken_text(text: str) -> str:
     spoken = re.sub(r"\s+([,.!?])", r"\1", spoken)
     spoken = re.sub(r"\.{2,}", ".", spoken)
     return spoken.strip(" ,")[:TTS_MAX_CHARS]
+
+
+def _strip_spoken_diagnostic_fragments(text: str) -> str:
+    """Remove backend/debug metadata if it accidentally enters automatic speech."""
+    cleaned_lines: list[str] = []
+    diagnostic_line = re.compile(
+        r"^\s*(?:"
+        r"tool\s*time\b.*|fast\s*model\s*time\b.*|first\s*visible\b.*|backend\b.*|model\b.*|"
+        r"groq\b.*|ollama\b.*|worker\b.*|verification\b.*|app\s*perms?\b.*|"
+        r"codex\s*activity\b.*|cli\s*tail\b.*"
+        r")\s*$",
+        flags=re.IGNORECASE,
+    )
+    for line in str(text or "").splitlines():
+        if diagnostic_line.match(line):
+            continue
+        cleaned_lines.append(line)
+    cleaned = "\n".join(cleaned_lines)
+    cleaned = re.sub(
+        r"\s*\|\s*(?:"
+        r"tool\s*time|fast\s*model\s*time|first\s*visible|backend|model|groq|ollama|worker|"
+        r"verification|app\s*perms?|codex\s*activity|cli\s*tail"
+        r")\b[^|\n]*",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned
+
+
+def _strip_spoken_internal_sections(text: str) -> str:
+    """Drop implementation-only checklist sections before text reaches TTS."""
+    output: list[str] = []
+    skipping_section = False
+    internal_heading = re.compile(
+        r"^\s*(?:actions?|next\s+steps?|technical\s+details?|debug|diagnostics?|"
+        r"tool\s+results?|model\s+details?|backend\s+details?|what\s+i\s+did|"
+        r"steps?\s+taken|process|implementation\s+notes?|reasoning|rationale|notes?)\s*:\s*$",
+        flags=re.IGNORECASE,
+    )
+    public_heading = re.compile(r"^\s*(?:summary|answer|result|reply)\s*:\s*(.*)$", flags=re.IGNORECASE)
+
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if internal_heading.match(stripped):
+            skipping_section = True
+            continue
+        if skipping_section:
+            if not stripped:
+                skipping_section = False
+                continue
+            public_match = public_heading.match(line)
+            if public_match:
+                skipping_section = False
+                output.append(public_match.group(1) or line)
+            continue
+        output.append(line)
+    return "\n".join(output)
 
 
 def _english_only_spoken_text(text: str) -> str:
@@ -1593,11 +1681,15 @@ def _strip_fast_chat_hidden_call_fragments(text: str) -> str:
 
 def _fast_chat_contains_hidden_call_fragment(text: str) -> bool:
     value = str(text or "")
-    return bool(re.search(r"\\\s*(?:tool|email)\b", value, flags=re.IGNORECASE) or re.search(r"\\\s*$", value))
+    return bool(
+        re.search(r"\\\s*(?:tool|email)\b", value, flags=re.IGNORECASE)
+        or re.search(r"\\\s*[A-Za-z][A-Za-z0-9_.-]*\s*(?:\(|\{)", value)
+        or re.search(r"\\\s*$", value)
+    )
 
 
 def _fast_chat_hidden_call_span(text: str, start: int) -> tuple[int, int] | None:
-    match = re.match(r"\\\s*(tool|email)\b", text[start:], flags=re.IGNORECASE)
+    match = re.match(r"\\\s*([A-Za-z][A-Za-z0-9_.-]*)\b", text[start:], flags=re.IGNORECASE)
     if not match:
         return None
     name = match.group(1).lower()
@@ -1611,7 +1703,12 @@ def _fast_chat_hidden_call_span(text: str, start: int) -> tuple[int, int] | None
                 return start, end
             parsed, end = _extract_json_object_after_open_paren(text, cursor)
             if parsed is not None:
-                return start, end
+                closing = end
+                while closing < len(text) and text[closing].isspace():
+                    closing += 1
+                if closing < len(text) and text[closing] == ")":
+                    return start, closing + 1
+                return start, len(text)
             return start, len(text)
         if cursor < len(text) and text[cursor] == "{":
             parsed, end = _extract_json_object_at(text, cursor)
@@ -1624,6 +1721,13 @@ def _fast_chat_hidden_call_span(text: str, start: int) -> tuple[int, int] | None
         if inner is not None:
             return start, end
         return start, len(text)
+    if cursor < len(text) and text[cursor] == "{":
+        parsed, end = _extract_json_object_at(text, cursor)
+        if parsed is not None:
+            return start, end
+        return start, len(text)
+    if name not in {"tool", "email"}:
+        return None
     return start, len(text)
 
 
@@ -2343,9 +2447,11 @@ def _start_piper_speech_async(
 
 def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -> dict[str, Any]:
     """Speak text without blocking the command response."""
-    spoken = _sanitize_spoken_text(text)
+    raw_text = str(text or "")
+    spoken = _sanitize_spoken_text(raw_text)
     if not spoken:
-        return {"spoken": False, "status": "empty", "reason": reason}
+        status = "empty_after_sanitization" if raw_text.strip() else "empty"
+        return {"spoken": False, "status": status, "reason": reason, **_speech_text_diagnostics("")}
     started_at = time.monotonic()
     with SPEECH_LOCK:
         if SPEECH_MUTED:
@@ -2407,10 +2513,57 @@ def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -
         )
 
 
+def _speech_readiness_snapshot(*, prewarm: bool = False) -> dict[str, Any]:
+    """Return whether an unmuted Jarvis can actually produce automatic speech."""
+    provider = _normalize_tts_provider(TTS_PROVIDER)
+    fallback_provider = _normalize_tts_provider(TTS_FALLBACK_PROVIDER)
+    macos_available = bool(_find_executable("say"))
+    piper = _piper_readiness()
+    preferred_available = bool(piper["ready"]) if provider == "piper" else macos_available
+    fallback_available = macos_available if fallback_provider == "macos" else bool(piper["ready"])
+    tts_available = preferred_available or fallback_available
+    automatic_available = bool(TTS_AUTOMATIC_ENABLED and tts_available)
+    unavailable_reason = ""
+    if not TTS_AUTOMATIC_ENABLED:
+        unavailable_reason = "automatic_tts_disabled"
+    elif not tts_available:
+        unavailable_reason = "tts_provider_unavailable"
+    snapshot: dict[str, Any] = {
+        "automatic_tts_enabled": TTS_AUTOMATIC_ENABLED,
+        "status_speech_enabled": TTS_SPEAK_STATUS,
+        "tts_provider": provider,
+        "tts_fallback_provider": fallback_provider,
+        "tts_available": tts_available,
+        "automatic_speech_available": automatic_available,
+        "tts_unavailable_reason": unavailable_reason,
+        "macos_say_available": macos_available,
+        "piper_available": bool(piper["ready"]),
+    }
+    if prewarm and automatic_available and provider == "piper":
+        with PIPER_WORKER_LOCK:
+            snapshot["tts_prewarm"] = _ensure_piper_worker_locked(piper, wait_ready=False)
+    elif prewarm:
+        snapshot["tts_prewarm"] = {"ok": False, "status": "not_needed"}
+    return snapshot
+
+
+def _speech_mute_reply(muted: bool, readiness: dict[str, Any]) -> str:
+    if muted:
+        return "Jarvis speech is muted."
+    if readiness.get("automatic_tts_enabled") is False:
+        return "Jarvis speech is unmuted, but automatic spoken replies are off."
+    if readiness.get("tts_available") is False:
+        return "Jarvis speech is unmuted, but the voice provider is missing."
+    if readiness.get("automatic_speech_available") is False:
+        return "Jarvis speech is unmuted, but automatic speech is unavailable."
+    return "Jarvis speech is on."
+
+
 def speech_mute_status() -> dict[str, Any]:
     """Return the runtime Jarvis speech mute state."""
     with SPEECH_LOCK:
         active = SPEECH_PROCESS is not None and getattr(SPEECH_PROCESS, "poll", lambda: 0)() is None
+        readiness = _speech_readiness_snapshot()
         return {
             "tool": "voice.speech_mute",
             "status": "muted" if SPEECH_MUTED else "unmuted",
@@ -2419,7 +2572,8 @@ def speech_mute_status() -> dict[str, Any]:
             "speech_reason": SPEECH_PROCESS_REASON,
             "speech_mute_persistent": True,
             "speech_mute_state_path": str(SPEECH_MUTE_STATE_PATH),
-            "reply": "Jarvis speech is muted." if SPEECH_MUTED else "Jarvis speech is on.",
+            **readiness,
+            "reply": _speech_mute_reply(SPEECH_MUTED, readiness),
         }
 
 
@@ -2439,6 +2593,7 @@ def set_speech_muted(muted: bool, *, source: str = "api") -> dict[str, Any]:
         else:
             stop_status = {}
         active = SPEECH_PROCESS is not None and getattr(SPEECH_PROCESS, "poll", lambda: 0)() is None
+        readiness = _speech_readiness_snapshot(prewarm=not SPEECH_MUTED)
     return {
         "tool": "voice.speech_mute",
         "status": "muted" if SPEECH_MUTED else "unmuted",
@@ -2451,9 +2606,10 @@ def set_speech_muted(muted: bool, *, source: str = "api") -> dict[str, Any]:
         "played_audio": False,
         **persist_status,
         **stop_status,
+        **readiness,
         "interrupted_previous": bool(stop_status.get("interrupted_previous") or stop_status.get("piper_worker_interrupted")),
         **_duration_fields(started_at),
-        "reply": "Jarvis speech is muted." if SPEECH_MUTED else "Jarvis speech is on.",
+        "reply": _speech_mute_reply(SPEECH_MUTED, readiness),
     }
 
 
@@ -2682,6 +2838,18 @@ def _current_jarvis_bundle_path() -> Path:
     if running_bundle:
         return Path(running_bundle)
     return PROJECT_ROOT / "output" / "Jarvis.app"
+
+
+def _jarvis_bundle_executable_path(name: str) -> Path | None:
+    current_bundle = _current_jarvis_bundle_path()
+    candidates = [
+        current_bundle / "Contents" / "MacOS" / name,
+        PROJECT_ROOT / "output" / "Jarvis.app" / "Contents" / "MacOS" / name,
+    ]
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 def _worker_source_kind(source: str) -> str:
@@ -3105,18 +3273,165 @@ def _localos_music_native_fallback_reason(error: Any) -> bool:
     text = _localos_clean_text(error, 400).lower()
     return (
         "user didn't interact" in text
+        or "user has not interacted" in text
         or "user gesture" in text
         or "autoplay" in text
         or "needs one click" in text
         or "press play once" in text
+        or "notallowederror" in text
+        or "play() request was interrupted" in text
+        or ("play()" in text and "not allowed" in text)
+        or ("audio" in text and "not allowed" in text)
     )
+
+
+def _localos_music_chrome_automation_denied(result: dict[str, Any] | None) -> bool:
+    if not isinstance(result, dict):
+        return False
+    text = json.dumps(result, ensure_ascii=False, sort_keys=True).lower()
+    if "access not allowed" not in text and "-1723" not in text:
+        return False
+    return "chrome" in text or "google chrome" in text
 
 
 def _localos_music_autoplay_blocked_reply(track: dict[str, Any]) -> str:
     return (
-        f"I found {_localos_music_found_phrase(track)}, but Local OS needs one click in the music player "
-        "before Chrome will allow audio."
+        f"I found {_localos_music_found_phrase(track)} and queued it in Local OS. "
+        "Click the LocalOS music player once to let it start audio."
     )
+
+
+def _localos_music_not_playing_yet_reply(track: dict[str, Any], detail: str = "") -> str:
+    suffix = f" {detail.strip()}" if detail.strip() else ""
+    return f"I found {_localos_music_found_phrase(track)}, but Local OS has not started playback yet.{suffix}"
+
+
+def _music_app_bridge_enabled_for_live_path() -> bool:
+    if os.environ.get("JARVIS_MUSIC_APP_BRIDGE", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    # Unit tests patch these paths to temp files for deterministic LocalOS behavior.
+    return (
+        LOCALOS_MUSIC_MP3_DIR == DEFAULT_LOCALOS_MUSIC_MP3_DIR
+        and LOCALOS_MUSIC_SNAPSHOT_PATH == DEFAULT_LOCALOS_MUSIC_SNAPSHOT_PATH
+        and LOCALOS_MUSIC_CONTROL_PATH == DEFAULT_LOCALOS_MUSIC_CONTROL_PATH
+        and LOCALOS_NATIVE_MUSIC_STATE_PATH == DEFAULT_LOCALOS_NATIVE_MUSIC_STATE_PATH
+    )
+
+
+def _music_app_bridge_token() -> str:
+    try:
+        return MUSIC_APP_BRIDGE_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _music_app_bridge_request(
+    method: str,
+    path: str,
+    *,
+    query: dict[str, Any] | None = None,
+    auth: bool = True,
+    timeout: float = 3.5,
+) -> dict[str, Any]:
+    url = f"{MUSIC_APP_BRIDGE_BASE_URL}{path}"
+    if query:
+        filtered = {key: value for key, value in query.items() if value is not None}
+        url = f"{url}?{urllib.parse.urlencode(filtered)}"
+    headers = {"Accept": "application/json"}
+    if auth:
+        token = _music_app_bridge_token()
+        if not token:
+            return {"ok": False, "error": {"code": "missing_music_bridge_token"}}
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            return payload if isinstance(payload, dict) else {"ok": False, "error": {"code": "invalid_music_bridge_json"}}
+    except urllib.error.HTTPError as error:
+        try:
+            payload = json.loads(error.read().decode("utf-8"))
+            return payload if isinstance(payload, dict) else {"ok": False, "error": {"code": "music_bridge_http_error", "status": error.code}}
+        except Exception:
+            return {"ok": False, "error": {"code": "music_bridge_http_error", "status": error.code}}
+    except Exception as error:
+        return {"ok": False, "error": {"code": "music_bridge_unreachable", "message": f"{type(error).__name__}: {error}"}}
+
+
+def _music_app_bridge_song_phrase(song: dict[str, Any]) -> str:
+    title = str(song.get("title") or song.get("fileName") or "that song").strip()
+    artist = str(song.get("artist") or "").strip()
+    if artist and artist.lower() not in {"unknown", "unknown artist"} and artist not in title:
+        return f"{title} by {artist}"
+    return title
+
+
+def _music_app_bridge_play(
+    *,
+    query: str | None,
+    user_request: str,
+    from_your_pick: bool,
+    started_at: float,
+) -> dict[str, Any] | None:
+    if not _music_app_bridge_enabled_for_live_path() or audio_actions_are_suppressed():
+        return None
+    health = _music_app_bridge_request("GET", "/health", auth=False, timeout=1.2)
+    if health.get("ok") is not True:
+        return None
+    if from_your_pick:
+        play = _music_app_bridge_request("POST", "/playlist/play", query={"name": "Your Pick"}, timeout=4.0)
+    else:
+        clean_query = _localos_clean_text(query or user_request or "", 180)
+        if not clean_query:
+            return None
+        play = _music_app_bridge_request("POST", "/play", query={"query": clean_query}, timeout=4.0)
+    if play.get("ok") is not True:
+        return {
+            "status": "music_app_not_playing",
+            "music_app_bridge": {
+                "health": health,
+                "play": play,
+            },
+        }
+    time.sleep(0.9)
+    playback = _music_app_bridge_request("GET", "/playback-state", timeout=2.0)
+    song = playback.get("nowPlaying") if isinstance(playback.get("nowPlaying"), dict) else play.get("song")
+    playing = playback.get("ok") is True and playback.get("playing") is True and isinstance(song, dict)
+    if not playing:
+        return {
+            "status": "music_app_not_playing",
+            "music_app_bridge": {
+                "health": health,
+                "play": play,
+                "playback": playback,
+            },
+        }
+    phrase = _music_app_bridge_song_phrase(song)
+    return {
+        "tool": "localos.music_play",
+        "executed": True,
+        "status": "playing",
+        "available": True,
+        "played_by": "music_app",
+        "jarvis_played_audio": False,
+        "read_private_audio_or_artwork": False,
+        "control_lane": "music_app_bridge",
+        "playback_confirmation": "playing",
+        "selected_track": {
+            "id": song.get("id"),
+            "title": song.get("title"),
+            "artist": song.get("artist"),
+            "file_name": song.get("fileName"),
+            "source": "Music app bridge",
+        },
+        "music_app_bridge": {
+            "health": health,
+            "play": play,
+            "playback": playback,
+        },
+        "reply": f"Playing {phrase} in Music.",
+        **_duration_fields(started_at),
+    }
 
 
 def _localos_music_audio_path(track: dict[str, Any]) -> Path | None:
@@ -3275,56 +3590,6 @@ def _stop_localos_native_music() -> dict[str, Any]:
     }
 
 
-def _play_localos_music_native_fallback(track: dict[str, Any], *, reason: str = "") -> dict[str, Any]:
-    global LOCALOS_NATIVE_MUSIC_PROCESS, LOCALOS_NATIVE_MUSIC_TRACK
-    started_at = time.monotonic()
-    afplay_path = _configured_executable(TTS_AFPLAY, "afplay")
-    audio_path = _localos_music_audio_path(track)
-    if not afplay_path:
-        return {
-            "status": "unavailable",
-            "played": False,
-            "error": "afplay_not_available",
-            **_duration_fields(started_at),
-        }
-    if not audio_path:
-        return {
-            "status": "unavailable",
-            "played": False,
-            "error": "localos_audio_file_not_found",
-            **_duration_fields(started_at),
-        }
-    stopped = _stop_localos_native_music()
-    try:
-        process = subprocess.Popen(
-            [afplay_path, str(audio_path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "played": False,
-            "path": str(audio_path),
-            "error": f"{type(exc).__name__}: {exc}",
-            "stopped_previous": stopped,
-            **_duration_fields(started_at),
-        }
-    LOCALOS_NATIVE_MUSIC_PROCESS = process
-    LOCALOS_NATIVE_MUSIC_TRACK = _sanitize_localos_music_track(track, rank=_safe_int(track.get("rank")) or 1) or dict(track)
-    _write_localos_native_music_state(process, audio_path, track)
-    return {
-        "status": "playing",
-        "played": True,
-        "player": "afplay",
-        "pid": process.pid,
-        "path": str(audio_path),
-        "reason": _localos_clean_text(reason, 220),
-        "stopped_previous": stopped,
-        **_duration_fields(started_at),
-    }
-
-
 def cleanup_background_audio(*, reason: str = "cleanup") -> dict[str, Any]:
     """Stop Jarvis-owned background audio that can outlive the app process."""
     started_at = time.monotonic()
@@ -3371,32 +3636,35 @@ def _pause_local_music_sources() -> dict[str, Any]:
   return String(paused);
 })()
 """.strip()
-    script = f"""
-set lf to ASCII character 10
-set outputLines to {{}}
+    js_source = _applescript_javascript_source(js)
+    music_script = """
 if application "Music" is running then
     try
-        tell application "Music"
-            if player state is playing then
-                pause
-                set end of outputLines to "Music"
-            end if
-        end tell
+        tell application "Music" to pause
+        return "Music"
     end try
 end if
+return "none"
+""".strip()
+    quicktime_script = """
 if application "QuickTime Player" is running then
     try
         tell application "QuickTime Player" to pause every document
-        set end of outputLines to "QuickTime Player"
+        return "QuickTime Player"
     end try
 end if
+return "none"
+""".strip()
+    chrome_script = f"""
+set lf to ASCII character 10
+set outputLines to {{}}
 if application "Google Chrome" is running then
     try
         tell application "Google Chrome"
-            repeat with theWindow in windows
-                repeat with theTab in tabs of theWindow
+            repeat with chromeWindow in windows
+                repeat with chromeTab in tabs of chromeWindow
                     try
-                        set pausedCount to execute javascript "{_escape_applescript_string(js)}" in theTab
+                        set pausedCount to execute javascript "{_escape_applescript_string(js_source)}" in chromeTab
                         if pausedCount is not "0" then
                             set end of outputLines to "Google Chrome"
                         end if
@@ -3412,16 +3680,40 @@ set joinedOutput to outputLines as text
 set AppleScript's text item delimiters to ""
 return joinedOutput
 """.strip()
-    result = _run_osascript(script, timeout=2.5)
-    stdout = str(result.get("stdout") or "").strip()
-    paused = bool(result.get("ok") and stdout and stdout != "none")
+    attempts = {
+        "music": _run_osascript(music_script, timeout=0.8),
+        "quicktime": _run_osascript(quicktime_script, timeout=0.8),
+        "chrome": _run_osascript(chrome_script, timeout=2.5),
+    }
+    surfaces: set[str] = set()
+    stderr_parts: list[str] = []
+    first_returncode: int | None = None
+    for attempt in attempts.values():
+        stdout = str(attempt.get("stdout") or "").strip()
+        if attempt.get("ok") and stdout and stdout != "none":
+            surfaces.update(line.strip() for line in stdout.splitlines() if line.strip() and line.strip() != "none")
+        stderr = str(attempt.get("stderr") or "").strip()
+        if stderr:
+            stderr_parts.append(stderr)
+        returncode = attempt.get("returncode")
+        if first_returncode is None and returncode not in {None, 0}:
+            first_returncode = _safe_int(returncode)
+    chrome_attempt = attempts["chrome"]
+    chrome_stderr = str(chrome_attempt.get("stderr") or "")
+    chrome_automation_blocked = (
+        not bool(chrome_attempt.get("ok"))
+        and ("Access not allowed" in chrome_stderr or "-1723" in chrome_stderr)
+    )
+    paused = bool(surfaces)
     return {
-        "executed": bool(result.get("executed")),
-        "ok": bool(result.get("ok")),
+        "executed": any(bool(attempt.get("executed")) for attempt in attempts.values()),
+        "ok": paused or any(bool(attempt.get("ok")) for attempt in attempts.values()),
         "paused": paused,
-        "surfaces": sorted({line.strip() for line in stdout.splitlines() if line.strip() and line.strip() != "none"}),
-        "stderr": result.get("stderr") or "",
-        "returncode": result.get("returncode"),
+        "surfaces": sorted(surfaces),
+        "stderr": "\n".join(stderr_parts),
+        "returncode": first_returncode,
+        "chrome_automation_blocked": chrome_automation_blocked,
+        "attempts": attempts,
     }
 
 
@@ -3440,6 +3732,11 @@ def _set_system_output_muted(muted: bool) -> dict[str, Any]:
 def localos_music_stop() -> dict[str, Any]:
     """Stop LocalOS music playback and nearby media sources Jarvis may have triggered."""
     started_at = time.monotonic()
+    music_app_stop = (
+        _music_app_bridge_request("POST", "/stop", timeout=2.0)
+        if _music_app_bridge_enabled_for_live_path()
+        else {"ok": False, "skipped": True, "reason": "music_app_bridge_disabled"}
+    )
     stopped_native = _stop_localos_native_music()
     stopped_system_media = _pause_local_music_sources()
     interrupted_native = bool(stopped_native.get("was_running"))
@@ -3448,16 +3745,19 @@ def localos_music_stop() -> dict[str, Any]:
     confirmation_status = str(confirmation.get("status") or "unconfirmed")
     interrupted_page = confirmation_status in {"paused", "stopped"}
     interrupted_system_media = bool(stopped_system_media.get("paused"))
-    system_output_mute: dict[str, Any] = {"executed": False, "ok": False, "muted": None}
-    if not (interrupted_native or interrupted_page or interrupted_system_media) and (
-        confirmation_status == "bridge_not_polling" or not stopped_system_media.get("ok")
-    ):
-        system_output_mute = _set_system_output_muted(True)
-    interrupted_system_output = bool(system_output_mute.get("ok") and system_output_mute.get("muted") is True)
-    interrupted = interrupted_native or interrupted_page or interrupted_system_media or interrupted_system_output
+    interrupted_music_app = music_app_stop.get("ok") is True
+    system_output_mute: dict[str, Any] = {
+        "executed": False,
+        "ok": False,
+        "muted": None,
+        "reason": "normal_music_stop_never_mutes_system_output",
+    }
+    interrupted = interrupted_native or interrupted_page or interrupted_system_media or interrupted_music_app
     status = "stopped" if interrupted else "queued" if confirmation_status in {"accepted", "unconfirmed", "bridge_not_polling"} else "idle"
     if interrupted:
         reply = "Stopped music playback."
+    elif stopped_system_media.get("chrome_automation_blocked"):
+        reply = "I sent the stop command to Local OS, but Chrome is blocking Jarvis from pausing browser audio."
     elif status == "queued":
         reply = "I sent the stop command to Local OS."
     else:
@@ -3472,6 +3772,7 @@ def localos_music_stop() -> dict[str, Any]:
         "read_private_content": False,
         **stopped_native,
         "native_stop": stopped_native,
+        "music_app_stop": music_app_stop,
         "system_media_stop": stopped_system_media,
         "system_output_mute": system_output_mute,
         "control": command,
@@ -3510,6 +3811,14 @@ def localos_music_play(
         "jarvis_played_audio": False,
         "read_private_audio_or_artwork": False,
     }
+    music_app_attempt = _music_app_bridge_play(
+        query=query,
+        user_request=user_request,
+        from_your_pick=from_your_pick,
+        started_at=started_at,
+    )
+    if isinstance(music_app_attempt, dict) and music_app_attempt.get("status") == "playing":
+        return music_app_attempt
     selected: dict[str, Any] | None = None
     source_result: dict[str, Any]
     if from_your_pick:
@@ -3531,6 +3840,7 @@ def localos_music_play(
             "available": bool(source_result.get("available")),
             "source_tool": source_result.get("tool"),
             "source_status": source_result.get("status"),
+            "music_app_attempt": music_app_attempt,
             "reply": reply,
             **_duration_fields(started_at),
         }
@@ -3546,6 +3856,7 @@ def localos_music_play(
             "selected_track": selected,
             "playback_confirmation": "suppressed",
             "control_lane": "none_suppressed_for_verification",
+            "music_app_attempt": music_app_attempt,
             "reply": (
                 f"I found {_localos_music_found_phrase(selected)}. "
                 "Audio actions are suppressed for this verification run."
@@ -3598,9 +3909,9 @@ def localos_music_play(
                 "localos_command_error": direct_confirmation.get("error"),
                 "chrome_direct": direct_confirmation,
                 "bridge_recovery": _localos_music_bridge_recovery(),
-                "reply": (
-                    f"I found {_localos_music_found_phrase(selected)}, but Local OS did not start the audio. "
-                    "I tried the Local OS player automatically; it accepted the request but has not started playback yet."
+                "reply": _localos_music_not_playing_yet_reply(
+                    selected,
+                    "I tried the Local OS player automatically; it accepted the request but did not start audio.",
                 ),
                 **_duration_fields(started_at),
             }
@@ -3609,8 +3920,26 @@ def localos_music_play(
             command = _queue_localos_music_control("play_track", selected, user_request=user_request or query or "")
             confirmation = _localos_music_playback_confirmation(command, selected)
             confirmation_status = str(confirmation.get("status") or "unconfirmed")
+            activation: dict[str, Any] = {}
+            if confirmation_status in {"accepted", "activation_required"} or (
+                confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error"))
+            ):
+                activation = _localos_music_user_activation_click_via_chrome(selected)
+                if activation.get("status") in {"accepted", "focused", "playing"}:
+                    refreshed = _localos_music_playback_confirmation(
+                        command,
+                        selected,
+                        timeout_seconds=LOCALOS_MUSIC_USER_ACTIVATION_CONFIRM_SECONDS,
+                    )
+                    refreshed_status = str(refreshed.get("status") or "")
+                    if refreshed_status in {"accepted", "activation_required", "playing", "failed", "ignored", "bridge_not_polling"}:
+                        confirmation = refreshed
+                        confirmation_status = refreshed_status
             page_confirmation_status = confirmation_status
-            autoplay_blocked = confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error"))
+            autoplay_blocked = (
+                confirmation_status == "activation_required"
+                or (confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error")))
+            )
             bridge_version = confirmation.get("bridge_version")
             if confirmation_status == "playing":
                 reply = f"Playing {_localos_music_found_phrase(selected)} in Local OS."
@@ -3621,21 +3950,24 @@ def localos_music_play(
             elif confirmation_status == "ignored":
                 reply = f"Local OS ignored the request for {_localos_music_found_phrase(selected)}."
             elif confirmation_status == "bridge_not_polling":
-                reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS; it may take a moment to start."
+                reply = _localos_music_not_playing_yet_reply(
+                    selected,
+                    "Local OS has not confirmed that the music player is polling yet.",
+                )
             elif confirmation_status == "accepted":
-                reply = (
-                    f"I found {_localos_music_found_phrase(selected)}, but Local OS did not start the audio. "
-                    "I tried the Local OS player automatically; it accepted the request but has not started playback yet."
+                reply = _localos_music_not_playing_yet_reply(
+                    selected,
+                    "I tried the Local OS player automatically; it accepted the request but did not start audio.",
                 )
             elif bridge_version:
-                reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS, but it has not confirmed playback yet."
+                reply = _localos_music_not_playing_yet_reply(selected, "Local OS has not confirmed audio yet.")
             else:
-                reply = (
-                    f"I queued {_localos_music_found_phrase(selected)} in Local OS. "
-                    "If it does not start, refresh the LocalOS music window once."
+                reply = _localos_music_not_playing_yet_reply(
+                    selected,
+                    "If it does not start, refresh the LocalOS music window once.",
                 )
             result_status = "playing" if confirmation_status == "playing" else "queued"
-            if confirmation_status in {"accepted", "failed", "ignored"}:
+            if confirmation_status in {"accepted", "activation_required", "failed", "ignored"}:
                 result_status = "not_queued"
             return {
                 **base,
@@ -3660,10 +3992,28 @@ def localos_music_play(
                 "localos_command_error": confirmation.get("error"),
                 "chrome_direct": direct_confirmation,
                 "player_open": player_open,
+                "user_activation_click": activation,
                 "bridge_recovery": _localos_music_bridge_recovery(),
                 "reply": reply,
                 **_duration_fields(started_at),
             }
+        chrome_automation_blocked = _localos_music_chrome_automation_denied(direct_confirmation)
+        if chrome_automation_blocked:
+            not_connected_reply = (
+                f"I found {_localos_music_found_phrase(selected)}, but Chrome is blocking Jarvis from controlling "
+                "the LocalOS music player, and LocalOS has not connected to Jarvis yet."
+            )
+        else:
+            not_connected_reply = (
+                f"I found {_localos_music_found_phrase(selected)}, but Local OS Music is not connected right now. "
+                + (
+                    "I opened the Local OS Music Player, but it has not connected yet. Give it a moment, then try again."
+                    if player_open.get("status") in {"opened_unconfirmed", "recently_opened"}
+                    else "I tried to open the Local OS Music Player automatically, but it did not start."
+                    if player_open.get("status") in {"open_failed", "open_timeout", "unavailable"}
+                    else "I tried to reconnect Local OS Music automatically, but it did not confirm the bridge."
+                )
+            )
         return {
             **base,
             "status": "not_queued",
@@ -3678,26 +4028,36 @@ def localos_music_play(
             "localos_command_error": bridge_liveness.get("error"),
             "localos_bridge_status": bridge_liveness.get("status"),
             "chrome_direct": direct_confirmation,
+            "chrome_automation_blocked": chrome_automation_blocked,
             "player_open": player_open,
             "bridge_recovery": _localos_music_bridge_recovery(),
-            "reply": (
-                f"I found {_localos_music_found_phrase(selected)}, but Local OS Music is not connected right now. "
-                + (
-                    "I opened the Local OS Music Player, but it has not connected yet. Give it a moment, then try again."
-                    if player_open.get("status") in {"opened_unconfirmed", "recently_opened"}
-                    else "I tried to open the Local OS Music Player automatically, but it did not start."
-                    if player_open.get("status") in {"open_failed", "open_timeout", "unavailable"}
-                    else "I tried to reconnect Local OS Music automatically, but it did not confirm the bridge."
-                )
-            ),
+            "reply": not_connected_reply,
             **_duration_fields(started_at),
         }
 
     command = _queue_localos_music_control("play_track", selected, user_request=user_request or query or "")
     confirmation = _localos_music_playback_confirmation(command, selected)
     confirmation_status = str(confirmation.get("status") or "unconfirmed")
+    activation: dict[str, Any] = {}
+    if confirmation_status in {"accepted", "activation_required"} or (
+        confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error"))
+    ):
+        activation = _localos_music_user_activation_click_via_chrome(selected)
+        if activation.get("status") in {"accepted", "focused", "playing"}:
+            refreshed = _localos_music_playback_confirmation(
+                command,
+                selected,
+                timeout_seconds=LOCALOS_MUSIC_USER_ACTIVATION_CONFIRM_SECONDS,
+            )
+            refreshed_status = str(refreshed.get("status") or "")
+            if refreshed_status in {"accepted", "activation_required", "playing", "failed", "ignored", "bridge_not_polling"}:
+                confirmation = refreshed
+                confirmation_status = refreshed_status
     page_confirmation_status = confirmation_status
-    autoplay_blocked = confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error"))
+    autoplay_blocked = (
+        confirmation_status == "activation_required"
+        or (confirmation_status == "failed" and _localos_music_native_fallback_reason(confirmation.get("error")))
+    )
     bridge_version = confirmation.get("bridge_version")
     if confirmation_status == "playing":
         reply = f"Playing {_localos_music_found_phrase(selected)} in Local OS."
@@ -3708,18 +4068,21 @@ def localos_music_play(
     elif confirmation_status == "ignored":
         reply = f"Local OS ignored the request for {_localos_music_found_phrase(selected)}."
     elif confirmation_status == "bridge_not_polling":
-        reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS; it may take a moment to start."
+        reply = _localos_music_not_playing_yet_reply(
+            selected,
+            "Local OS has not confirmed that the music player is polling yet.",
+        )
     elif confirmation_status == "accepted":
-        reply = f"Local OS accepted {_localos_music_found_phrase(selected)}; waiting for the audio to start."
+        reply = _localos_music_not_playing_yet_reply(selected, "Local OS accepted the request but did not start audio.")
     elif bridge_version:
-        reply = f"I sent {_localos_music_found_phrase(selected)} to Local OS, but it has not confirmed playback yet."
+        reply = _localos_music_not_playing_yet_reply(selected, "Local OS has not confirmed audio yet.")
     else:
-        reply = (
-            f"I queued {_localos_music_found_phrase(selected)} in Local OS. "
-            "If it does not start, refresh the LocalOS music window once."
+        reply = _localos_music_not_playing_yet_reply(
+            selected,
+            "If it does not start, refresh the LocalOS music window once.",
         )
     result_status = "playing" if confirmation_status == "playing" else "queued"
-    if confirmation_status in {"accepted", "failed", "ignored"}:
+    if confirmation_status in {"accepted", "activation_required", "failed", "ignored"}:
         result_status = "not_queued"
     return {
         **base,
@@ -3742,6 +4105,7 @@ def localos_music_play(
         "localos_bridge_current_track_matches": confirmation.get("current_track_matches"),
         "localos_bridge_current_track_playing": confirmation.get("current_track_playing"),
         "localos_command_error": confirmation.get("error"),
+        "user_activation_click": activation,
         "bridge_recovery": _localos_music_bridge_recovery(),
         "reply": reply,
         **_duration_fields(started_at),
@@ -3921,10 +4285,14 @@ def _localos_music_bridge_recovery() -> dict[str, Any]:
     return {
         "player_exists": LOCALOS_MUSIC_PLAYER_PATH.exists(),
         "shell_exists": LOCALOS_SHELL_PATH.exists(),
+        "host_app_exists": LOCALOS_HOST_APP_PATH.exists(),
         "player_path": str(LOCALOS_MUSIC_PLAYER_PATH),
         "shell_path": str(LOCALOS_SHELL_PATH),
+        "host_app_path": str(LOCALOS_HOST_APP_PATH),
         "player_file_url": LOCALOS_MUSIC_PLAYER_PATH.as_uri() if LOCALOS_MUSIC_PLAYER_PATH.exists() else "",
+        "player_host_url": LOCALOS_MUSIC_PLAYER_HOST_URL,
         "shell_file_url": LOCALOS_SHELL_PATH.as_uri() if LOCALOS_SHELL_PATH.exists() else "",
+        "host_health_url": LOCALOS_HOST_HEALTH_URL,
         "next_step": "Open or refresh the Local OS Music Player so it can poll Jarvis music commands.",
     }
 
@@ -3969,7 +4337,7 @@ def _localos_music_bridge_liveness() -> dict[str, Any]:
     }
 
 
-def _localos_music_recent_player_open(now: float | None = None) -> dict[str, Any] | None:
+def _localos_music_recent_player_open(now: float | None = None, *, player_url: str = "") -> dict[str, Any] | None:
     if not LOCALOS_MUSIC_PLAYER_OPEN_MARK_PATH.exists():
         return None
     try:
@@ -3981,6 +4349,9 @@ def _localos_music_recent_player_open(now: float | None = None) -> dict[str, Any
     opened_at = _safe_float(marker.get("opened_at"))
     if opened_at is None:
         return None
+    marker_url = _localos_clean_text(marker.get("player_url"), 500)
+    if player_url and marker_url and marker_url != player_url:
+        return None
     current = time.time() if now is None else now
     age = max(0.0, current - opened_at)
     if age > LOCALOS_MUSIC_PLAYER_OPEN_COOLDOWN_SECONDS:
@@ -3990,7 +4361,7 @@ def _localos_music_recent_player_open(now: float | None = None) -> dict[str, Any
         "opened_at": opened_at,
         "age_seconds": round(age, 3),
         "cooldown_seconds": LOCALOS_MUSIC_PLAYER_OPEN_COOLDOWN_SECONDS,
-        "player_url": _localos_clean_text(marker.get("player_url"), 500),
+        "player_url": marker_url,
     }
 
 
@@ -4016,6 +4387,167 @@ def _mark_localos_music_player_opened(player_url: str) -> None:
         return
 
 
+def _localos_music_chrome_tab_presence(player_url: str = "") -> dict[str, Any]:
+    """Check whether Chrome still has a LocalOS music-player tab without reading page content."""
+    started_at = time.monotonic()
+    if not _find_executable("osascript"):
+        return {
+            "status": "unavailable",
+            "open": None,
+            "error": "osascript_not_found",
+            **_duration_fields(started_at),
+        }
+    target_url = _localos_clean_text(player_url, 500)
+    script = f'''
+set targetURL to "{_escape_applescript_string(target_url)}"
+if application "Google Chrome" is not running then return "not_running"
+tell application "Google Chrome"
+    repeat with chromeWindow in windows
+        repeat with chromeTab in tabs of chromeWindow
+            set tabURL to URL of chromeTab
+            set tabTitle to title of chromeTab
+            if (targetURL is not "" and tabURL is targetURL) or tabURL contains "!musicPlayer.html" or tabURL contains "musicPlayer.html" or tabTitle contains "Music Player" then
+                return "open"
+            end if
+        end repeat
+    end repeat
+end tell
+return "not_open"
+'''
+    result = _run_osascript(script, timeout=1.2, stdout_tail_chars=200, stderr_tail_chars=500)
+    stdout = _localos_clean_text(result.get("stdout"), 80).lower()
+    if result.get("ok") and stdout == "open":
+        return {"status": "open", "open": True, **_duration_fields(started_at)}
+    if result.get("ok") and stdout in {"not_open", "not_running"}:
+        return {"status": stdout, "open": False, **_duration_fields(started_at)}
+    return {
+        "status": "unknown",
+        "open": None,
+        "error": _localos_clean_text(result.get("stderr") or result.get("stdout") or "chrome_tab_presence_unknown", 500),
+        "returncode": result.get("returncode"),
+        **_duration_fields(started_at),
+    }
+
+
+def _localos_host_health_status(*, timeout_seconds: float = 0.7) -> dict[str, Any]:
+    started_at = time.monotonic()
+    try:
+        with urllib.request.urlopen(LOCALOS_HOST_HEALTH_URL, timeout=max(0.1, timeout_seconds)) as response:
+            body = response.read(8192).decode("utf-8", errors="replace")
+    except (OSError, urllib.error.URLError, TimeoutError) as error:
+        return {
+            "status": "unreachable",
+            "ok": False,
+            "health_url": LOCALOS_HOST_HEALTH_URL,
+            "error": _localos_clean_text(error, 220),
+            **_duration_fields(started_at),
+        }
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        payload = {}
+    ok = isinstance(payload, dict) and bool(payload.get("ok")) and _safe_int(payload.get("port")) == 8787
+    return {
+        "status": "healthy" if ok else "invalid",
+        "ok": ok,
+        "health_url": LOCALOS_HOST_HEALTH_URL,
+        "payload": payload if isinstance(payload, dict) else {},
+        **_duration_fields(started_at),
+    }
+
+
+def _localos_music_player_url(*, host_health: dict[str, Any] | None = None) -> str:
+    health = host_health if isinstance(host_health, dict) else _localos_host_health_status(timeout_seconds=0.35)
+    if health.get("ok"):
+        return LOCALOS_MUSIC_PLAYER_HOST_URL
+    if LOCALOS_MUSIC_PLAYER_PATH.exists():
+        return LOCALOS_MUSIC_PLAYER_PATH.as_uri()
+    return ""
+
+
+def _localos_music_open_native_host_for_polling(*, timeout_seconds: float = 2.0) -> dict[str, Any]:
+    """Launch the native Local OS Host and wait for its Music bridge to publish."""
+    started_at = time.monotonic()
+    if not LOCALOS_HOST_APP_PATH.exists():
+        return {
+            "status": "unavailable",
+            "opened": False,
+            "error": "localos_host_app_missing",
+            "host_app_path": str(LOCALOS_HOST_APP_PATH),
+            **_duration_fields(started_at),
+        }
+    open_path = _find_executable("open")
+    if not open_path:
+        return {
+            "status": "unavailable",
+            "opened": False,
+            "error": "open_tool_missing",
+            "host_app_path": str(LOCALOS_HOST_APP_PATH),
+            **_duration_fields(started_at),
+        }
+    try:
+        completed = subprocess.run(
+            [open_path, str(LOCALOS_HOST_APP_PATH)],
+            shell=False,
+            cwd=PROJECT_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "open_timeout",
+            "opened": False,
+            "error": "open_timed_out",
+            "host_app_path": str(LOCALOS_HOST_APP_PATH),
+            **_duration_fields(started_at),
+        }
+    except OSError as error:
+        return {
+            "status": "open_failed",
+            "opened": False,
+            "error": str(error),
+            "host_app_path": str(LOCALOS_HOST_APP_PATH),
+            **_duration_fields(started_at),
+        }
+
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    last_liveness: dict[str, Any] = {}
+    last_health: dict[str, Any] = {}
+    while True:
+        last_liveness = _localos_music_bridge_liveness()
+        if last_liveness.get("status") == "live":
+            return {
+                "status": "live",
+                "opened": completed.returncode == 0,
+                "returncode": completed.returncode,
+                "stderr": _text_tail(completed.stderr or "", 500),
+                "host_app_path": str(LOCALOS_HOST_APP_PATH),
+                "health": last_health,
+                "liveness": last_liveness,
+                **_duration_fields(started_at),
+            }
+        if time.monotonic() >= deadline:
+            break
+        last_health = _localos_host_health_status(timeout_seconds=0.35)
+        time.sleep(0.25)
+
+    if not last_health:
+        last_health = _localos_host_health_status(timeout_seconds=0.35)
+    return {
+        "status": "opened_unconfirmed" if completed.returncode == 0 else "open_failed",
+        "opened": completed.returncode == 0,
+        "returncode": completed.returncode,
+        "stderr": _text_tail(completed.stderr or "", 500),
+        "host_app_path": str(LOCALOS_HOST_APP_PATH),
+        "health": last_health,
+        "liveness": last_liveness,
+        **_duration_fields(started_at),
+    }
+
+
 def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> dict[str, Any]:
     """Open the LocalOS music player normally so its polling bridge can connect."""
     started_at = time.monotonic()
@@ -4028,11 +4560,22 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
             "liveness": current_liveness,
             **_duration_fields(started_at),
         }
+    native_host = _localos_music_open_native_host_for_polling(timeout_seconds=min(2.0, max(0.0, timeout_seconds)))
+    if native_host.get("status") == "live":
+        return {
+            "status": "live",
+            "opened": bool(native_host.get("opened")),
+            "opened_via": "localos_host_app",
+            "native_host": native_host,
+            "liveness": native_host.get("liveness") if isinstance(native_host.get("liveness"), dict) else {},
+            **_duration_fields(started_at),
+        }
     if not LOCALOS_MUSIC_PLAYER_PATH.exists():
         return {
             "status": "unavailable",
             "error": "localos_music_player_missing",
             "player_path": str(LOCALOS_MUSIC_PLAYER_PATH),
+            "native_host": native_host,
             **_duration_fields(started_at),
         }
     open_path = _find_executable("open")
@@ -4041,11 +4584,34 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
             "status": "unavailable",
             "error": "open_tool_missing",
             "player_path": str(LOCALOS_MUSIC_PLAYER_PATH),
+            "native_host": native_host,
             **_duration_fields(started_at),
         }
 
-    player_url = LOCALOS_MUSIC_PLAYER_PATH.as_uri()
-    recent_open = _localos_music_recent_player_open()
+    player_url = _localos_music_player_url(
+        host_health=native_host.get("health") if isinstance(native_host.get("health"), dict) else None
+    )
+    if not player_url:
+        return {
+            "status": "unavailable",
+            "error": "localos_music_player_url_unavailable",
+            "player_path": str(LOCALOS_MUSIC_PLAYER_PATH),
+            "native_host": native_host,
+            **_duration_fields(started_at),
+        }
+    recent_open = _localos_music_recent_player_open(player_url=player_url)
+    if recent_open is not None:
+        tab_presence = _localos_music_chrome_tab_presence(player_url)
+        if tab_presence.get("status") in {"not_open", "not_running"}:
+            try:
+                LOCALOS_MUSIC_PLAYER_OPEN_MARK_PATH.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+            recent_open = None
+        else:
+            recent_open["chrome_tab_presence"] = tab_presence
     if recent_open is not None:
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         liveness = _localos_music_bridge_liveness()
@@ -4064,6 +4630,7 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
             **recent_open,
             "opened": False,
             "error": "localos_music_player_recently_opened",
+            "native_host": native_host,
             "liveness": liveness,
             **_duration_fields(started_at),
         }
@@ -4084,6 +4651,7 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
             "status": "open_timeout",
             "error": "open_timed_out",
             "player_url": player_url,
+            "native_host": native_host,
             **_duration_fields(started_at),
         }
     except OSError as error:
@@ -4091,6 +4659,7 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
             "status": "open_failed",
             "error": str(error),
             "player_url": player_url,
+            "native_host": native_host,
             **_duration_fields(started_at),
         }
 
@@ -4106,6 +4675,7 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
                 "returncode": completed.returncode,
                 "stderr": _text_tail(completed.stderr or "", 500),
                 "player_url": player_url,
+                "native_host": native_host,
                 "liveness": liveness,
                 **_duration_fields(started_at),
             }
@@ -4119,6 +4689,7 @@ def _localos_music_open_player_for_polling(*, timeout_seconds: float = 3.5) -> d
         "returncode": completed.returncode,
         "stderr": _text_tail(completed.stderr or "", 500),
         "player_url": player_url,
+        "native_host": native_host,
         "liveness": last_liveness,
         **_duration_fields(started_at),
     }
@@ -4156,7 +4727,15 @@ def _localos_music_play_via_chrome(
         }
 
     command_id = f"chrome-direct-{uuid.uuid4().hex[:12]}"
-    player_url = LOCALOS_MUSIC_PLAYER_PATH.as_uri()
+    player_url = _localos_music_player_url()
+    if not player_url:
+        return {
+            "status": "unavailable",
+            "error": "localos_music_player_url_unavailable",
+            "control_lane": "chrome_direct_localos_page",
+            "player_path": str(LOCALOS_MUSIC_PLAYER_PATH),
+            **_duration_fields(started_at),
+        }
     js_payload = f"""
 (() => {{
   const trackId = {json.dumps(track_id)};
@@ -4169,7 +4748,12 @@ def _localos_music_play_via_chrome(
     title: String(document.title || "")
   }};
   const api = window.LocalOSMusicPlayer;
-  if (!api || typeof api.playTrackById !== "function") {{
+  const playById = typeof playTrackById === "function"
+    ? playTrackById
+    : api && typeof api.playTrackById === "function"
+      ? api.playTrackById.bind(api)
+      : null;
+  if (typeof playById !== "function") {{
     result.status = "api_missing";
     return JSON.stringify(result);
   }}
@@ -4189,7 +4773,8 @@ def _localos_music_play_via_chrome(
       jarvisMusicControlStatus.lastCommandHandledAt = Date.now();
       jarvisMusicControlStatus.directUserRequest = userRequest;
     }}
-    const accepted = !!api.playTrackById(trackId);
+    const playResult = playById(trackId);
+    const accepted = playResult !== false;
     if (!accepted) {{
       if (typeof markJarvisMusicCommandStatus === "function") {{
         markJarvisMusicCommandStatus("failed", {{ track, error: "LocalOS page could not start the requested track." }});
@@ -4234,6 +4819,7 @@ def _localos_music_play_via_chrome(
   }}
 }})()
 """.strip()
+    js_payload_source = _applescript_javascript_source(js_payload)
     script = f'''
 set d to "{_escape_applescript_string(BROWSER_FIELD_DELIMITER)}"
 set targetURL to "{_escape_applescript_string(player_url)}"
@@ -4267,7 +4853,7 @@ tell application "Google Chrome"
         delay {LOCALOS_MUSIC_CHROME_DIRECT_NEW_TAB_DELAY_SECONDS:.1f}
     end if
     set theTab to active tab of front window
-    set jsResult to execute javascript "{_escape_applescript_string(js_payload)}" in theTab
+    set jsResult to execute javascript "{_escape_applescript_string(js_payload_source)}" in theTab
     return "checked" & d & (title of theTab) & d & (URL of theTab) & d & jsResult
 end tell
 '''
@@ -4311,13 +4897,35 @@ end tell
     except json.JSONDecodeError:
         direct_result = {"status": "unavailable", "error": "chrome_direct_json_unreadable", "raw": fields[3][:500]}
     direct_status = str(direct_result.get("status") or "unavailable")
-    if direct_status not in {"accepted", "playing"}:
+    if direct_status not in {"accepted", "activation_required", "playing"}:
+        activation: dict[str, Any] = {}
+        if _localos_music_native_fallback_reason(direct_result.get("error") or direct_status):
+            activation = _localos_music_user_activation_click_via_chrome(selected_track)
+            if activation.get("status") in {"accepted", "focused", "playing"}:
+                confirmation = _localos_music_playback_confirmation(
+                    {"id": command_id, "created_at": time.time()},
+                    selected_track,
+                    timeout_seconds=LOCALOS_MUSIC_USER_ACTIVATION_CONFIRM_SECONDS,
+                )
+                confirmation_status = str(confirmation.get("status") or direct_status)
+                if confirmation_status in {"accepted", "activation_required", "playing", "failed", "ignored", "bridge_not_polling"}:
+                    return {
+                        **base,
+                        **confirmation,
+                        "status": confirmation_status,
+                        "page_title": page_title,
+                        "page_url": page_url,
+                        "direct_result": direct_result,
+                        "user_activation_click": activation,
+                        **_duration_fields(started_at),
+                    }
         return {
             **base,
             "status": direct_status,
             "page_title": page_title,
             "page_url": page_url,
             "direct_result": direct_result,
+            "user_activation_click": activation,
             "error": direct_result.get("error") or direct_status,
             **_duration_fields(started_at),
         }
@@ -4328,8 +4936,21 @@ end tell
         timeout_seconds=LOCALOS_MUSIC_CHROME_DIRECT_CONFIRM_SECONDS,
     )
     confirmation_status = str(confirmation.get("status") or direct_status)
-    if confirmation_status not in {"accepted", "playing", "failed", "ignored", "bridge_not_polling"}:
+    if confirmation_status not in {"accepted", "activation_required", "playing", "failed", "ignored", "bridge_not_polling"}:
         confirmation_status = direct_status
+    activation: dict[str, Any] = {}
+    if confirmation_status in {"accepted", "activation_required"}:
+        activation = _localos_music_user_activation_click_via_chrome(selected_track)
+        if activation.get("status") in {"accepted", "focused", "playing"}:
+            refreshed = _localos_music_playback_confirmation(
+                {"id": command_id, "created_at": time.time()},
+                selected_track,
+                timeout_seconds=LOCALOS_MUSIC_USER_ACTIVATION_CONFIRM_SECONDS,
+            )
+            refreshed_status = str(refreshed.get("status") or "")
+            if refreshed_status in {"accepted", "activation_required", "playing", "failed", "ignored", "bridge_not_polling"}:
+                confirmation = refreshed
+                confirmation_status = refreshed_status
     return {
         **base,
         **confirmation,
@@ -4337,6 +4958,266 @@ end tell
         "page_title": page_title,
         "page_url": page_url,
         "direct_result": direct_result,
+        "user_activation_click": activation,
+        **_duration_fields(started_at),
+    }
+
+
+def _localos_music_user_activation_click_via_chrome(selected_track: dict[str, Any]) -> dict[str, Any]:
+    """Focus LocalOS's real play button and send a real Space keypress through Chrome."""
+    started_at = time.monotonic()
+    track_id = _localos_clean_text(selected_track.get("id"), 120)
+    if not track_id:
+        return {"status": "unavailable", "error": "missing_track_id", **_duration_fields(started_at)}
+    if not _find_executable("osascript"):
+        return {"status": "unavailable", "error": "osascript_not_found", **_duration_fields(started_at)}
+    focus_js = f"""
+(() => {{
+  const trackId = {json.dumps(track_id)};
+  const current = typeof getCurrentTrack === "function" ? getCurrentTrack() : null;
+  const currentTrackMatches = !!(current && current.id === trackId);
+  const state = window.LocalOSMusicPlayer && typeof window.LocalOSMusicPlayer.getState === "function"
+    ? window.LocalOSMusicPlayer.getState()
+    : {{}};
+  const alreadyPlaying = currentTrackMatches && !!(state && state.playing);
+  if (alreadyPlaying) {{
+    return JSON.stringify({{ status: "playing", currentTrackMatches, alreadyPlaying: true }});
+  }}
+  if (!currentTrackMatches) {{
+    return JSON.stringify({{
+      status: "track_mismatch",
+      currentTrackMatches,
+      currentTrackId: current && current.id ? String(current.id) : ""
+    }});
+  }}
+  const button = document.querySelector('button[onclick="togglePlay()"]')
+    || (document.getElementById("icon-play") && document.getElementById("icon-play").closest("button"))
+    || (document.getElementById("icon-pause") && document.getElementById("icon-pause").closest("button"));
+  if (!button) {{
+    return JSON.stringify({{ status: "button_missing", currentTrackMatches }});
+  }}
+  try {{
+    if (typeof markJarvisMusicCommandStatus === "function") {{
+      markJarvisMusicCommandStatus("accepted", {{ track: current }});
+    }}
+  }} catch (error) {{}}
+  button.focus({{ preventScroll: true }});
+  return JSON.stringify({{
+    status: document.activeElement === button ? "focused" : "focus_failed",
+    currentTrackMatches,
+    activeTag: document.activeElement ? String(document.activeElement.tagName || "") : ""
+  }});
+}})()
+""".strip()
+    focus_js_source = _applescript_javascript_source(focus_js)
+    check_js = f"""
+(() => {{
+  const trackId = {json.dumps(track_id)};
+  const current = typeof getCurrentTrack === "function" ? getCurrentTrack() : null;
+  const currentTrackMatches = !!(current && current.id === trackId);
+  const state = window.LocalOSMusicPlayer && typeof window.LocalOSMusicPlayer.getState === "function"
+    ? window.LocalOSMusicPlayer.getState()
+    : {{}};
+  const playing = currentTrackMatches && !!(state && state.playing);
+  try {{
+    if (currentTrackMatches && typeof markJarvisMusicCommandStatus === "function") {{
+      markJarvisMusicCommandStatus(playing ? "playing" : "accepted", {{ track: current }});
+    }}
+    if (typeof publishJarvisMusicSnapshot === "function") {{
+      publishJarvisMusicSnapshot("jarvis-user-activation-click", {{ force: true }}).catch(() => {{}});
+    }}
+  }} catch (error) {{}}
+  return JSON.stringify({{
+    status: playing ? "playing" : currentTrackMatches ? "accepted" : "track_mismatch",
+    currentTrackMatches,
+    playing,
+    title: current ? String(current.title || "") : ""
+  }});
+}})()
+""".strip()
+    check_js_source = _applescript_javascript_source(check_js)
+    player_url = _localos_music_player_url()
+    script = f'''
+set d to "{_escape_applescript_string(BROWSER_FIELD_DELIMITER)}"
+tell application "Google Chrome"
+    if (count of windows) = 0 then return "failed" & d & "" & d & "" & d & "{{\\"status\\":\\"chrome_window_missing\\"}}"
+    set foundLocalOSMusic to false
+    repeat with w in windows
+        set tabIndex to 1
+        repeat with t in tabs of w
+            set tabURL to URL of t
+            set tabTitle to title of t
+            if tabURL contains "!musicPlayer.html" or tabURL contains "musicPlayer.html" or tabTitle contains "Music Player" then
+                set active tab index of w to tabIndex
+                set index of w to 1
+                set foundLocalOSMusic to true
+                exit repeat
+            end if
+            set tabIndex to tabIndex + 1
+        end repeat
+        if foundLocalOSMusic then exit repeat
+    end repeat
+    if not foundLocalOSMusic then return "failed" & d & "" & d & "{_escape_applescript_string(player_url)}" & d & "{{\\"status\\":\\"localos_music_tab_missing\\"}}"
+    activate
+    delay 0.1
+    set theTab to active tab of front window
+    set focusResult to execute javascript "{_escape_applescript_string(focus_js_source)}" in theTab
+end tell
+if focusResult contains "\\"status\\":\\"focused\\"" then
+    tell application "System Events"
+        tell process "Google Chrome"
+            set frontmost to true
+            key code 49
+        end tell
+    end tell
+end if
+delay 0.45
+tell application "Google Chrome"
+    set theTab to active tab of front window
+    set checkResult to execute javascript "{_escape_applescript_string(check_js_source)}" in theTab
+    return "checked" & d & (title of theTab) & d & (URL of theTab) & d & focusResult & d & checkResult
+end tell
+'''
+    completed = _run_osascript(
+        script,
+        timeout=LOCALOS_MUSIC_USER_ACTIVATION_SCRIPT_TIMEOUT_SECONDS,
+        stdout_tail_chars=5000,
+        stderr_tail_chars=1000,
+    )
+    base = {
+        "method": "chrome_focused_space_key",
+        "script_timeout_seconds": LOCALOS_MUSIC_USER_ACTIVATION_SCRIPT_TIMEOUT_SECONDS,
+        "osascript": {
+            "ok": bool(completed.get("ok")),
+            "returncode": completed.get("returncode"),
+            "stderr": _text_tail(str(completed.get("stderr") or ""), 500),
+        },
+    }
+    if not completed.get("ok"):
+        fallback: dict[str, Any] = {}
+        if _localos_music_chrome_automation_denied(base):
+            fallback = _localos_music_space_key_via_system_events(player_url)
+            if fallback.get("status") == "focused":
+                return {
+                    **base,
+                    **fallback,
+                    "fallback_from": "chrome_javascript_automation_denied",
+                    **_duration_fields(started_at),
+                }
+        return {
+            **base,
+            "status": "unavailable",
+            "error": "chrome_user_activation_failed",
+            "system_events_fallback": fallback,
+            **_duration_fields(started_at),
+        }
+    fields = str(completed.get("stdout") or "").split(BROWSER_FIELD_DELIMITER)
+    if len(fields) < 5 or fields[0].strip() != "checked":
+        status = "unavailable"
+        parsed_error = "chrome_user_activation_unexpected_response"
+        if len(fields) >= 4:
+            try:
+                parsed = json.loads(fields[3])
+                status = str(parsed.get("status") or status)
+                parsed_error = status
+            except json.JSONDecodeError:
+                pass
+        return {
+            **base,
+            "status": status,
+            "error": parsed_error,
+            "stdout": _text_tail(str(completed.get("stdout") or ""), 500),
+            **_duration_fields(started_at),
+        }
+    try:
+        focus_result = json.loads(fields[3])
+    except json.JSONDecodeError:
+        focus_result = {"status": "focus_unreadable", "raw": fields[3][:500]}
+    try:
+        check_result = json.loads(fields[4])
+    except json.JSONDecodeError:
+        check_result = {"status": "check_unreadable", "raw": fields[4][:500]}
+    status = str(check_result.get("status") or focus_result.get("status") or "unavailable")
+    return {
+        **base,
+        "status": status,
+        "page_title": fields[1].strip(),
+        "page_url": fields[2].strip(),
+        "focus_result": focus_result,
+        "check_result": check_result,
+        "current_track_matches": check_result.get("currentTrackMatches"),
+        "current_track_playing": check_result.get("playing"),
+        **_duration_fields(started_at),
+    }
+
+
+def _localos_music_space_key_via_system_events(player_url: str) -> dict[str, Any]:
+    started_at = time.monotonic()
+    open_path = _find_executable("open")
+    osascript_path = _find_executable("osascript")
+    if not open_path or not osascript_path:
+        return {
+            "status": "unavailable",
+            "method": "system_events_space_key",
+            "error": "mac_open_or_osascript_missing",
+            **_duration_fields(started_at),
+        }
+    try:
+        completed_open = subprocess.run(
+            [open_path, "-a", "Google Chrome", player_url],
+            shell=False,
+            cwd=PROJECT_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=3.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "status": "unavailable",
+            "method": "system_events_space_key",
+            "error": _localos_clean_text(error, 220),
+            **_duration_fields(started_at),
+        }
+    time.sleep(0.18)
+    completed_key = _run_osascript(
+        '''
+tell application "System Events"
+    key code 49
+end tell
+''',
+        timeout=2.0,
+        stdout_tail_chars=500,
+        stderr_tail_chars=500,
+    )
+    if not completed_key.get("ok"):
+        return {
+            "status": "unavailable",
+            "method": "system_events_space_key",
+            "error": "system_events_space_key_failed",
+            "open": {
+                "returncode": completed_open.returncode,
+                "stderr": _text_tail(completed_open.stderr or "", 500),
+            },
+            "osascript": {
+                "returncode": completed_key.get("returncode"),
+                "stderr": _text_tail(str(completed_key.get("stderr") or ""), 500),
+            },
+            **_duration_fields(started_at),
+        }
+    return {
+        "status": "focused",
+        "method": "system_events_space_key",
+        "player_url": player_url,
+        "open": {
+            "returncode": completed_open.returncode,
+            "stderr": _text_tail(completed_open.stderr or "", 500),
+        },
+        "osascript": {
+            "returncode": completed_key.get("returncode"),
+            "stderr": _text_tail(str(completed_key.get("stderr") or ""), 500),
+        },
         **_duration_fields(started_at),
     }
 
@@ -4520,6 +5401,8 @@ def _localos_music_confirmation_from_snapshot(
         normalized_status = "accepted"
     elif last_command_status in {"accepted", "received"} and current_matches:
         normalized_status = "accepted"
+    elif last_command_status == "activation_required" and current_matches:
+        normalized_status = "activation_required"
     elif last_command_status in {"failed", "ignored"}:
         normalized_status = last_command_status
     else:
@@ -5072,8 +5955,16 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
 def _middle_tools_prompt(prompt: str, *, history: list[dict[str, str]] | None = None) -> str:
     history_lines: list[str] = []
     for item in (history or [])[-8:]:
-        role = _clean_local_field(item.get("role")) or "unknown"
-        text = _clean_local_field(item.get("text") if item.get("text") is not None else item.get("content"))[:500]
+        role = (_clean_local_field(item.get("role")) or "unknown").lower()
+        if role == "jarvis":
+            role = "assistant"
+        if role not in {"user", "assistant"}:
+            continue
+        raw_text = item.get("text") if item.get("text") is not None else item.get("content")
+        if role == "assistant":
+            text = _sanitize_fast_chat_assistant_history_text(str(raw_text or ""))[:500]
+        else:
+            text = _clean_local_field(raw_text)[:500]
         if text:
             history_lines.append(f"{role}: {text}")
     catalog = "\n".join(
@@ -5363,6 +6254,7 @@ def calendar_today_schedule(date_iso: str | None = None) -> dict[str, Any]:
     events = _calendar_deduplicate_events(raw_events)
     duplicate_count = max(0, len(raw_events) - len(events))
     reply = _calendar_events_reply(events)
+    spoken_summary = _calendar_spoken_events_reply(events)
     return {
         **base,
         "status": "checked",
@@ -5371,6 +6263,7 @@ def calendar_today_schedule(date_iso: str | None = None) -> dict[str, Any]:
         **({"raw_event_count": len(raw_events), "duplicate_event_count": duplicate_count} if duplicate_count else {}),
         "events": events,
         "reply": reply,
+        "spoken_summary": spoken_summary,
         **_duration_fields(started_at),
     }
 
@@ -5387,6 +6280,7 @@ def _calendar_today_schedule_from_sqlite(
     events = _calendar_deduplicate_events(raw_events)
     duplicate_count = max(0, len(raw_events) - len(events))
     reply = _calendar_events_reply(events)
+    spoken_summary = _calendar_spoken_events_reply(events)
     result: dict[str, Any] = {
         "tool": "calendar.today_schedule",
         "executed": True,
@@ -5399,6 +6293,7 @@ def _calendar_today_schedule_from_sqlite(
         **({"raw_event_count": len(raw_events), "duplicate_event_count": duplicate_count} if duplicate_count else {}),
         "events": events,
         "reply": reply,
+        "spoken_summary": spoken_summary,
         **_duration_fields(started_at),
     }
     if automation_status:
@@ -5511,6 +6406,17 @@ def _calendar_events_reply(events: list[dict[str, Any]]) -> str:
     if not events:
         return "Calendar shows no events for today."
     event_phrase = "; ".join(_calendar_event_phrase(event) for event in events[:5])
+    extra = len(events) - 5
+    reply = f"Today's Calendar schedule: {event_phrase}"
+    if extra > 0:
+        reply += f"; plus {extra} more event{'s' if extra != 1 else ''}"
+    return reply + "."
+
+
+def _calendar_spoken_events_reply(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return "Calendar shows no events for today."
+    event_phrase = "; ".join(_calendar_spoken_event_phrase(event) for event in events[:5])
     extra = len(events) - 5
     reply = f"Today's Calendar schedule: {event_phrase}"
     if extra > 0:
@@ -5644,6 +6550,14 @@ def _calendar_event_phrase(event: dict[str, Any]) -> str:
     return f"{title} at {start}" if start else title
 
 
+def _calendar_spoken_event_phrase(event: dict[str, Any]) -> str:
+    title = _calendar_reply_title(event.get("title"))
+    start = _calendar_spoken_time(event.get("start"))
+    if event.get("all_day"):
+        return f"{title} all day"
+    return f"{title} at {start}" if start else title
+
+
 def _calendar_reply_title(value: Any) -> str:
     raw = _clean_local_field(value)
     if not raw:
@@ -5669,6 +6583,24 @@ def _calendar_reply_time(value: Any) -> str:
     if minute == 0:
         return f"{hour_12} {suffix}"
     return f"{hour_12}:{minute:02d} {suffix}"
+
+
+def _calendar_spoken_time(value: Any) -> str:
+    raw = _clean_local_field(value)
+    match = re.match(r"^\d{4}-\d{2}-\d{2}\s+(?P<hour>\d{1,2}):(?P<minute>\d{2})$", raw)
+    if not match:
+        return raw
+    hour = _safe_int(match.group("hour"))
+    minute = _safe_int(match.group("minute"))
+    if hour is None or minute is None:
+        return raw
+    suffix = "AM" if hour < 12 else "PM"
+    hour_12 = hour % 12 or 12
+    if minute == 0:
+        return f"{hour_12} {suffix}"
+    if minute < 10:
+        return f"{hour_12} oh {minute} {suffix}"
+    return f"{hour_12} {minute} {suffix}"
 
 
 def app_identity_status(app_name: str = "Jarvis", search_dirs: list[Path] | None = None, *, limit: int = 120) -> dict[str, Any]:
@@ -7433,8 +8365,25 @@ def model_context_status(
     """Show what Jarvis would feed its model layers without calling them."""
     prompt = re.sub(r"\s+", " ", str(sample_prompt or "hello Jarvis")).strip()[:240] or "hello Jarvis"
     redacted_prompt = _model_context_preview_text(prompt, max_chars=240) or "hello Jarvis"
-    history_items = list(history or [])[-6:]
-    fast_messages = _fast_chat_messages(prompt, history=history_items, tool_specs=tool_specs)
+    history_items: list[dict[str, str]] = []
+    current_clean = re.sub(r"\s+", " ", prompt.strip())
+    for item in list(history or [])[-6:]:
+        role = str(item.get("role") or "").strip().lower()
+        if role == "jarvis":
+            role = "assistant"
+        if role not in {"user", "assistant"}:
+            continue
+        raw_text = str(item.get("text") or item.get("content") or "")
+        if role == "assistant":
+            text = _sanitize_fast_chat_assistant_history_text(raw_text)
+        else:
+            text = re.sub(r"\s+", " ", raw_text.strip())
+            if re.sub(r"\s+", " ", text) == current_clean:
+                continue
+        if text:
+            history_items.append({"role": role, "text": text[:900]})
+    effective_tool_specs = _fast_chat_primary_tool_specs(tool_specs)
+    fast_messages = _fast_chat_messages(prompt, history=history_items, tool_specs=effective_tool_specs)
     fast_preview = [
         {
             "role": message.get("role"),
@@ -7454,9 +8403,12 @@ def model_context_status(
     }
     codex_prompt = _codex_jarvis_generated_prompt(prompt, codex_selection)
     sample_tts_reply = _sanitize_spoken_text("Hello sir. What would you like me to do?")
-    tool_ids = [str(spec.get("tool") or "") for spec in tool_specs or [] if spec.get("tool")]
+    tool_ids = [str(spec.get("tool") or "") for spec in effective_tool_specs if spec.get("tool")]
     stream_tool_flow = {
         "enabled": bool(tool_specs),
+        "tool_catalog_compacted": bool(tool_specs and effective_tool_specs != (tool_specs or [])),
+        "tool_catalog_total": len(tool_specs or []),
+        "tool_catalog_active": len(effective_tool_specs),
         "normal_reply_rule": "If no real tool is needed, the fast model should answer directly and should not mention tools or routing.",
         "hidden_call_syntax": "\\tool({\"tool\":\"tool.id\",\"entities\":{}})",
         "legacy_email_shorthand_supported": "\\Email(count, from, to, unread_only, optional_sender)",
@@ -7677,6 +8629,7 @@ def tool_catalog_status(first_tool_specs: list[dict[str, Any]] | None = None) ->
     registry = tool_registry()
     registry_tools = list(registry.get("tools") or [])
     registry_ids = [str(tool.get("id") or "") for tool in registry_tools if tool.get("id")]
+    first_catalog_supplied = first_tool_specs is not None
     first_specs = list(first_tool_specs or [])
     first_ids = [str(spec.get("tool") or "") for spec in first_specs if spec.get("tool")]
     middle_tools = _middle_tool_catalog()
@@ -7696,8 +8649,12 @@ def tool_catalog_status(first_tool_specs: list[dict[str, Any]] | None = None) ->
     duplicated_first_ids = sorted({tool_id for tool_id in first_ids if first_ids.count(tool_id) > 1})
     duplicated_middle_ids = sorted({tool_id for tool_id in middle_ids if middle_ids.count(tool_id) > 1})
     status = "consistent" if not missing_from_registry and not duplicated_first_ids and not duplicated_middle_ids else "needs_attention"
+    if first_catalog_supplied:
+        first_model_text = f"the first model sees {len(first_ids)} tools"
+    else:
+        first_model_text = "the planner-routed first-model catalog is not attached to this direct diagnostic call"
     reply = (
-        f"Tool catalog status: the first model sees {len(first_ids)} tools, "
+        f"Tool catalog status: {first_model_text}, "
         f"the middle planner sees {len(middle_ids)} tools, and the public registry exposes {len(registry_ids)} tools. "
     )
     if missing_from_registry:
@@ -7716,6 +8673,7 @@ def tool_catalog_status(first_tool_specs: list[dict[str, Any]] | None = None) ->
             "tool_count": len(first_ids),
             "tool_ids": first_ids,
             "duplicates": duplicated_first_ids,
+            "catalog_supplied": first_catalog_supplied,
             "tools": [
                 {
                     "tool": str(spec.get("tool") or ""),
@@ -8276,6 +9234,7 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "requires_chrome_login": bool(bookmark_plan.get("requires_chrome_login")) if bookmark_ready else False,
         "read_private_browser_metadata": bool(bookmark_plan.get("read_private_content")),
         "automatic_teams_page_inspection_supported": bool(bookmark_ready),
+        "defer_stream_final_speech": bool(bookmark_ready),
         "teams_page_inspection_status": "chrome_handoff_then_native_visible_read" if bookmark_ready else "bookmark_needed",
         "teams_page_inspection_note": (
             "This build opens signed-in Teams in Chrome and the macOS app can attempt a read-only native visible-screen OCR follow-up; it still does not claim to read Teams assignments until that follow-up succeeds."
@@ -8544,6 +9503,7 @@ def _master_report_snapshot(path: Path) -> dict[str, Any]:
     risk_count = section_counts.get("Still Risky Or Unfinished", 0)
     support_count = section_counts.get("Supporting Files", 0)
     proof_items = parser.sections.get("Proof So Far", [])
+    proof_text = "\n".join(str(item) for item in proof_items)
     crash_items = [item for item in proof_items if item.lower().startswith("newest local crash report")]
     headline = parser.h1 or parser.title or "Jarvis Master Report"
     summary = (
@@ -8559,6 +9519,7 @@ def _master_report_snapshot(path: Path) -> dict[str, Any]:
         "launch_pills": launch_pills,
         "product_promises": parser.product_promises[:6],
         "proof_items": proof_items[:80],
+        "proof_text": proof_text,
         "crash_status": crash_items[-1] if crash_items else "",
         "section_counts": section_counts,
         "shipped_count": shipped_count,
@@ -8575,6 +9536,14 @@ def _launch_pill_value(pills: list[str], label: str) -> str:
     for pill in pills:
         if pill.lower().startswith(prefix.lower()):
             return _compact_report_text(pill.split(":", 1)[1])
+    return ""
+
+
+def _report_bundle_pill_value(pills: list[str]) -> str:
+    for label in ("Live bundle", "Output bundle", "Bundle"):
+        value = _launch_pill_value(pills, label)
+        if value:
+            return value
     return ""
 
 
@@ -8619,14 +9588,14 @@ def _report_integrity(
 ) -> dict[str, Any]:
     launch_pills = [str(pill) for pill in (report_snapshot.get("launch_pills") or [])]
     report_commit = _launch_pill_value(launch_pills, "Source commit")
-    report_bundle_text = _launch_pill_value(launch_pills, "Live bundle")
+    report_bundle_text = _report_bundle_pill_value(launch_pills)
     report_bundle = _report_bundle_from_pill(report_bundle_text)
     live_bundle = {
         "version": str((bundle_metadata or {}).get("version") or ""),
         "build": str((bundle_metadata or {}).get("build") or ""),
     }
     git_head = _git_head_short()
-    proof_text = "\n".join(str(item) for item in (report_snapshot.get("proof_items") or []))
+    proof_text = str(report_snapshot.get("proof_text") or "\n".join(str(item) for item in (report_snapshot.get("proof_items") or [])))
     latest_verification = _latest_runtime_artifact("runtime/verification/verify-safe-*.json")
     latest_no_prompt_verification = _latest_runtime_artifact("runtime/verification_no_prompt/verify-no-prompt-*.json")
     latest_voice_qa = _latest_runtime_artifact("runtime/voice_loop_qa/*/report.json")
@@ -8720,7 +9689,7 @@ def overnight_work_status() -> dict[str, Any]:
     ]
     if report_snapshot.get("ok"):
         launch_pills = [str(pill) for pill in (report_snapshot.get("launch_pills") or [])]
-        live_bundle = _launch_pill_value(launch_pills, "Live bundle")
+        live_bundle = _report_bundle_pill_value(launch_pills)
         source_commit = _launch_pill_value(launch_pills, "Source commit")
         verification = _launch_pill_value(launch_pills, "Verification")
         evidence_bits = [
@@ -9297,6 +10266,22 @@ def capabilities_status() -> dict[str, Any]:
             "audition_ready_count": stt_candidates.get("audition_ready_count"),
         },
         {
+            "id": "wake_audition_page",
+            "status": "prepared",
+            "summary": "Wake Lab is available as a local test surface for Hey Jarvis samples, transcript scoring, and noise trials.",
+            "test_prompt": "wake audition status",
+            "needs_leo": True,
+            "page": wake.get("wake_audition_page_url"),
+        },
+        {
+            "id": "stt_audition_page",
+            "status": "prepared",
+            "summary": "The STT audition page is available for comparing transcription candidates, punctuation quality, scores, and exports.",
+            "test_prompt": "stt audition status",
+            "needs_leo": True,
+            "page": stt.get("page_path"),
+        },
+        {
             "id": "overnight_workboard",
             "status": "working" if (PROJECT_ROOT / "runtime" / "overnight_status" / "index.html").exists() else "not_built",
             "summary": "The overnight progress workboard and master report have a read-only status route so Jarvis can show their paths without opening anything.",
@@ -9340,7 +10325,7 @@ def capabilities_status() -> dict[str, Any]:
     ]
     working = sum(1 for item in capabilities if item["status"] == "working")
     partial = sum(1 for item in capabilities if item["status"] == "partial")
-    prepared = sum(1 for item in capabilities if item["status"] == "prep_ready")
+    prepared = sum(1 for item in capabilities if item["status"] in {"prepared", "prep_ready", "prepared_live_verified"})
     needs_attention = sum(1 for item in capabilities if item["status"] in {"not_built", "unavailable", "missing", "needs_attention"})
     not_live_features = [
         "full raw chat-history memory",
@@ -10165,7 +11150,9 @@ def _contact_alias_suggestions(alias: str, aliases: dict[str, Any]) -> list[dict
 
 
 def _contact_candidates_from_messages(alias: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    alias_key = _contact_alias_key(alias)
+    clean_alias = _clean_contact_alias(alias)
+    alias_key = _contact_alias_key(clean_alias)
+    alias_core_key = _contact_alias_key(_contact_alias_without_honorific(clean_alias))
     counts: dict[str, int] = {}
     originals: dict[str, str] = {}
     for message in messages:
@@ -10177,12 +11164,44 @@ def _contact_candidates_from_messages(alias: str, messages: list[dict[str, Any]]
         originals.setdefault(key, sender)
     scored: list[tuple[float, str, int]] = []
     alias_tokens = set(alias_key.split())
+    alias_core_tokens = set(alias_core_key.split())
+    alias_has_honorific = clean_alias.lower().startswith(("ms ", "mrs ", "mr ", "dr "))
+    nonperson_lead_tokens = {
+        "microsoft",
+        "sharepoint",
+        "outlook",
+        "google",
+        "apple",
+        "copilot",
+        "github",
+        "zoom",
+        "slack",
+        "discord",
+    }
     for key, count in counts.items():
-        sender_tokens = set(key.split())
+        sender_token_list = key.split()
+        sender_tokens = set(sender_token_list)
         overlap = len(alias_tokens & sender_tokens) / max(1, len(alias_tokens | sender_tokens))
+        core_overlap = len(alias_core_tokens & sender_tokens) / max(1, len(alias_core_tokens | sender_tokens))
         ratio = difflib.SequenceMatcher(None, alias_key, key).ratio()
-        honorific_bonus = 0.08 if alias.lower().startswith(("ms ", "mrs ", "mr ", "dr ")) else 0.0
-        score = min(1.0, max(ratio, overlap) + honorific_bonus + min(0.08, count * 0.01))
+        core_ratio = difflib.SequenceMatcher(None, alias_core_key, key).ratio() if alias_core_key else 0.0
+        first_core_token = alias_core_key.split()[0] if alias_core_key.split() else ""
+        first_token_match = bool(first_core_token and sender_token_list and sender_token_list[0] == first_core_token)
+        core_subset_match = bool(alias_core_tokens and alias_core_tokens.issubset(sender_tokens))
+        service_sender_without_lead_match = bool(
+            sender_token_list and sender_token_list[0] in nonperson_lead_tokens and not first_token_match
+        )
+        score = max(ratio, overlap, core_ratio, core_overlap)
+        if alias_has_honorific:
+            score += 0.04
+        if first_token_match:
+            score += 0.08
+        if core_subset_match:
+            score += 0.05
+        score += min(0.08, count * 0.01)
+        if service_sender_without_lead_match:
+            score -= 0.18
+        score = min(1.0, max(0.0, score))
         if score >= 0.35:
             scored.append((score, key, count))
     scored.sort(key=lambda item: (-item[0], -item[2], originals.get(item[1], "")))
@@ -10522,10 +11541,14 @@ def browser_status() -> dict[str, Any]:
     chrome = app_status("Google Chrome")
     safari = app_status("Safari")
     osascript = _find_executable("osascript")
+    permission_probe = _native_chrome_automation_probe()
     chrome_running = bool(chrome.get("running"))
+    permission_state = str(permission_probe.get("state_label") or "")
     reply_bits = [
         f"Chrome is {'running' if chrome_running else 'not running'}",
         "the Chrome bridge can read the active tab when Chrome allows automation" if osascript else "AppleScript is unavailable",
+        f"Chrome Automation preflight is {permission_state.lower()}" if permission_state else "Chrome Automation preflight state is unknown",
+        "actual Chrome page-text access is only proven after a successful local page read",
         "the built-in Jarvis WebKit browser panel is live for ordinary pages",
         "logged-in Chrome sessions stay in Chrome",
     ]
@@ -10547,6 +11570,7 @@ def browser_status() -> dict[str, Any]:
             "resolved_name": safari.get("resolved_name"),
         },
         "osascript_available": bool(osascript),
+        "chrome_automation": permission_probe,
         "current_bridge": "chrome_read_only",
         "built_in_browser": {
             "status": "implemented",
@@ -10581,11 +11605,21 @@ def browser_current_tab() -> dict[str, Any]:
     return result
 
 
-def browser_read_page(max_chars: int | str | None = None) -> dict[str, Any]:
+def browser_read_page(max_chars: int | str | None = None, *, command: str | None = None) -> dict[str, Any]:
     """Read bounded text from Chrome's active page and mark it as untrusted data."""
     limit = _bounded_browser_text_limit(max_chars)
     result = _chrome_active_tab_metadata(include_page_text=True, text_limit=limit + 1)
     if result.get("status") != "checked":
+        if command and result.get("status") in {"automation_not_allowed", "chrome_javascript_unavailable", "teams_page_text_unavailable"}:
+            fallback = _browser_visible_screen_fallback(command=command)
+            if fallback:
+                return {
+                    **result,
+                    **fallback,
+                    "chrome_automation": result.get("chrome_automation") or fallback.get("chrome_automation") or {},
+                    "changed_browser_state": False,
+                    "opened_app": False,
+                }
         return result
 
     raw_text = str(result.pop("page_text", "") or "")
@@ -10720,6 +11754,7 @@ def commerce_price_convert(
     *,
     target_currency: str = "CNY",
     source_country: str = "US",
+    allow_network: bool = True,
 ) -> dict[str, Any]:
     """Fetch a public product price and convert it with a public exchange rate."""
     started_at = time.monotonic()
@@ -10754,6 +11789,25 @@ def commerce_price_convert(
             "search_plan": search,
             **_duration_fields(started_at),
             "reply": f"I do not have a reliable official price source for {clean_product} yet.",
+        }
+    if not allow_network:
+        search = browser_search_plan(f"{clean_product} official price")
+        return {
+            **base,
+            "status": "network_not_executed",
+            "planned_only": True,
+            "source": source,
+            "search_plan": search,
+            "external_network_lookup": False,
+            **_duration_fields(started_at),
+            "reply": (
+                f"I can check the official price for {source['label']} and convert it to {target}, "
+                "but external web lookup is disabled for this run."
+            ),
+            "spoken_summary": (
+                f"I can check the official price for {source['label']} and convert it to {target}, "
+                "but web lookup is disabled right now."
+            ),
         }
 
     price_page = _fetch_public_web_text_with_retries(
@@ -11421,6 +12475,49 @@ def _chrome_active_tab_metadata(*, include_page_text: bool = False, text_limit: 
             "status": "osascript_not_found",
             "reply": "I cannot check Chrome because macOS AppleScript tooling is unavailable.",
         }
+    native_page = _native_chrome_page_probe(include_page_text=include_page_text, text_limit=text_limit)
+    native_terminal_statuses = {
+        "checked",
+        "not_running",
+        "no_window",
+        "automation_not_allowed",
+        "chrome_javascript_unavailable",
+        "teams_page_text_unavailable",
+    }
+    if native_page.get("status") in native_terminal_statuses:
+        result = {
+            **base,
+            "status": str(native_page.get("status") or "unknown"),
+            "title": str(native_page.get("title") or ""),
+            "url": str(native_page.get("url") or ""),
+            "domain": str(native_page.get("domain") or _browser_safe_domain(native_page.get("url"))),
+            "chrome_automation": native_page.get("chrome_automation") or {},
+            "used_native_browser_probe": True,
+        }
+        if include_page_text:
+            result["page_text"] = str(native_page.get("page_text") or "")
+        if result["status"] != "checked":
+            status = result["status"]
+            result.update(
+                {
+                    "returncode": native_page.get("returncode"),
+                    "stderr": str(native_page.get("stderr") or ""),
+                    "reply": _browser_error_reply(status),
+                    **_browser_error_details(status, include_page_text=include_page_text),
+                }
+            )
+        return result
+    permission_probe = _native_chrome_automation_probe()
+    if permission_probe.get("status") == "needs_automation_access":
+        status = "automation_not_allowed"
+        return {
+            **base,
+            "status": status,
+            "reply": _browser_error_reply(status),
+            **_browser_error_details(status, include_page_text=include_page_text),
+            "used_native_permission_probe": True,
+            "chrome_automation": permission_probe,
+        }
     javascript = (
         "(() => { "
         "const body = document.body; "
@@ -11503,10 +12600,183 @@ end tell
         "title": title,
         "url": url,
         "domain": _browser_safe_domain(url),
+        "chrome_automation": permission_probe,
     }
     if include_page_text:
         result["page_text"] = fields[3] if len(fields) > 3 else ""
     return result
+
+
+def _native_chrome_automation_probe() -> dict[str, Any]:
+    executable = _jarvis_bundle_executable_path("jarvis-browser-permission-probe")
+    if not executable:
+        return {
+            "status": "probe_unavailable",
+            "state_label": "Unavailable",
+            "detail": "Native Chrome Automation probe is unavailable.",
+            "is_ready": False,
+            "requires_user_action": False,
+        }
+    try:
+        completed = subprocess.run(
+            [str(executable)],
+            shell=False,
+            cwd="/",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "status": "probe_failed",
+            "state_label": "Unavailable",
+            "detail": f"Native Chrome Automation probe failed: {error}",
+            "is_ready": False,
+            "requires_user_action": False,
+        }
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if payload:
+        payload.setdefault("returncode", completed.returncode)
+        if completed.stderr.strip():
+            payload.setdefault("stderr_tail", _text_tail(completed.stderr, 500))
+        return payload
+    return {
+        "status": "probe_failed",
+        "state_label": "Unavailable",
+        "detail": "Native Chrome Automation probe returned unreadable output.",
+        "is_ready": False,
+        "requires_user_action": False,
+        "returncode": completed.returncode,
+        "stderr_tail": _text_tail(completed.stderr, 500),
+        "stdout_tail": _text_tail(completed.stdout, 500),
+    }
+
+
+def _native_chrome_page_probe(*, include_page_text: bool, text_limit: int) -> dict[str, Any]:
+    executable = _jarvis_bundle_executable_path("jarvis-browser-page-probe")
+    if not executable:
+        return {
+            "status": "probe_unavailable",
+            "detail": "Native Chrome page probe is unavailable.",
+        }
+    command = [str(executable)]
+    if include_page_text:
+        command.append("--include-page-text")
+    command.extend(["--text-limit", str(max(1, min(int(text_limit), BROWSER_PAGE_TEXT_LIMIT + 1)))])
+    try:
+        completed = subprocess.run(
+            command,
+            shell=False,
+            cwd="/",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=4.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "status": "probe_failed",
+            "detail": f"Native Chrome page probe failed: {error}",
+        }
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if payload:
+        payload.setdefault("returncode", completed.returncode)
+        if completed.stderr.strip():
+            payload.setdefault("stderr_tail", _text_tail(completed.stderr, 500))
+        return payload
+    return {
+        "status": "probe_failed",
+        "detail": "Native Chrome page probe returned unreadable output.",
+        "returncode": completed.returncode,
+        "stderr_tail": _text_tail(completed.stderr, 500),
+        "stdout_tail": _text_tail(completed.stdout, 500),
+    }
+
+
+def _native_visible_screen_probe(
+    *,
+    target_app_name: str,
+    target_bundle_identifier: str | None = None,
+) -> dict[str, Any]:
+    executable = _jarvis_bundle_executable_path("jarvis-visible-screen-probe")
+    if not executable:
+        return {"status": "probe_unavailable", "error": "Native visible-screen probe is unavailable."}
+    command = [str(executable), "--target-app-name", str(target_app_name or "").strip()]
+    if target_bundle_identifier:
+        command.extend(["--target-bundle-id", str(target_bundle_identifier).strip()])
+    try:
+        completed = subprocess.run(
+            command,
+            shell=False,
+            cwd="/",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=8.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"status": "probe_failed", "error": f"Native visible-screen probe failed: {error}"}
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if payload:
+        payload.setdefault("returncode", completed.returncode)
+        if completed.stderr.strip():
+            payload.setdefault("stderr_tail", _text_tail(completed.stderr, 500))
+        return payload
+    return {
+        "status": "probe_failed",
+        "error": "Native visible-screen probe returned unreadable output.",
+        "returncode": completed.returncode,
+        "stderr_tail": _text_tail(completed.stderr, 500),
+        "stdout_tail": _text_tail(completed.stdout, 500),
+    }
+
+
+def _browser_visible_screen_fallback(
+    *,
+    command: str | None,
+    target_app_name: str = "Google Chrome",
+) -> dict[str, Any] | None:
+    capture = _native_visible_screen_probe(target_app_name=target_app_name)
+    if capture.get("status") != "captured":
+        return None
+    text = str(capture.get("text") or "")
+    diagnostics = capture.get("diagnostics") if isinstance(capture.get("diagnostics"), dict) else {}
+    if not text.strip():
+        return None
+    summary = visible_screen_text_summary(text, diagnostics=diagnostics, command=command)
+    summary_status = str(summary.get("status") or "")
+    if summary_status not in {"checked", "read_without_digest", "login_gate_visible"}:
+        return None
+    fallback_status = "visible_screen_login_gate" if summary_status == "login_gate_visible" else "read_via_visible_screen"
+    return {
+        **summary,
+        "tool": "browser.read_page",
+        "status": fallback_status,
+        "reply": str(summary.get("reply") or ""),
+        "spoken_summary": str(summary.get("spoken_summary") or summary.get("reply") or ""),
+        "used_native_visible_screen_fallback": True,
+        "visible_screen_fallback_source": summary.get("source"),
+        "visible_screen_fallback_target_app_name": summary.get("target_app_name"),
+    }
 
 
 def _chrome_bookmark_profile_paths() -> list[tuple[str, Path]]:
@@ -11703,7 +12973,7 @@ def _browser_error_reply(status: str) -> str:
     labels = {
         "not_running": "Chrome is not running, so I cannot inspect a tab yet.",
         "no_window": "Chrome is running but has no open browser window.",
-        "automation_not_allowed": "macOS is blocking Jarvis from controlling Google Chrome. Grant Jarvis Automation access to Chrome, then try again.",
+        "automation_not_allowed": "Chrome is blocking Jarvis from controlling the current page. Grant Jarvis Automation access to Chrome and enable Chrome's Allow JavaScript from Apple Events setting, then try again.",
         "chrome_javascript_unavailable": "Chrome allowed tab metadata, but did not allow Jarvis to read page text from the active page.",
         "teams_page_text_unavailable": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
         "osascript_not_found": "macOS AppleScript tooling is unavailable.",
@@ -11728,9 +12998,10 @@ def _browser_error_details(status: str, *, include_page_text: bool) -> dict[str,
             "next_steps": [
                 "Open System Settings > Privacy & Security > Automation.",
                 "Allow Jarvis to control Google Chrome.",
+                "In Chrome, enable View > Developer > Allow JavaScript from Apple Events if it is off.",
                 "If Jarvis is not listed yet, run a Chrome page-read while awake so macOS can show the Automation prompt.",
             ],
-            "spoken_summary": "I need Automation permission before I can read the current Chrome page. I will not copy Chrome logins into Jarvis.",
+            "spoken_summary": "I need Chrome control permission before I can read the current page. I will not copy Chrome logins into Jarvis.",
         }
     if status == "chrome_javascript_unavailable":
         return {
@@ -12363,6 +13634,22 @@ def visible_screen_text_summary(
             "spoken_summary": reply,
         }
 
+    if _visible_screen_login_gate_detected(clean_text):
+        reply, next_steps = _visible_screen_login_gate_user_reply(command=command, source_label=source_label)
+        return {
+            **base,
+            "status": "login_gate_visible",
+            "injection_scan": injection_scan,
+            "prompt_injection_findings": 0,
+            "page_digest": "",
+            "page_digest_items": [],
+            "reply": reply,
+            "spoken_summary": reply,
+            "requires_user_action": True,
+            "next_steps": next_steps,
+            "login_gate_detected": True,
+        }
+
     assignment_context = _is_visible_teams_assignment_context(command, diagnostics, clean_text)
     assignment_items = _visible_assignment_digest_items(clean_text) if assignment_context else []
     follow_up_questions = _visible_assignment_follow_up_questions(command, assignment_items) if assignment_items else []
@@ -12392,6 +13679,40 @@ def visible_screen_text_summary(
         "reply": reply,
         "spoken_summary": reply,
     }
+
+
+def _visible_screen_login_gate_detected(text: str) -> bool:
+    combined = str(text or "").casefold()
+    indicators = [
+        "enter password",
+        "touch id",
+        "sign in",
+        "sign-in",
+        "unlock",
+        "passkey",
+        "use your password",
+    ]
+    return any(indicator in combined for indicator in indicators)
+
+
+def _visible_screen_login_gate_user_reply(
+    *,
+    command: Any,
+    source_label: str,
+) -> tuple[str, list[str]]:
+    lower_command = str(command or "").casefold()
+    if "teams" in lower_command and "assignment" in lower_command:
+        return (
+            "Teams is still behind a password or sign-in gate in Chrome, so I have not reached the assignment page yet.",
+            ["Unlock or sign in in Chrome, then ask Jarvis to check Teams again."],
+        )
+    if "teams" in lower_command:
+        return (
+            "Teams is still behind a password or sign-in gate in Chrome, so I have not reached the page yet.",
+            ["Unlock or sign in in Chrome, then ask Jarvis to check Teams again."],
+        )
+    reply = f"I read {source_label}, but it is showing a password or sign-in gate, so I have not reached the target page yet."
+    return reply, ["Unlock or sign in on the visible page, then ask Jarvis again."]
 
 
 def _is_visible_teams_assignment_context(command: Any, diagnostics: dict[str, Any], text: str) -> bool:
@@ -12653,8 +13974,8 @@ def outlook_read_only_check(
             **base,
             "status": "no_matching_messages",
             "reply": (
-                f"I checked Apple Mail, scanned {int(mail_result.get('scanned_count') or 0)} recent messages, "
-                f"and found no message matching sender `{clean_sender_query}`. I did not summarize an unrelated newest email."
+                f"I did not find any recent email from {clean_sender_query}, "
+                "so I did not summarize an unrelated newest email."
             ),
             "inbox_count": int(mail_result.get("inbox_count") or 0),
             "scanned_count": int(mail_result.get("scanned_count") or 0),
@@ -13457,10 +14778,10 @@ def _apply_email_selection_request(mail_result: dict[str, Any], selection_reques
 
 def _email_selection_not_found_reply(mailbox: str, selection_request: dict[str, Any], scanned_count: int) -> str:
     if selection_request.get("kind") == "index":
-        return f"I checked {mailbox}, but I could not find email number {selection_request['start']} in the {scanned_count} recent messages I could scan."
+        return f"I could not find email number {selection_request['start']} in your recent inbox."
     return (
-        f"I checked {mailbox}, but I could not find the requested email range "
-        f"{selection_request['start']} to {selection_request['end']} in the {scanned_count} recent messages I could scan."
+        f"I could not find the requested email range "
+        f"{selection_request['start']} to {selection_request['end']} in your recent inbox."
     )
 
 
@@ -13675,13 +14996,22 @@ def run_fast_local_chat(
     tool_specs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Answer casual conversation through a tiny local model with a hard timeout."""
+    effective_tool_specs = _fast_chat_primary_tool_specs(tool_specs)
+    compacted = bool(tool_specs and effective_tool_specs != (tool_specs or []))
     if FAST_MODEL_BACKEND == "groq":
-        primary = _run_groq_fast_chat(prompt, model=model, history=history, tool_specs=tool_specs)
+        primary = _run_groq_fast_chat(prompt, model=model, history=history, tool_specs=effective_tool_specs)
         if _fast_chat_completed(primary):
+            if compacted:
+                primary["tool_catalog_compacted"] = True
             return primary
         if primary.get("status") == "tool_requested":
+            if compacted:
+                primary["tool_catalog_compacted"] = True
             return primary
-        return _fast_chat_with_fallback(prompt, primary, history=history, tool_specs=tool_specs)
+        result = _fast_chat_with_fallback(prompt, primary, history=history, tool_specs=effective_tool_specs)
+        if compacted:
+            result["tool_catalog_compacted"] = True
+        return result
 
     selected_model = (model or FAST_MODEL_NAME).strip() or FAST_MODEL_NAME
     started_at = time.monotonic()
@@ -13698,8 +15028,14 @@ def run_fast_local_chat(
             **_duration_fields(started_at),
             "reply": _fast_model_unavailable_reply(prompt),
         }
-        return _fast_chat_with_fallback(prompt, primary, history=history, tool_specs=tool_specs)
-    return _run_ollama_fast_chat(prompt, model=model, history=history, tool_specs=tool_specs)
+        result = _fast_chat_with_fallback(prompt, primary, history=history, tool_specs=effective_tool_specs)
+        if compacted:
+            result["tool_catalog_compacted"] = True
+        return result
+    result = _run_ollama_fast_chat(prompt, model=model, history=history, tool_specs=effective_tool_specs)
+    if compacted:
+        result["tool_catalog_compacted"] = True
+    return result
 
 
 def select_tool_intent(prompt: str, tool_specs: list[dict[str, Any]], model: str | None = None) -> dict[str, Any]:
@@ -14417,18 +15753,30 @@ class _FastChatVisibleStreamBuffer:
             return ""
         if self.hidden_started:
             self.pending += chunk
+            span = _fast_chat_hidden_call_span(self.pending, 0)
+            if span is not None and _fast_chat_stream_hidden_call_is_complete(self.pending, span):
+                remainder = self.pending[span[1]:]
+                self.pending = ""
+                self.hidden_started = False
+                return self.push(remainder)
             return ""
         self.pending += chunk
-        hidden_match = re.search(r"\\[A-Za-z]", self.pending)
-        if hidden_match:
-            visible = self.pending[: hidden_match.start()]
-            self.pending = self.pending[hidden_match.start() :]
-            self.hidden_started = True
-            return visible
-        if self.pending.endswith("\\"):
-            visible = self.pending[:-1]
-            self.pending = "\\"
-            return visible
+        cursor = 0
+        while True:
+            slash_index = self.pending.find("\\", cursor)
+            if slash_index < 0:
+                break
+            state = _fast_chat_stream_hidden_call_state(self.pending, slash_index)
+            if state == "hidden":
+                visible = self.pending[:slash_index]
+                self.pending = self.pending[slash_index:]
+                self.hidden_started = True
+                return visible
+            if state == "pending":
+                visible = self.pending[:slash_index]
+                self.pending = self.pending[slash_index:]
+                return visible
+            cursor = slash_index + 1
         visible = self.pending
         self.pending = ""
         return visible
@@ -14441,6 +15789,53 @@ class _FastChatVisibleStreamBuffer:
         return visible
 
 
+def _fast_chat_stream_hidden_call_state(text: str, slash_index: int) -> str:
+    """Classify a streaming backslash as hidden call, possible hidden call, or plain text."""
+    if slash_index >= len(text) or text[slash_index] != "\\":
+        return "plain"
+    cursor = slash_index + 1
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    if cursor >= len(text):
+        return "pending"
+    if not text[cursor].isalpha():
+        return "plain"
+    name_start = cursor
+    while cursor < len(text) and re.match(r"[A-Za-z0-9_.-]", text[cursor]):
+        cursor += 1
+    name = text[name_start:cursor].lower()
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    if cursor >= len(text):
+        return "pending"
+    if text[cursor] in {"(", "{"}:
+        return "hidden"
+    if name in {"tool", "email"}:
+        return "hidden"
+    return "plain"
+
+
+def _fast_chat_stream_hidden_call_is_complete(text: str, span: tuple[int, int]) -> bool:
+    if span[1] < len(text):
+        return True
+    hidden = text[span[0]: span[1]].rstrip()
+    if not hidden.startswith("\\"):
+        return True
+    match = re.match(r"\\\s*([A-Za-z][A-Za-z0-9_.-]*)\b", hidden, flags=re.IGNORECASE)
+    if not match:
+        return True
+    cursor = match.end()
+    while cursor < len(hidden) and hidden[cursor].isspace():
+        cursor += 1
+    if cursor >= len(hidden):
+        return False
+    if hidden[cursor] == "(":
+        return hidden.endswith(")")
+    if hidden[cursor] == "{":
+        return hidden.endswith("}")
+    return False
+
+
 def stream_fast_local_chat_events(
     prompt: str,
     model: str | None = None,
@@ -14449,10 +15844,12 @@ def stream_fast_local_chat_events(
     tool_specs: list[dict[str, Any]] | None = None,
 ):
     """Yield SSE-friendly fast-chat events. Falls back to one final event when streaming is unavailable."""
+    effective_tool_specs = _fast_chat_primary_tool_specs(tool_specs)
+    compacted = bool(tool_specs and effective_tool_specs != (tool_specs or []))
     if FAST_MODEL_BACKEND != "groq":
         yield {
             "event": "final_result",
-            "data": run_fast_local_chat(prompt, model=model, history=history, tool_specs=tool_specs),
+            "data": run_fast_local_chat(prompt, model=model, history=history, tool_specs=effective_tool_specs),
         }
         return
 
@@ -14471,12 +15868,12 @@ def stream_fast_local_chat_events(
             **_duration_fields(started_at),
             "reply": "Groq fast chat is selected, but GROQ_API_KEY is not configured.",
         }
-        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=tool_specs)}
+        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=effective_tool_specs)}
         return
 
     payload = {
         "model": selected_model,
-        "messages": _fast_chat_messages(prompt, history=history, tool_specs=tool_specs),
+        "messages": _fast_chat_messages(prompt, history=history, tool_specs=effective_tool_specs),
         "temperature": 0.4,
         "max_completion_tokens": FAST_MODEL_MAX_TOKENS,
         "stream": True,
@@ -14499,11 +15896,12 @@ def stream_fast_local_chat_events(
             "backend": "groq",
             "model": selected_model,
             "streaming": True,
+            "tool_catalog_compacted": compacted,
         },
     }
 
     chunks: list[str] = []
-    visible_buffer = _FastChatVisibleStreamBuffer() if tool_specs else None
+    visible_buffer = _FastChatVisibleStreamBuffer() if effective_tool_specs else None
     first_visible_token_at: float | None = None
     try:
         with urllib.request.urlopen(request, timeout=_groq_fast_response_timeout_seconds(), context=_https_context()) as response:
@@ -14523,7 +15921,7 @@ def stream_fast_local_chat_events(
                 if not content:
                     continue
                 chunks.append(content)
-                if tool_specs:
+                if effective_tool_specs:
                     visible = visible_buffer.push(content) if visible_buffer is not None else ""
                     if visible:
                         if first_visible_token_at is None:
@@ -14547,19 +15945,21 @@ def stream_fast_local_chat_events(
             **duration,
             "reply": _fast_model_timeout_reply(selected_model, duration["duration_human"]),
         }
+        if compacted:
+            result["tool_catalog_compacted"] = True
         if FAST_MODEL_FALLBACK_ENABLED and FAST_MODEL_FALLBACK_BACKEND == "ollama":
             yield _fast_chat_fallback_status_event()
             yield from _stream_ollama_fast_chat_events(
                 prompt,
                 model=_groq_rate_limit_middle_fallback_model(),
                 history=history,
-                tool_specs=tool_specs,
+                tool_specs=effective_tool_specs,
                 overall_started_at=started_at,
                 primary=result,
                 retry_status="primary_timeout",
             )
             return
-        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=tool_specs)}
+        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=effective_tool_specs)}
         return
     except urllib.error.HTTPError as error:
         body = _text_tail(error.read(), 1200)
@@ -14578,19 +15978,33 @@ def stream_fast_local_chat_events(
             **duration,
             "reply": "Groq fast chat returned an HTTP error.",
         }
+        if compacted:
+            result["tool_catalog_compacted"] = True
         if _fast_chat_should_retry_groq_rate_limit(result):
             yield _fast_chat_fallback_status_event()
             yield from _stream_ollama_fast_chat_events(
                 prompt,
                 model=_groq_rate_limit_middle_fallback_model(),
                 history=history,
-                tool_specs=tool_specs,
+                tool_specs=effective_tool_specs,
                 overall_started_at=started_at,
                 primary=result,
                 retry_status="skipped_rate_limit_retry",
             )
             return
-        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=tool_specs)}
+        if FAST_MODEL_FALLBACK_ENABLED and FAST_MODEL_FALLBACK_BACKEND == "ollama":
+            yield _fast_chat_fallback_status_event()
+            yield from _stream_ollama_fast_chat_events(
+                prompt,
+                model=_streaming_fast_chat_fallback_model(effective_tool_specs),
+                history=history,
+                tool_specs=effective_tool_specs,
+                overall_started_at=started_at,
+                primary=result,
+                retry_status="http_error",
+            )
+            return
+        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=effective_tool_specs)}
         return
     except (urllib.error.URLError, OSError) as error:
         duration = _duration_fields(started_at)
@@ -14608,12 +16022,26 @@ def stream_fast_local_chat_events(
             **duration,
             "reply": "Groq fast chat could not be reached.",
         }
-        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=tool_specs)}
+        if compacted:
+            result["tool_catalog_compacted"] = True
+        if FAST_MODEL_FALLBACK_ENABLED and FAST_MODEL_FALLBACK_BACKEND == "ollama":
+            yield _fast_chat_fallback_status_event()
+            yield from _stream_ollama_fast_chat_events(
+                prompt,
+                model=_streaming_fast_chat_fallback_model(effective_tool_specs),
+                history=history,
+                tool_specs=effective_tool_specs,
+                overall_started_at=started_at,
+                primary=result,
+                retry_status="network_error",
+            )
+            return
+        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=effective_tool_specs)}
         return
 
     duration = _duration_fields(started_at)
     reply = "".join(chunks).strip()
-    tool_request = _parse_fast_chat_tool_request(reply, tool_specs or [])
+    tool_request = _parse_fast_chat_tool_request(reply, effective_tool_specs or [])
     if tool_request is not None:
         result = {
             "tool": "conversation.fast_local",
@@ -14629,9 +16057,11 @@ def stream_fast_local_chat_events(
             **duration,
             **tool_request,
         }
+        if compacted:
+            result["tool_catalog_compacted"] = True
         yield {"event": "final_result", "data": result}
         return
-    if tool_specs and _fast_chat_contains_hidden_call_fragment(reply):
+    if effective_tool_specs and _fast_chat_contains_hidden_call_fragment(reply):
         yield {
             "event": "final_result",
             "data": _fast_chat_malformed_tool_result(
@@ -14639,6 +16069,7 @@ def stream_fast_local_chat_events(
                 model=selected_model,
                 started_at=started_at,
                 reply=reply,
+                fallback_used=False,
                 first_visible_token_at=first_visible_token_at,
             ),
         }
@@ -14656,10 +16087,12 @@ def stream_fast_local_chat_events(
             **duration,
             "reply": "Groq fast chat returned an empty answer.",
         }
-        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=tool_specs)}
+        if compacted:
+            result["tool_catalog_compacted"] = True
+        yield {"event": "final_result", "data": _fast_chat_with_fallback(prompt, result, history=history, tool_specs=effective_tool_specs)}
         return
 
-    if tool_specs and visible_buffer is not None:
+    if effective_tool_specs and visible_buffer is not None:
         visible_tail = visible_buffer.finish()
         if visible_tail:
             if first_visible_token_at is None:
@@ -14680,6 +16113,8 @@ def stream_fast_local_chat_events(
         **duration,
         "reply": _fast_chat_completed_reply(reply),
     }
+    if compacted:
+        result["tool_catalog_compacted"] = True
     yield {"event": "final_result", "data": result}
 
 
@@ -14935,6 +16370,14 @@ def _fast_chat_fallback_status_event() -> dict[str, Any]:
     }
 
 
+def _streaming_fast_chat_fallback_model(tool_specs: list[dict[str, Any]] | None) -> str | None:
+    if tool_specs:
+        middle = _groq_rate_limit_middle_fallback_model()
+        if middle:
+            return middle
+    return None
+
+
 def _rate_limit_fallback_metadata(
     primary: dict[str, Any],
     selected_model: str,
@@ -14972,9 +16415,11 @@ def _fast_chat_system_prompt(tool_specs: list[dict[str, Any]] | None = None) -> 
         f"Current local date/time: {_current_local_datetime_label()}. "
         "Answer directly and briefly unless he asks for more. "
         "Follow Leo's requested output format, including exact text or bullet counts. "
-        "Your visible words may be displayed in the Jarvis chat and spoken aloud, so keep them natural, English-first, voice-friendly, and concise. "
+        "Displayed or spoken aloud words must be natural, concise, English-first, and voice-friendly. "
+        "Write replies in English unless Leo asks otherwise; preserve only necessary non-English names or titles and explain the rest in English. "
+        "Leo's latest message may be raw speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended wording from context without adding new meaning. "
+        "No internal headings: Actions, What I did, Steps taken, Reasoning, Notes, Tool results. "
         "Avoid raw URLs, opaque IDs, markdown-heavy formatting, and internal routing words unless Leo explicitly asks for technical detail. "
-        "Leo's latest message may be raw speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended punctuation and wording from context without adding new meaning. "
         "Be useful and natural. Do not claim you performed computer actions unless a tool result is given to you. "
         "Do not invent schedule, email, weather, app, file, or system facts. "
         "Use the conversation history to resolve follow-ups, pronouns, and answers to earlier questions. "
@@ -14993,7 +16438,6 @@ def _fast_chat_system_prompt(tool_specs: list[dict[str, Any]] | None = None) -> 
             "Examples:\n"
             "Checking your email now. \\tool({\"tool\":\"outlook.visible_summary\",\"entities\":{\"selection\":\"unread_first\"}})\n"
             "Checking your second email now. \\tool({\"tool\":\"outlook.visible_summary\",\"entities\":{\"selection\":\"index:2\"}})\n"
-            "Checking the newest email from Sharpay now. \\tool({\"tool\":\"outlook.visible_summary\",\"entities\":{\"sender_query\":\"Sharpay\",\"selection\":\"latest\"}})\n"
             "If no real tool is needed, answer directly and do not mention tools.\n"
             "Available tools:\n"
             f"{_fast_chat_tool_catalog(tool_specs)}"
@@ -15018,17 +16462,32 @@ def _fast_chat_history_messages(history: list[dict[str, str]], *, current_prompt
     current_clean = re.sub(r"\s+", " ", current_prompt.strip())
     for item in history[-12:]:
         role = str(item.get("role") or "").strip().lower()
-        text = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
+        raw_text = str(item.get("text") or item.get("content") or "")
+        text = raw_text.strip()
         if not text:
             continue
         if role == "jarvis":
             role = "assistant"
-        if role not in {"user", "assistant", "system"}:
+        if role not in {"user", "assistant"}:
             continue
+        if role == "assistant":
+            text = _sanitize_fast_chat_assistant_history_text(raw_text)
+            if not text:
+                continue
+        else:
+            text = re.sub(r"\s+", " ", text).strip()
         if role == "user" and re.sub(r"\s+", " ", text) == current_clean:
             continue
         messages.append({"role": role, "content": text[:900]})
     return messages
+
+
+def _sanitize_fast_chat_assistant_history_text(text: str) -> str:
+    cleaned = _fast_chat_completed_reply(text)
+    cleaned = _strip_spoken_diagnostic_fragments(cleaned)
+    cleaned = _strip_spoken_internal_sections(cleaned)
+    cleaned = re.sub(r"(?im)^\s*(?:summary|answer|result|reply)\s*:\s*", "", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _fast_chat_tool_catalog(tool_specs: list[dict[str, Any]]) -> str:
@@ -15074,6 +16533,39 @@ _FAST_CHAT_STREAM_FALLBACK_CORE_TOOLS = {
     "diagnostics.wake",
 }
 
+_FAST_CHAT_PRIMARY_CORE_TOOLS = {
+    "outlook.visible_summary",
+    "localos.music_play",
+    "localos.music_stop",
+    "diagnostics.device",
+    "diagnostics.memory_usage",
+    "calendar.today_schedule",
+    "diagnostics.overnight",
+    "diagnostics.model_context",
+    "voice.stop_speaking",
+    "diagnostics.permissions",
+    "browser.open_url",
+    "browser.current_tab",
+    "browser.read_page",
+    "browser.search_web",
+    "commerce.price_convert",
+    "browser.built_in_plan",
+    "browser.bookmarks_import",
+    "browser.bookmarks_search",
+    "browser.bookmark_open",
+    "app.open",
+    "app.focus",
+    "app.list",
+    "app.status",
+    "app.running",
+    "app.frontmost",
+    "tools.more",
+    "codex.chat_plan",
+    "codex.activity",
+    "codex.job",
+}
+_FAST_CHAT_PRIMARY_COMPACT_THRESHOLD = 35
+
 
 def _fast_chat_stream_fallback_tool_specs(
     tool_specs: list[dict[str, Any]] | None,
@@ -15091,16 +16583,28 @@ def _fast_chat_stream_fallback_tool_specs(
     return compact or specs
 
 
+def _fast_chat_primary_tool_specs(tool_specs: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    specs = [spec for spec in (tool_specs or []) if isinstance(spec, dict)]
+    if len(specs) <= _FAST_CHAT_PRIMARY_COMPACT_THRESHOLD:
+        return specs
+    compact = [
+        spec
+        for spec in specs
+        if str(spec.get("tool") or "") in _FAST_CHAT_PRIMARY_CORE_TOOLS
+    ]
+    return compact or specs
+
+
 def _compact_fast_chat_tool_description(tool_id: str, raw_description: Any) -> str:
     description = _clean_local_field(raw_description)
     if tool_id == "tools.more":
-        return "Use the smarter middle model for multi-app workflows, UI automation, future capabilities, or complex tasks."
+        return "Use the smarter middle planner when the right tool is not listed here, or for multi-app workflows, diagnostics, future capabilities, or complex tasks."
     if not description:
         return "Use this tool only when the user clearly asks for it."
 
     first_sentence = re.split(r"(?<=[.!?])\s+", description, maxsplit=1)[0].strip()
     compact = first_sentence or description
-    max_chars = 72
+    max_chars = 60
     if len(compact) <= max_chars:
         return compact
     return compact[: max_chars - 12].rstrip(" ,.;:") + " [truncated]"
@@ -15199,11 +16703,38 @@ def _extract_fast_chat_tool_call(text: str) -> tuple[dict[str, Any], str] | None
             inner, end = _extract_parenthesized(text, cursor)
             if inner is not None:
                 parsed = _parse_email_shorthand_tool_call(inner)
+        elif cursor < len(text) and text[cursor] == "(":
+            inner, end = _extract_parenthesized(text, cursor)
+            if inner is not None:
+                inner = inner.strip()
+                if inner.startswith("{"):
+                    try:
+                        named_entities = json.loads(inner)
+                    except json.JSONDecodeError:
+                        named_entities = None
+                    if isinstance(named_entities, dict):
+                        parsed = _direct_named_tool_call_payload(name, named_entities)
+        elif cursor < len(text) and text[cursor] == "{":
+            named_entities, end = _extract_json_object_at(text, cursor)
+            if named_entities is not None:
+                parsed = _direct_named_tool_call_payload(name, named_entities)
         if parsed is None:
             continue
         visible_text = (text[:start] + text[end:]).strip()
         return parsed, visible_text
     return None
+
+
+def _direct_named_tool_call_payload(name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    entities = payload.get("entities") if isinstance(payload.get("entities"), dict) else payload
+    result: dict[str, Any] = {
+        "tool": name,
+        "entities": entities,
+    }
+    status = re.sub(r"\s+", " ", str(payload.get("status") or "")).strip()
+    if status:
+        result["status"] = status
+    return result
 
 
 def _extract_json_object_after_open_paren(text: str, open_index: int) -> tuple[dict[str, Any] | None, int]:
@@ -16848,10 +18379,14 @@ def _clean_codex_continuation_prompt(prompt: str) -> str:
 
 
 def _latest_codex_resume_target(*, history: list[dict[str, str]] | None = None) -> dict[str, Any] | None:
-    del history
     with CODEX_JOBS_LOCK:
         _ensure_codex_jobs_loaded_unlocked()
         jobs = [dict(value) for value in CODEX_JOBS.values()]
+    history_job_id = _codex_job_id_from_history(history)
+    if history_job_id:
+        for job in jobs:
+            if str(job.get("job_id") or "") == history_job_id:
+                return job
     recent_jobs = sorted(jobs, key=lambda item: float(item.get("started_at") or 0), reverse=True)
     waiting_jobs = [job for job in recent_jobs if _codex_job_appears_to_wait_for_reply(job)]
     if waiting_jobs:
@@ -16860,6 +18395,24 @@ def _latest_codex_resume_target(*, history: list[dict[str, str]] | None = None) 
         if str(job.get("status") or "") != "running":
             return job
     return recent_jobs[0] if recent_jobs else None
+
+
+def _codex_job_id_from_history(history: list[dict[str, str]] | None) -> str:
+    if not history:
+        return ""
+    for item in reversed(history[-12:]):
+        role = str(item.get("role") or "").strip().lower()
+        if role == "jarvis":
+            role = "assistant"
+        if role not in {"user", "assistant"}:
+            continue
+        text = str(item.get("content") or item.get("text") or "")
+        if not text:
+            continue
+        match = re.search(r"\bcodex-[A-Za-z0-9_-]+\b", text)
+        if match:
+            return match.group(0)
+    return ""
 
 
 def _codex_job_appears_to_wait_for_reply(job: dict[str, Any]) -> bool:
@@ -18198,6 +19751,10 @@ def _run_osascript(
 
 def _escape_applescript_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _applescript_javascript_source(value: str) -> str:
+    return " ".join(line.strip() for line in value.splitlines() if line.strip())
 
 
 def _clean_codex_prompt(prompt: str) -> str:

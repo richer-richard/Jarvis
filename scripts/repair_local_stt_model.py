@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Repair the local faster-whisper tiny.en model cache from a reachable mirror."""
+"""Repair the local faster-whisper tiny.en model cache from a reachable mirror.
+
+Dry-run is the default. Use --execute-network only after the model download has
+been explicitly approved.
+"""
 
 from __future__ import annotations
 
@@ -25,13 +29,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--url", default=DEFAULT_URL)
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", help="Plan only. This is the default.")
+    parser.add_argument("--execute-network", action="store_true", help="Actually download the model blob if repair is needed.")
     args = parser.parse_args()
 
     root = Path(args.project_root).expanduser().resolve()
-    status = repair_model_cache(root, url=args.url, dry_run=args.dry_run)
+    dry_run = not args.execute_network or args.dry_run
+    status = repair_model_cache(root, url=args.url, dry_run=dry_run)
+    status["execute_network"] = bool(args.execute_network and not args.dry_run)
     print(json.dumps(status, indent=2, ensure_ascii=False))
-    return 0 if status["ok"] else 1
+    return 0 if status["ok"] or status.get("dry_run") else 1
 
 
 def repair_model_cache(root: Path, *, url: str = DEFAULT_URL, dry_run: bool = False) -> dict[str, Any]:

@@ -229,8 +229,8 @@ enum JarvisMenuBarSelfTest {
         guard !JarvisAppDelegate.menuBarItemEnabled(environment: [:]) else {
             throw SelfTestError.failed("Main app menu-bar item should be disabled by default; the status helper owns the visible head.")
         }
-        guard JarvisAppDelegate.menuBarItemEnabled(environment: ["JARVIS_SHOW_MAIN_STATUS_ITEM": "yes"]) else {
-            throw SelfTestError.failed("Debug override should allow the main app status item when explicitly requested.")
+        guard !JarvisAppDelegate.menuBarItemEnabled(environment: ["JARVIS_SHOW_MAIN_STATUS_ITEM": "yes"]) else {
+            throw SelfTestError.failed("Main app status item must stay disabled even if an old debug override is present.")
         }
         guard JarvisAppDelegate.statusItemTitle.isEmpty else {
             throw SelfTestError.failed("Menu-bar status item should use the icon without a text title.")

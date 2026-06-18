@@ -69,8 +69,18 @@ wait_for_health() {
   return 1
 }
 
+wait_for_launch_process() {
+  for _ in {1..20}; do
+    if [[ -n "$(collect_existing_pids)" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 refresh_overnight_report() {
-  if python3 "$PROJECT_ROOT/scripts/render_overnight_status.py" --base-url "$BASE_URL" >/dev/null; then
+  if python3 "$PROJECT_ROOT/scripts/report_refresh.py" --base-url "$BASE_URL" >/dev/null; then
     printf 'Refreshed Jarvis report surfaces at %s/overnight-report/ and %s/overnight-workboard/.\n' "$BASE_URL" "$BASE_URL"
     return 0
   fi
@@ -100,6 +110,16 @@ for attempt in 1 2; do
   if ! /usr/bin/open "$APP_PATH"; then
     printf 'open failed for %s on attempt %s\n' "$APP_PATH" "$attempt" >&2
     if [[ "$attempt" -lt 2 ]]; then
+      sleep 1
+      continue
+    fi
+    exit 1
+  fi
+  if ! wait_for_launch_process; then
+    printf 'Jarvis app process did not appear after launch attempt %s.\n' "$attempt" >&2
+    diagnose_launch_state >&2
+    if [[ "$attempt" -lt 2 ]]; then
+      stop_existing
       sleep 1
       continue
     fi

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import JarvisClient
+import JarvisMacNative
 
 @MainActor
 final class JarvisShellModel: ObservableObject {
@@ -27,7 +28,8 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var wakeTranscriptText: String = ""
     @Published private(set) var isWakeListening: Bool = false
     @Published private(set) var isSpeechMuted: Bool = false
-    @Published private(set) var speechMuteText: String = "Speech On"
+    @Published private(set) var speechMuteText: String = "Speech Check"
+    @Published private(set) var isAutomaticSpeechAvailable: Bool = false
     @Published private(set) var summonSurface: JarvisSummonSurface = .hidden
     @Published private(set) var chatExportText: String = "Chat JSON ready"
     @Published var browserAddressText: String = ""
@@ -35,6 +37,7 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var browserTargetURL: URL?
     @Published private(set) var browserTitle: String = "Jarvis Browser"
     @Published private(set) var browserStatusText: String = "Browser ready"
+    @Published private(set) var browserHintText: String = ""
     @Published private(set) var browserAuthenticatedLane: Bool = false
     @Published private(set) var messages: [ChatMessage] = [
         ChatMessage(
@@ -67,6 +70,7 @@ final class JarvisShellModel: ObservableObject {
     private var bargeInGraceUntil: Date?
     private var lastBargeInTranscript: String = ""
     private var lastBargeInAt: Date?
+    private var browserStatusPinned = false
     var onSpeechMuteStateChanged: (() -> Void)?
     var onSpeechPlaybackLikelyStarted: (() -> Void)?
     private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
@@ -227,7 +231,7 @@ final class JarvisShellModel: ObservableObject {
     func toggleSpeechMuted() {
         let target = !isSpeechMuted
         let previous = isSpeechMuted
-        applySpeechMuteState(muted: target)
+        applySpeechMuteState(muted: target, checking: !target)
         state = target ? "Muting" : "Unmuting"
         chatExportText = target ? "Muting speech..." : "Restoring speech..."
         Task {
@@ -235,11 +239,12 @@ final class JarvisShellModel: ObservableObject {
                 let response = try await sendSpeechMute(target)
                 applySpeechMuteResponse(response)
                 state = response.muted ? "Muted" : "Ready"
-                chatExportText = response.muted ? "Speech muted" : "Speech unmuted"
+                let muteLabel = speechMuteText
+                chatExportText = Self.speechMuteChatExportText(label: muteLabel, muted: response.muted)
                 messages.append(
                     ChatMessage(
                         role: .system,
-                        text: response.muted ? "Jarvis speech is muted." : "Jarvis speech is on."
+                        text: Self.speechMuteUserMessage(label: muteLabel, muted: response.muted)
                     )
                 )
             } catch {
@@ -328,7 +333,10 @@ final class JarvisShellModel: ObservableObject {
         do {
             applySpeechMuteResponse(try await client.speechMuteStatus())
         } catch {
-            speechMuteText = Self.speechMuteText(muted: isSpeechMuted)
+            speechMuteText = Self.speechMuteText(
+                muted: isSpeechMuted,
+                automaticSpeechAvailable: isAutomaticSpeechAvailable
+            )
         }
     }
 
@@ -359,20 +367,83 @@ final class JarvisShellModel: ObservableObject {
     }
 
     private func applySpeechMuteResponse(_ response: SpeechMuteResponse) {
-        applySpeechMuteState(muted: response.muted)
+        isAutomaticSpeechAvailable = response.automaticSpeechAvailable ?? isAutomaticSpeechAvailable
+        applySpeechMuteState(
+            muted: response.muted,
+            automaticSpeechAvailable: isAutomaticSpeechAvailable,
+            automaticTtsEnabled: response.automaticTtsEnabled,
+            ttsAvailable: response.ttsAvailable
+        )
     }
 
-    private func applySpeechMuteState(muted: Bool) {
+    private func applySpeechMuteState(
+        muted: Bool,
+        automaticSpeechAvailable: Bool? = nil,
+        automaticTtsEnabled: Bool? = nil,
+        ttsAvailable: Bool? = nil,
+        checking: Bool = false
+    ) {
         isSpeechMuted = muted
         if muted {
             clearSpeechPlaybackWindow()
         }
-        speechMuteText = Self.speechMuteText(muted: muted)
+        if checking && !muted {
+            isAutomaticSpeechAvailable = false
+            speechMuteText = "Speech Check"
+            onSpeechMuteStateChanged?()
+            return
+        }
+        let speechAvailable = automaticSpeechAvailable ?? isAutomaticSpeechAvailable
+        speechMuteText = Self.speechMuteText(
+            muted: muted,
+            automaticSpeechAvailable: speechAvailable,
+            automaticTtsEnabled: automaticTtsEnabled,
+            ttsAvailable: ttsAvailable
+        )
         onSpeechMuteStateChanged?()
     }
 
-    static func speechMuteText(muted: Bool) -> String {
-        muted ? "Muted" : "Speech On"
+    static func speechMuteText(
+        muted: Bool,
+        automaticSpeechAvailable: Bool = true,
+        automaticTtsEnabled: Bool? = nil,
+        ttsAvailable: Bool? = nil
+    ) -> String {
+        if muted {
+            return "Muted"
+        }
+        if automaticTtsEnabled == false {
+            return "Speech Off"
+        }
+        if ttsAvailable == false {
+            return "Voice Missing"
+        }
+        return automaticSpeechAvailable ? "Speech On" : "Voice Off"
+    }
+
+    private static func speechMuteChatExportText(label: String, muted: Bool) -> String {
+        if muted {
+            return "Speech muted"
+        }
+        return label == "Speech On" ? "Speech unmuted" : label
+    }
+
+    private static func speechMuteUserMessage(label: String, muted: Bool) -> String {
+        if muted {
+            return "Jarvis speech is muted."
+        }
+        switch label {
+        case "Speech Off":
+            return "Jarvis speech is unmuted, but automatic spoken replies are off."
+        case "Voice Missing":
+            return "Jarvis speech is unmuted, but the voice provider is missing."
+        case "Voice Off":
+            return "Jarvis speech is unmuted, but automatic speech is unavailable."
+        case "Speech Check":
+            return "Jarvis speech is unmuted, but voice readiness is still being checked."
+        default:
+            return "Jarvis speech is on."
+        }
     }
 
     private func updateSummonSurface(
@@ -558,7 +629,7 @@ final class JarvisShellModel: ObservableObject {
         if preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             preview = fallbackText
         }
-        let blockedStatuses = ["missing", "muted", "suppressed", "suppressed_for_stop_speaking", "empty", "disabled", "failed"]
+        let blockedStatuses = ["missing", "muted", "suppressed", "suppressed_for_stop_speaking", "empty", "empty_after_sanitization", "disabled", "failed"]
         guard !blockedStatuses.contains(status), !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
@@ -773,7 +844,7 @@ final class JarvisShellModel: ObservableObject {
                     phase: .thinking,
                     title: "Checking that now.",
                     transcript: "Show me the Jarvis popout",
-                    detail: "Choosing the best route."
+                    detail: "Finding the best way to help."
                 )
             }
             try? await Task.sleep(nanoseconds: 950_000_000)
@@ -783,7 +854,7 @@ final class JarvisShellModel: ObservableObject {
                     title: "Answering.",
                     transcript: "Show me the Jarvis popout",
                     response: "The new Jarvis surface is ready.",
-                    detail: "Writing the response."
+                    detail: "Preparing the answer."
                 )
             }
             try? await Task.sleep(nanoseconds: 1_100_000_000)
@@ -814,18 +885,24 @@ final class JarvisShellModel: ObservableObject {
     func showBrowser() {
         isBrowserVisible = true
         if browserAddressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            browserStatusPinned = false
             browserStatusText = "Enter a URL or search above."
+            browserHintText = ""
         }
     }
 
     func hideBrowser() {
         isBrowserVisible = false
+        browserStatusPinned = false
         browserStatusText = "Browser hidden"
+        browserHintText = ""
     }
 
     func openBrowserTargetInChrome() {
         guard let url = browserTargetURL ?? Self.normalizedBrowserURL(from: browserAddressText) else {
+            browserStatusPinned = false
             browserStatusText = "No browser page to open."
+            browserHintText = ""
             return
         }
         openURLInChrome(url, statusPrefix: "Opening")
@@ -836,17 +913,32 @@ final class JarvisShellModel: ObservableObject {
         configuration.activates = true
         guard let chromeURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") else {
             let opened = NSWorkspace.shared.open(url)
+            browserStatusPinned = false
             browserStatusText = opened
                 ? (authenticatedLane ? "Opened in default browser; Chrome login not confirmed" : "Opened in default browser")
                 : "Could not open browser"
+            browserHintText = ""
             return
         }
+        if authenticatedLane, openURLInSignedInChromeSession(url) {
+            browserStatusPinned = false
+            browserStatusText = "Opened in signed-in Chrome"
+            browserHintText = ""
+            return
+        }
+        browserStatusPinned = false
         browserStatusText = "\(statusPrefix) in Chrome"
+        browserHintText = ""
         NSWorkspace.shared.open([url], withApplicationAt: chromeURL, configuration: configuration) { [weak self] _, error in
             Task { @MainActor in
-                self?.browserStatusText = error == nil
+                guard let self, !self.browserStatusPinned else {
+                    return
+                }
+                self.browserStatusPinned = false
+                self.browserStatusText = error == nil
                     ? (authenticatedLane ? "Opened in signed-in Chrome" : "Opened in Chrome")
                     : "Could not open Chrome"
+                self.browserHintText = ""
             }
         }
     }
@@ -854,7 +946,9 @@ final class JarvisShellModel: ObservableObject {
     func loadBrowserAddress() {
         let input = browserAddressText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = Self.normalizedBrowserURL(from: input) else {
+            browserStatusPinned = false
             browserStatusText = "Enter a valid URL or search."
+            browserHintText = ""
             return
         }
         let authenticatedLane = Self.isAuthenticatedBrowserURL(url)
@@ -869,9 +963,11 @@ final class JarvisShellModel: ObservableObject {
         browserAddressText = url.absoluteString
         browserTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Jarvis Browser" : title
         browserAuthenticatedLane = authenticatedLane
+        browserStatusPinned = false
         browserStatusText = authenticatedLane
             ? "Chrome handoff: signed-in session stays in Chrome"
             : "Loading \(url.host ?? url.absoluteString)"
+        browserHintText = ""
         isBrowserVisible = true
     }
 
@@ -880,12 +976,13 @@ final class JarvisShellModel: ObservableObject {
         if !cleanTitle.isEmpty {
             browserTitle = cleanTitle
         }
-        if let url {
+        if let url, !browserStatusPinned {
             browserAddressText = url.absoluteString
             browserAuthenticatedLane = Self.isAuthenticatedBrowserURL(url)
             browserStatusText = browserAuthenticatedLane
                 ? "Chrome handoff active"
                 : "Loaded \(url.host ?? url.absoluteString)"
+            browserHintText = ""
         }
     }
 
@@ -911,6 +1008,75 @@ final class JarvisShellModel: ObservableObject {
             openURLInChrome(url, statusPrefix: "Opening signed-in page", authenticatedLane: true)
         }
         return true
+    }
+
+    private func openURLInSignedInChromeSession(_ url: URL) -> Bool {
+        let script = Self.chromeSignedInOpenScript(for: url)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return false
+        }
+        return process.terminationStatus == 0
+    }
+
+    private static func chromeSignedInOpenScript(for url: URL) -> String {
+        let targetURL = escapedAppleScriptString(url.absoluteString)
+        let targetHost = escapedAppleScriptString((url.host ?? "").lowercased())
+        return """
+        set targetURL to "\(targetURL)"
+        set targetHost to "\(targetHost)"
+        tell application "Google Chrome"
+            activate
+            if (count of windows) = 0 then
+                make new window
+            end if
+            set matchedTab to false
+            repeat with w in windows
+                set tabIndex to 1
+                repeat with t in tabs of w
+                    set tabURL to URL of t
+                    if tabURL is targetURL then
+                        set active tab index of w to tabIndex
+                        set index of w to 1
+                        set matchedTab to true
+                        exit repeat
+                    end if
+                    if (targetHost is "teams.microsoft.com" or targetHost is "teams.cloud.microsoft") and (tabURL contains "teams.microsoft.com" or tabURL contains "teams.cloud.microsoft") then
+                        set active tab index of w to tabIndex
+                        set index of w to 1
+                        set matchedTab to true
+                        exit repeat
+                    end if
+                    set tabIndex to tabIndex + 1
+                end repeat
+                if matchedTab then
+                    exit repeat
+                end if
+            end repeat
+            if not matchedTab then
+                if (count of windows) = 0 then
+                    make new window
+                end if
+                tell front window
+                    make new tab at end of tabs with properties {URL:targetURL}
+                    set active tab index to (count of tabs)
+                end tell
+            end if
+        end tell
+        """
+    }
+
+    private static func escapedAppleScriptString(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     private static func isAuthenticatedBrowserURL(_ url: URL) -> Bool {
@@ -1094,6 +1260,7 @@ final class JarvisShellModel: ObservableObject {
             routeSource = Self.routeSource(from: response)
             modelBackend = Self.modelBackend(from: response)
             modelName = Self.modelName(from: response)
+            updateBrowserSurfaceStatus(from: response)
         }
 
         recordTurnPhase("Heard", detail: "User command accepted.")
@@ -1137,7 +1304,7 @@ final class JarvisShellModel: ObservableObject {
                 title: "Answering.",
                 transcript: commandText,
                 response: text,
-                detail: "Writing the response."
+                detail: "Preparing the answer."
             )
         }
         func finishSummon(_ text: String, isError: Bool = false) {
@@ -1150,7 +1317,7 @@ final class JarvisShellModel: ObservableObject {
                 title: isError ? "Something went wrong." : (isSpeechMuted ? "Done." : "Speaking."),
                 transcript: commandText,
                 response: text,
-                detail: isError ? "The debug window has details." : "Ready for the next command.",
+                detail: isError ? "Check the Jarvis window for details." : "Ready for the next command.",
                 autoHideAfter: isError ? 8 : Self.summonSpeechHoldSeconds(for: text, muted: isSpeechMuted)
             )
         }
@@ -1279,20 +1446,37 @@ final class JarvisShellModel: ObservableObject {
                     command: commandText,
                     history: history,
                     onStatus: { status in
-                        let statusText = status.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let statusText = status.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !statusText.isEmpty, statusText != lastStatusText else {
                             return
                         }
+                        let streamingAnswerAlreadyVisible = !streamedReply.isEmpty
                         lastStatusText = statusText
-                        visibleStatusLines.append(statusText)
-                        recordTurnPhase("Working", detail: statusText)
-                        updateSummonThinking(statusText)
-                        if !streamedReply.isEmpty {
-                            if progressTask == nil {
-                                progressTask = self.startProgressNudges(for: commandText, turnID: turnID)
+                        if streamingAnswerAlreadyVisible {
+                            if status.replaceStreamingPreview == true {
+                                visibleStatusLines.append(statusText)
+                                if let placeholderId {
+                                    self.replaceMessage(
+                                        id: placeholderId,
+                                        with: ChatMessage(
+                                            id: placeholderId,
+                                            role: .jarvis,
+                                            text: statusText,
+                                            detail: "Working"
+                                        )
+                                    )
+                                } else {
+                                    _ = self.appendJarvisMessage(text: statusText, detail: "Working")
+                                }
+                                if progressTask == nil {
+                                    progressTask = self.startProgressNudges(for: commandText, turnID: turnID)
+                                }
                             }
                             return
                         }
+                        visibleStatusLines.append(statusText)
+                        recordTurnPhase("Working", detail: statusText)
+                        updateSummonThinking(statusText)
                         if let placeholderId {
                             self.replaceMessage(
                                 id: placeholderId,
@@ -1334,15 +1518,10 @@ final class JarvisShellModel: ObservableObject {
             let browserSurfaceOpened = openBrowserSurfaceIfNeeded(from: response)
             if browserSurfaceOpened,
                Self.shouldAutoReadTeamsVisibleScreen(commandText: commandText, tool: response.tool) {
-                let statusText = "Reading the visible Teams screen now."
-                _ = appendJarvisMessage(text: statusText, detail: "Working")
-                visibleStatusLines.append(statusText)
-                updateSummonThinking(statusText)
-                if await shouldSpeakAfterBackendMuteRefresh() {
-                    _ = try? await client.speakStatus(statusText)
-                }
-                recordTurnPhase("Working", detail: statusText)
-                response = try await runNativeVisibleScreenReadWithRetry(commandText)
+                browserStatusText = "Chrome handoff: reading Teams"
+                updateSummonThinking("Reading Teams in Chrome.", detail: "Checking the visible Teams page.")
+                recordTurnPhase("Working", detail: "Reading Teams in Chrome.")
+                response = try await runTeamsBrowserFollowUp(commandText)
             }
 
             tool = response.tool ?? "unknown"
@@ -1824,9 +2003,9 @@ final class JarvisShellModel: ObservableObject {
                 } catch {
                     return
                 }
-                await MainActor.run {
+                let stillCurrent = await MainActor.run {
                     guard let self, self.isBusy, self.activeTurnID == turnID else {
-                        return
+                        return false
                     }
                     let message = ChatMessage(
                         role: .jarvis,
@@ -1835,6 +2014,10 @@ final class JarvisShellModel: ObservableObject {
                     )
                     self.messages.append(message)
                     self.activeProgressNudgeIDs.insert(message.id)
+                    return true
+                }
+                if !stillCurrent {
+                    return
                 }
             }
         }
@@ -1909,7 +2092,9 @@ final class JarvisShellModel: ObservableObject {
         var latestResponse: CommandResponse?
         let attempts = max(1, Self.teamsVisibleReadRetryAttempts)
         for attempt in 1...attempts {
-            try await Task.sleep(nanoseconds: Self.teamsVisibleReadRetryDelayNanoseconds)
+            if attempt > 1 {
+                try await Task.sleep(nanoseconds: Self.teamsVisibleReadRetryDelayNanoseconds)
+            }
             let response = try await runNativeVisibleScreenRead(commandText)
             latestResponse = response
             if Self.visibleScreenReadResponseLooksUseful(response) || attempt == attempts {
@@ -1920,6 +2105,178 @@ final class JarvisShellModel: ObservableObject {
             return latestResponse
         }
         return try await runNativeVisibleScreenRead(commandText)
+    }
+
+    private func runNativeChromePageRead(_ commandText: String) async throws -> CommandResponse {
+        guard !isPaused else {
+            return try await client.send(command: commandText)
+        }
+
+        state = "Reading Browser"
+        tool = "browser.read_page"
+        return try await client.readChromeActivePage(command: commandText, maxChars: 6000, suppressSpeech: false)
+    }
+
+    private func runTeamsBrowserFollowUp(_ commandText: String) async throws -> CommandResponse {
+        if JarvisPermissionService.chromeAutomationRequiresManualGrant() {
+            let reply = "Chrome is blocking Jarvis from controlling the current page. Grant Jarvis Automation access to Chrome and enable Chrome's Allow JavaScript from Apple Events setting, then try again."
+            let speech = await localStatusSpeechPayload(reply)
+            return Self.localChromeAutomationBlockedResponse(
+                command: commandText,
+                reply: reply,
+                speech: speech
+            )
+        }
+
+        let browserResponse = try await runNativeChromePageRead(commandText)
+        if Self.browserPageReadResponseLooksUseful(browserResponse) {
+            return browserResponse
+        }
+        if Self.browserPageReadShouldSkipVisibleScreenRetry(browserResponse) {
+            return browserResponse
+        }
+
+        let visibleScreenResponse = try await runNativeVisibleScreenReadWithRetry(commandText)
+        if Self.visibleScreenReadResponseLooksUseful(visibleScreenResponse) {
+            return visibleScreenResponse
+        }
+
+        let browserStatus = browserResponse.result?.objectValue?["status"]?.stringValue ?? ""
+        if browserStatus == "automation_not_allowed" || browserStatus == "teams_page_text_unavailable" {
+            return browserResponse
+        }
+        return visibleScreenResponse
+    }
+
+    private func updateBrowserSurfaceStatus(from response: CommandResponse) {
+        guard let tool = response.tool,
+              let object = response.result?.objectValue else {
+            return
+        }
+        let browserRelatedTool = tool == "browser.read_page" || tool == "teams.assignment" || tool.hasPrefix("browser.")
+        let targetsChrome = (object["target_app_name"]?.stringValue == "Google Chrome")
+            || (object["browser"]?.stringValue == "Google Chrome")
+            || browserAuthenticatedLane
+        guard browserRelatedTool || (isBrowserVisible && targetsChrome) else {
+            return
+        }
+
+        let status = object["status"]?.stringValue ?? ""
+        let permissionIssue = object["permission_issue"]?.stringValue ?? ""
+        let requiresUserAction = object["requires_user_action"]?.boolValue ?? false
+        let loginGateDetected = object["login_gate_detected"]?.boolValue ?? false
+        let nextSteps = object["next_steps"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        let joinedNextSteps = nextSteps.joined(separator: " ").lowercased()
+
+        if status == "visible_screen_login_gate" || loginGateDetected || joinedNextSteps.contains("sign in in chrome") {
+            browserStatusPinned = true
+            browserStatusText = "Chrome blocked by sign-in gate"
+            browserHintText = nextSteps.first ?? "Unlock or sign in in Chrome, then ask Jarvis to check Teams again."
+            return
+        }
+        if status == "automation_not_allowed" || permissionIssue == "chrome_automation" || joinedNextSteps.contains("automation") {
+            browserStatusPinned = true
+            browserStatusText = "Chrome needs Automation permission"
+            browserHintText = nextSteps.first ?? "Grant Jarvis Automation access and enable Chrome's Allow JavaScript from Apple Events setting."
+            return
+        }
+        if status == "read" || status == "read_via_visible_screen" {
+            browserStatusPinned = true
+            browserStatusText = "Read current Chrome page"
+            browserHintText = ""
+            return
+        }
+        if status == "teams_page_text_unavailable" {
+            browserStatusPinned = true
+            browserStatusText = "Chrome page text unavailable"
+            browserHintText = nextSteps.first ?? ""
+            return
+        }
+        if requiresUserAction, let firstStep = nextSteps.first, !firstStep.isEmpty {
+            browserStatusPinned = true
+            browserHintText = firstStep
+            return
+        }
+        browserStatusPinned = false
+        browserHintText = ""
+    }
+
+    private func localStatusSpeechPayload(_ text: String) async -> Any {
+        guard await shouldSpeakAfterBackendMuteRefresh() else {
+            return [
+                "status": "muted",
+                "text_preview": text,
+            ]
+        }
+        if let response = try? await client.speakStatus(text),
+           let payload = response.speech?.anyValue as? [String: Any] {
+            return payload
+        }
+        return [
+            "status": "missing",
+            "text_preview": text,
+        ]
+    }
+
+    private static func localChromeAutomationBlockedResponse(
+        command: String,
+        reply: String,
+        speech: Any
+    ) -> CommandResponse {
+        let payload: [String: Any] = [
+            "command": command,
+            "tool": "browser.read_page",
+            "summary": reply,
+            "executed": true,
+            "result": [
+                "status": "automation_not_allowed",
+                "reply": reply,
+                "spoken_summary": reply,
+            ],
+            "speech": speech,
+        ]
+        return decodeLocalCommandResponse(payload)
+    }
+
+    private static func decodeLocalCommandResponse(_ payload: [String: Any]) -> CommandResponse {
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(CommandResponse.self, from: data)
+        } catch {
+            fatalError("Jarvis local command response payload must stay decodable: \(error)")
+        }
+    }
+
+    static func browserPageReadResponseLooksUseful(_ response: CommandResponse) -> Bool {
+        guard response.tool == "browser.read_page",
+              let object = response.result?.objectValue else {
+            return false
+        }
+        let status = object["status"]?.stringValue ?? ""
+        if status == "read" {
+            return true
+        }
+        let digestItems = object["page_digest_items"]?.arrayValue ?? []
+        if !digestItems.isEmpty, status != "automation_not_allowed", status != "teams_page_text_unavailable" {
+            return true
+        }
+        return (object["page_text_chars"]?.intValue ?? 0) >= 160
+            && status != "automation_not_allowed"
+            && status != "teams_page_text_unavailable"
+    }
+
+    static func browserPageReadShouldSkipVisibleScreenRetry(_ response: CommandResponse) -> Bool {
+        guard response.tool == "browser.read_page",
+              let object = response.result?.objectValue else {
+            return false
+        }
+        let status = object["status"]?.stringValue ?? ""
+        if status == "visible_screen_login_gate" {
+            return true
+        }
+        return object["used_native_visible_screen_fallback"]?.boolValue == true
     }
 
     static func visibleScreenReadResponseLooksUseful(_ response: CommandResponse) -> Bool {
@@ -2179,14 +2536,14 @@ final class JarvisShellModel: ObservableObject {
     ) -> String {
         if selectionMode == "unread" {
             if unreadCount > selectedCount {
-                return "I checked \(mailbox), scanned \(scanned) recent messages, and found \(unreadCount) unread. I am showing the newest \(selectedCount)."
+                return "I found \(unreadCount) unread emails in \(mailbox). I am showing the newest \(selectedCount)."
             }
             if selectedCount == 1 {
-                return "I checked \(mailbox), scanned \(scanned) recent messages, and found 1 unread message."
+                return "I found one unread email in \(mailbox)."
             }
-            return "I checked \(mailbox), scanned \(scanned) recent messages, and found \(selectedCount) unread messages."
+            return "I found \(selectedCount) unread emails in \(mailbox)."
         }
-        return "I checked \(mailbox), scanned \(scanned) recent messages, and found no unread messages, so I selected the newest inbox email."
+        return "I found no unread emails in \(mailbox), so I selected the newest inbox email."
     }
 
     private func render(_ response: CommandResponse) -> String {
@@ -2862,8 +3219,8 @@ final class JarvisShellModel: ObservableObject {
 
     private static func progressReplies(for _: String) -> [(delayNanoseconds: UInt64, text: String)] {
         return [
-            (5_000_000_000, "Still working. Wait a sec..."),
-            (15_000_000_000, "This is taking longer than usual; I am still on it."),
+            (5_000_000_000, "I'm still working on it."),
+            (15_000_000_000, "This is taking longer than usual. I'm still on it."),
         ]
     }
 

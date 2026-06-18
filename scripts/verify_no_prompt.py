@@ -30,7 +30,12 @@ def main() -> int:
     parser.add_argument("--output-dir", default=str(REPORT_DIR))
     args = parser.parse_args()
 
-    report = run_no_prompt_checks(args.base_url.rstrip("/"))
+    try:
+        base_url = verify_safe.normalize_base_url(args.base_url)
+    except ValueError as error:
+        print(f"Refused unsafe base URL: {error}", file=sys.stderr)
+        return 2
+    report = run_no_prompt_checks(base_url)
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -45,6 +50,7 @@ def main() -> int:
 
 
 def run_no_prompt_checks(base_url: str = DEFAULT_BASE_URL) -> dict[str, object]:
+    base_url = verify_safe.normalize_base_url(base_url)
     started = time.monotonic()
     checks: list[tuple[str, Callable[[], str]]] = [
         ("worker_health", lambda: check_worker_health(base_url)),

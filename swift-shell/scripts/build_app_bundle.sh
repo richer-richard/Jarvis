@@ -9,9 +9,9 @@ APP_NAME="${APP_NAME:-Jarvis}"
 BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"
 CONFIGURATION="${CONFIGURATION:-debug}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/output}"
-APP_VERSION="${APP_VERSION:-0.1.437}"
-BUILD_NUMBER="${BUILD_NUMBER:-437}"
-REPLACE_APP="${REPLACE_APP:-0}"
+APP_VERSION="${APP_VERSION:-0.1.454}"
+BUILD_NUMBER="${BUILD_NUMBER:-454}"
+REPLACE_APP="${REPLACE_APP:-1}"
 
 default_sign_identity() {
   local local_identity="Jarvis Local Code Signing"
@@ -42,11 +42,21 @@ BUILD_NUMBER_XML="$(xml_escape "$BUILD_NUMBER")"
 
 mkdir -p "$OUTPUT_ROOT"
 
+cleanup_numbered_app_bundles() {
+  find "$OUTPUT_ROOT" -maxdepth 1 -type d -name "$APP_NAME-*.app" -exec rm -rf {} +
+}
+
 swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --product jarvis-menu-bar
 swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --product jarvis-status-helper
+swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --product jarvis-browser-page-probe
+swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --product jarvis-browser-permission-probe
+swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --product jarvis-visible-screen-probe
 BIN_DIR="$(swift build --package-path "$PACKAGE_DIR" -c "$CONFIGURATION" --show-bin-path)"
 SOURCE_EXECUTABLE="$BIN_DIR/jarvis-menu-bar"
 SOURCE_STATUS_HELPER="$BIN_DIR/jarvis-status-helper"
+SOURCE_BROWSER_PAGE_PROBE="$BIN_DIR/jarvis-browser-page-probe"
+SOURCE_BROWSER_PERMISSION_PROBE="$BIN_DIR/jarvis-browser-permission-probe"
+SOURCE_VISIBLE_SCREEN_PROBE="$BIN_DIR/jarvis-visible-screen-probe"
 
 if [[ ! -x "$SOURCE_EXECUTABLE" ]]; then
   echo "Missing built executable: $SOURCE_EXECUTABLE" >&2
@@ -56,12 +66,25 @@ if [[ ! -x "$SOURCE_STATUS_HELPER" ]]; then
   echo "Missing built status helper: $SOURCE_STATUS_HELPER" >&2
   exit 1
 fi
+if [[ ! -x "$SOURCE_BROWSER_PAGE_PROBE" ]]; then
+  echo "Missing built browser page probe: $SOURCE_BROWSER_PAGE_PROBE" >&2
+  exit 1
+fi
+if [[ ! -x "$SOURCE_BROWSER_PERMISSION_PROBE" ]]; then
+  echo "Missing built browser permission probe: $SOURCE_BROWSER_PERMISSION_PROBE" >&2
+  exit 1
+fi
+if [[ ! -x "$SOURCE_VISIBLE_SCREEN_PROBE" ]]; then
+  echo "Missing built visible screen probe: $SOURCE_VISIBLE_SCREEN_PROBE" >&2
+  exit 1
+fi
 
 APP_DIR="$OUTPUT_ROOT/$APP_NAME.app"
 if [[ -e "$APP_DIR" ]]; then
   case "$REPLACE_APP" in
     1|true|TRUE|yes|YES|on|ON)
       rm -rf "$APP_DIR"
+      cleanup_numbered_app_bundles
       ;;
     *)
       index=2
@@ -82,6 +105,12 @@ cp "$SOURCE_EXECUTABLE" "$MACOS_DIR/jarvis-menu-bar"
 chmod 755 "$MACOS_DIR/jarvis-menu-bar"
 cp "$SOURCE_STATUS_HELPER" "$MACOS_DIR/jarvis-status-helper"
 chmod 755 "$MACOS_DIR/jarvis-status-helper"
+cp "$SOURCE_BROWSER_PAGE_PROBE" "$MACOS_DIR/jarvis-browser-page-probe"
+chmod 755 "$MACOS_DIR/jarvis-browser-page-probe"
+cp "$SOURCE_BROWSER_PERMISSION_PROBE" "$MACOS_DIR/jarvis-browser-permission-probe"
+chmod 755 "$MACOS_DIR/jarvis-browser-permission-probe"
+cp "$SOURCE_VISIBLE_SCREEN_PROBE" "$MACOS_DIR/jarvis-visible-screen-probe"
+chmod 755 "$MACOS_DIR/jarvis-visible-screen-probe"
 
 if [[ -f "$PROJECT_ROOT/assets/Jarvis.icns" ]]; then
   cp "$PROJECT_ROOT/assets/Jarvis.icns" "$RESOURCES_DIR/Jarvis.icns"

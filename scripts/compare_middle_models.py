@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Compare candidate Jarvis middle models without loading heavy local models by default."""
+"""Compare candidate Jarvis middle models without loading heavy local models by default.
+
+Dry-run is the default. Use --execute-network only after cloud/local model
+checks have been explicitly approved. Local Ollama cleanup is also opt-in.
+"""
 
 from __future__ import annotations
 
@@ -45,6 +49,14 @@ def load_user_env_file() -> None:
             key, value = part.split("=", 1)
             if key and key.replace("_", "").isalnum() and (key[0].isalpha() or key[0] == "_"):
                 os.environ.setdefault(key, value)
+
+
+def is_project_relative(path: Path) -> bool:
+    try:
+        path.expanduser().resolve().relative_to(PROJECT_ROOT.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -479,7 +491,6 @@ def run_candidate(
 
 
 def main() -> int:
-    load_user_env_file()
     parser = argparse.ArgumentParser(description="Compare Jarvis middle-model candidates.")
     parser.add_argument(
         "--allow-local-models",
@@ -487,10 +498,18 @@ def main() -> int:
         help="Allow running local Ollama models on this Mac. By default, the comparison is cloud-first.",
     )
     parser.add_argument("--allow-local-heavy", action="store_true", help="Allow running large local models such as gpt-oss:20b.")
+    parser.add_argument("--cleanup-local-models", action="store_true", help="Stop installed local Ollama candidate models before and after the run. Off by default.")
+    parser.add_argument("--inspect-local-ollama", action="store_true", help="Record local Ollama tags/ps state without running local models. Off by default.")
     parser.add_argument("--audio-probe", default="", help="Optional audio file to test with audio-capable Ollama candidates such as gemma4:e4b.")
+    parser.add_argument("--allow-external-audio-probe", action="store_true", help="Allow reading an audio probe file outside the Jarvis project.")
     parser.add_argument("--timeout", type=int, default=35, help="Per-question timeout in seconds.")
+    parser.add_argument("--execute-network", action="store_true", help="Actually query Ollama/Groq candidates.")
     args = parser.parse_args()
+    if args.execute_network:
+        load_user_env_file()
     audio_probe = Path(args.audio_probe).expanduser() if args.audio_probe else None
+    if audio_probe and not args.allow_external_audio_probe and not is_project_relative(audio_probe):
+        parser.error("--audio-probe must stay inside the Jarvis project unless --allow-external-audio-probe is set")
 
     candidates = [
         Candidate("groq-llama-3.3-70b", "groq", os.environ.get("JARVIS_GROQ_MODEL", "llama-3.3-70b-versatile"), expected_location="cloud"),
@@ -504,36 +523,50 @@ def main() -> int:
         Candidate("ollama-gpt-oss-20b", "ollama", "gpt-oss:20b", heavy_local=True, local_model=True, expected_location="local heavy"),
     ]
     allow_local_models = bool(args.allow_local_models or args.allow_local_heavy)
-    installed = ollama_tags()
-    local_model_cleanup_before = [] if allow_local_models else cleanup_local_ollama_candidates(candidates, installed)
-    ollama_ps_before = ollama_ps()
+    should_cleanup_local_models = bool(args.cleanup_local_models and args.execute_network and not allow_local_models)
+    should_inspect_local_ollama = bool(args.execute_network and (allow_local_models or should_cleanup_local_models or args.inspect_local_ollama))
+    installed = ollama_tags() if should_inspect_local_ollama else set()
+    local_model_cleanup_before = cleanup_local_ollama_candidates(candidates, installed) if should_cleanup_local_models else []
+    ollama_ps_before = ollama_ps() if should_inspect_local_ollama else []
     started = time.time()
-    results = [
-        run_candidate(
-            candidate,
-            installed=installed,
-            timeout=args.timeout,
-            allow_local_models=allow_local_models,
-            allow_local_heavy=args.allow_local_heavy,
-            audio_probe=audio_probe,
-        )
-        for candidate in candidates
-    ]
-    local_model_cleanup_after = [] if allow_local_models else cleanup_local_ollama_candidates(candidates, installed)
-    ollama_ps_after = ollama_ps()
+    results = (
+        [
+            run_candidate(
+                candidate,
+                installed=installed,
+                timeout=args.timeout,
+                allow_local_models=allow_local_models,
+                allow_local_heavy=args.allow_local_heavy,
+                audio_probe=audio_probe,
+            )
+            for candidate in candidates
+        ]
+        if args.execute_network
+        else [dry_run_candidate(candidate) for candidate in candidates]
+    )
+    local_model_cleanup_after = cleanup_local_ollama_candidates(candidates, installed) if should_cleanup_local_models else []
+    ollama_ps_after = ollama_ps() if should_inspect_local_ollama else []
     report = {
         "schema": "jarvis.model_comparison.v2",
         "created_at": started,
+        "execute_network": bool(args.execute_network),
         "audio_probe": str(audio_probe) if audio_probe else "",
+        "allow_external_audio_probe": bool(args.allow_external_audio_probe),
         "installed_ollama_models": sorted(installed),
         "local_model_cleanup_before": local_model_cleanup_before,
         "ollama_ps_before": ollama_ps_before,
         "allow_local_models": allow_local_models,
         "allow_local_heavy": bool(args.allow_local_heavy),
+        "cleanup_local_models": should_cleanup_local_models,
+        "inspect_local_ollama": should_inspect_local_ollama,
         "questions": QUESTIONS,
         "results": results,
         "local_model_cleanup_after": local_model_cleanup_after,
         "ollama_ps_after": ollama_ps_after,
+        "notes": [
+            "Dry-run mode does not call Ollama tags/ps, Groq, Ollama generate, cleanup, or audio probes.",
+            "Re-run with --execute-network after approval to compare models.",
+        ] if not args.execute_network else [],
     }
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     path = RUNTIME_DIR / time.strftime("model-comparison-%Y%m%d-%H%M%S.json", time.localtime(started))
@@ -546,6 +579,15 @@ def main() -> int:
         candidate = item["candidate"]
         print(f"- {candidate['id']}: {item['status']} {item.get('reason', '')}")
     return 0
+
+
+def dry_run_candidate(candidate: Candidate) -> dict[str, Any]:
+    return {
+        "candidate": candidate.__dict__,
+        "status": "dry_run",
+        "reason": "No model request was sent. Re-run with --execute-network after approval.",
+        "questions": [],
+    }
 
 
 if __name__ == "__main__":

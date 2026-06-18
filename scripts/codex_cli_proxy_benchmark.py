@@ -13,6 +13,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -21,6 +22,8 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from scripts.render_overnight_status import normalize_base_url
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -112,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if args.execute:
+        try:
+            base_url = normalize_base_url(args.base_url) if args.include_jarvis else args.base_url.rstrip("/")
+        except ValueError as error:
+            print(f"Refused unsafe base URL: {error}", file=sys.stderr)
+            return 2
         if not codex_path:
             report["status"] = "codex_not_found"
         else:
@@ -132,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.include_jarvis:
             report["jarvis_baseline"] = run_jarvis_baseline(
                 args.prompt,
-                base_url=args.base_url,
+                base_url=base_url,
                 timeout=min(args.timeout, 60.0),
             )
     else:
@@ -143,10 +151,18 @@ def main(argv: list[str] | None = None) -> int:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         json_path = REPORT_DIR / f"codex-cli-proxy-benchmark-{stamp}.json"
         md_path = REPORT_DIR / f"codex-cli-proxy-benchmark-{stamp}.md"
-        json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        md_path.write_text(render_markdown(report), encoding="utf-8")
+        latest_json_path = REPORT_DIR / "latest.json"
+        latest_md_path = REPORT_DIR / "latest.md"
         report["json_path"] = str(json_path)
         report["markdown_path"] = str(md_path)
+        report["latest_json_path"] = str(latest_json_path)
+        report["latest_markdown_path"] = str(latest_md_path)
+        json_text = json.dumps(report, indent=2, ensure_ascii=False)
+        markdown = render_markdown(report)
+        json_path.write_text(json_text, encoding="utf-8")
+        md_path.write_text(markdown, encoding="utf-8")
+        latest_json_path.write_text(json_text, encoding="utf-8")
+        latest_md_path.write_text(markdown, encoding="utf-8")
         print(f"JSON: {json_path}")
         print(f"Report: {md_path}")
 
@@ -340,6 +356,7 @@ def result_error(
 
 def run_jarvis_baseline(prompt: str, *, base_url: str, timeout: float) -> dict[str, Any]:
     started = time.monotonic()
+    base_url = normalize_base_url(base_url)
     first_event_at: float | None = None
     final_event: dict[str, Any] | None = None
     payload = json.dumps({"command": prompt, "suppress_speech": True}).encode("utf-8")

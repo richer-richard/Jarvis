@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Probe Gemma 3n E4B audio transcription with synthetic Jarvis commands.
 
-This script deliberately uses the public Hugging Face Gemma 3n E4B Space instead
-of running a local Gemma model. It only uploads generated test audio.
+This script is dry-run by default. Use --execute-network only after the public
+Hugging Face Gemma 3n E4B Space upload has been explicitly approved.
 """
 
 from __future__ import annotations
@@ -68,7 +68,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--space-base", default=DEFAULT_SPACE_BASE)
     parser.add_argument("--timeout", type=float, default=180.0)
-    parser.add_argument("--skip-network", action="store_true", help="Generate audio and report planned calls only.")
+    parser.add_argument("--skip-network", action="store_true", help="Compatibility alias; dry-run is already the default.")
+    parser.add_argument("--execute-network", action="store_true", help="Upload generated audio to the configured Hugging Face Space.")
+    parser.add_argument("--synthesize-local", action="store_true", help="Generate local audio files even when network upload is skipped.")
     parser.add_argument("--include-piper", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-samples", type=int, default=0, help="0 means all generated samples.")
     args = parser.parse_args()
@@ -82,11 +84,33 @@ def main() -> int:
         samples = samples[: args.max_samples]
 
     results: list[ProbeResult] = []
+    should_upload = bool(args.execute_network and not args.skip_network)
+    should_synthesize = bool(should_upload or args.synthesize_local)
     for sample in samples:
         audio_path = audio_dir / f"{sample.id}.wav"
         try:
+            if not should_synthesize:
+                results.append(
+                    ProbeResult(
+                        sample_id=sample.id,
+                        provider=sample.provider,
+                        voice=sample.voice,
+                        reference=sample.prompt,
+                        audio_path=str(audio_path),
+                        status="planned_dry_run",
+                        transcript="",
+                        first_token_seconds=None,
+                        total_seconds=None,
+                        word_accuracy=0.0,
+                        word_error_rate=1.0,
+                        substitutions=[],
+                        insertions=[],
+                        deletions=normalize_words(sample.prompt),
+                    )
+                )
+                continue
             synthesize_sample(sample, audio_path)
-            if args.skip_network:
+            if not should_upload:
                 results.append(
                     ProbeResult(
                         sample_id=sample.id,
@@ -158,7 +182,8 @@ def main() -> int:
         "provider": "huggingface_space",
         "space_base": args.space_base,
         "local_gemma_inference": False,
-        "uploaded_audio": not args.skip_network,
+        "uploaded_audio": should_upload,
+        "local_audio_generated": should_synthesize,
         "sample_count": len(samples),
         "results": [asdict(result) for result in results],
         "summary": summarize(results),
@@ -463,6 +488,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Model: `{report['model']}` via Hugging Face Space",
         f"Local Gemma inference: `{report['local_gemma_inference']}`",
         f"Uploaded generated audio: `{report['uploaded_audio']}`",
+        f"Local audio generated: `{report.get('local_audio_generated', False)}`",
         "",
         "## Summary",
         "",
