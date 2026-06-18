@@ -2144,7 +2144,7 @@ def browser_page_follow_up_response_looks_useful(response: dict[str, Any], *, co
         return False
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
     status = str(result.get("status") or "")
-    if status in {"automation_not_allowed", "teams_page_text_unavailable", "visible_screen_login_gate"}:
+    if status in {"automation_not_allowed", "teams_page_text_unavailable", "visible_screen_login_gate", "assignment_subject_mismatch"}:
         return False
     reply = extract_visible_reply(response).casefold()
     digest_items = result.get("page_digest_items") if isinstance(result.get("page_digest_items"), list) else []
@@ -2174,7 +2174,7 @@ def visible_screen_follow_up_response_looks_useful(response: dict[str, Any], *, 
         return False
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
     status = str(result.get("status") or "")
-    if status == "login_gate_visible":
+    if status in {"login_gate_visible", "assignment_subject_mismatch"}:
         return False
     reply = extract_visible_reply(response).casefold()
     combined_text = " ".join(
@@ -2200,8 +2200,7 @@ def visible_screen_follow_up_response_looks_useful(response: dict[str, Any], *, 
     if "teams" in lower_command and "assignment" in lower_command:
         if result.get("detected_assignment_context"):
             return True
-        if not any(marker in combined_text for marker in ["teams", "assignment", "assignments", "rubric", "due", "classwork", "homework"]):
-            return False
+        return False
     if status == "checked":
         return True
     assignment_items = result.get("assignment_digest_items") if isinstance(result.get("assignment_digest_items"), list) else []

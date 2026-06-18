@@ -279,6 +279,10 @@ Status legend:
      questions..."
    - Must verify it actually inspected the newest assignment, not just opened
      Teams.
+   - 2026-06-19 live probe found a concrete false success: Jarvis read visible
+     Teams assignment text, but it was `Lesson 2: The Geography of Greece Group
+     Assignment` while Leo asked for the newest Music assignment. Jarvis must
+     either navigate to Music or say the visible assignment does not match Music.
 
 6. Partially fixed/risky: Jarvis should not open random extra Chrome tabs during
    tests and leave them for Leo.

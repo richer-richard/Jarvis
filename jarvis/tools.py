@@ -13652,10 +13652,34 @@ def visible_screen_text_summary(
 
     assignment_context = _is_visible_teams_assignment_context(command, diagnostics, clean_text)
     assignment_items = _visible_assignment_digest_items(clean_text) if assignment_context else []
+    requested_subject = _requested_assignment_subject(command)
+    subject_match = _assignment_items_match_requested_subject(requested_subject, assignment_items)
     follow_up_questions = _visible_assignment_follow_up_questions(command, assignment_items) if assignment_items else []
     digest_items = assignment_items or _browser_page_digest_items(clean_text, max_items=5, max_chars=180)
     digest = "; ".join(digest_items)
     digest_sentence = digest.rstrip(" .")
+    if assignment_items and requested_subject and not subject_match:
+        reply = (
+            f"I read the visible Teams screen, but it does not look like the {requested_subject} assignment. "
+            f"I can see assignment-related text: {digest_sentence}."
+        )
+        return {
+            **base,
+            "status": "assignment_subject_mismatch",
+            "detected_assignment_context": assignment_context,
+            "requested_assignment_subject": requested_subject,
+            "assignment_subject_matched": False,
+            "assignment_digest_items": assignment_items,
+            "follow_up_questions": [],
+            "injection_scan": injection_scan,
+            "prompt_injection_findings": 0,
+            "page_digest": digest,
+            "page_digest_items": digest_items,
+            "reply": reply,
+            "spoken_summary": reply,
+            "requires_user_action": False,
+            "next_steps": [f"Open the {requested_subject} class or assignment page in Teams, then ask Jarvis to read it again."],
+        }
     if assignment_items:
         reply = f"I read the visible Teams screen. I can see assignment-related text: {digest_sentence}."
         if follow_up_questions:
@@ -13670,6 +13694,8 @@ def visible_screen_text_summary(
         **base,
         "status": "checked" if digest else "read_without_digest",
         "detected_assignment_context": assignment_context,
+        "requested_assignment_subject": requested_subject,
+        "assignment_subject_matched": subject_match if requested_subject else None,
         "assignment_digest_items": assignment_items,
         "follow_up_questions": follow_up_questions,
         "injection_scan": injection_scan,
@@ -13716,7 +13742,7 @@ def _visible_screen_login_gate_user_reply(
 
 
 def _is_visible_teams_assignment_context(command: Any, diagnostics: dict[str, Any], text: str) -> bool:
-    haystack = " ".join(
+    target_haystack = " ".join(
         [
             str(command or ""),
             str(diagnostics.get("target_app_name") or ""),
@@ -13724,10 +13750,40 @@ def _is_visible_teams_assignment_context(command: Any, diagnostics: dict[str, An
             text[:1200],
         ]
     ).casefold()
+    visible_haystack = " ".join(
+        [
+            str(diagnostics.get("target_app_name") or ""),
+            str(diagnostics.get("window_title") or ""),
+            text[:1200],
+        ]
+    ).casefold()
     return (
-        ("teams" in haystack or "microsoft teams" in haystack)
-        and any(term in haystack for term in ["assignment", "assignments", "homework", "rubric", "due"])
+        ("teams" in target_haystack or "microsoft teams" in target_haystack)
+        and any(term in visible_haystack for term in ["assignment", "assignments", "homework", "rubric", "due"])
     )
+
+
+def _requested_assignment_subject(command: Any) -> str:
+    command_text = str(command or "").casefold()
+    subject_aliases = {
+        "Music": ("music", "musical", "song", "songs", "instrument", "instruments", "choir", "band"),
+    }
+    for subject, aliases in subject_aliases.items():
+        if any(re.search(rf"\b{re.escape(alias)}\b", command_text) for alias in aliases):
+            return subject
+    return ""
+
+
+def _assignment_items_match_requested_subject(subject: str, assignment_items: list[str]) -> bool:
+    if not subject:
+        return True
+    combined = " ".join(str(item or "") for item in assignment_items).casefold()
+    if subject == "Music":
+        return any(
+            re.search(rf"\b{re.escape(alias)}\b", combined)
+            for alias in ("music", "musical", "song", "songs", "instrument", "instruments", "choir", "band")
+        )
+    return subject.casefold() in combined
 
 
 def _visible_assignment_digest_items(text: str, *, max_items: int = 6, max_chars: int = 190) -> list[str]:

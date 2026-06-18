@@ -46,6 +46,12 @@ spoken reply, time every stage, and clean up any app/browser state it created.
   needed before fix: Music App bridge search/play must either resolve the Dear
   Evan Hansen/Tony Awards alias for Waving Through a Window or fail safely
   instead of choosing a different "through" song.
+- 2026-06-19 00:01 CST - Teams assignment false success:
+  Jarvis read the visible Teams screen, but the visible assignment was
+  `Lesson 2: The Geography of Greece Group Assignment` while the command asked
+  for the newest Music assignment. Dedicated fix: subject-aware Teams summaries
+  must refuse a wrong-subject assignment instead of asking follow-up questions
+  as if it found the Music task.
 
 ## Tests Added Tonight
 
@@ -66,6 +72,8 @@ spoken reply, time every stage, and clean up any app/browser state it created.
 - Jarvis planner tests now cover common STT mishearings where Codex becomes
   "Cortex" or "Kodak"; those still route to the Codex chat plan and still require
   typed confirmation before any send.
+- Teams visible-screen tests now reject wrong-subject assignment reads: a Music
+  assignment request cannot pass against a Geography assignment page.
 
 ## Cleanup Obligations
 
@@ -109,3 +117,12 @@ spoken reply, time every stage, and clean up any app/browser state it created.
   Music playback, RAM, Calendar, Magic Keyboard yuan conversion, Gemma 3 4B model
   planning, and Codex Default-chat safety planning. Full Python safety suite then
   passed 846/846.
+- 2026-06-19 00:13 CST: focused Teams assignment honesty regression passed at
+  `runtime/full_loop_regression/20260619-001315/summary.json`, after a live
+  probe exposed that wrong-page Chrome OCR could still look like a completed
+  Teams read.
+- 2026-06-19 00:22 CST: combined full-loop regression passed 7/7 at
+  `runtime/full_loop_regression/20260619-002159/summary.json`, adding Teams
+  assignment honesty to Music playback, RAM, Calendar, Magic Keyboard yuan
+  conversion, Gemma 3 4B planning, and Codex Default-chat safety planning. Full
+  Python safety suite then passed 850/850.

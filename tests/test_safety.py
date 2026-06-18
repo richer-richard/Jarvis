@@ -365,6 +365,31 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["passed"])
         self.assertIn("Codex proof unexpectedly sent or started Codex.", proof["failures"])
 
+    def test_full_loop_teams_honesty_accepts_chrome_permission_block(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": (
+                    "Chrome is blocking Jarvis from controlling the current page. "
+                    "Grant Jarvis Automation access to Chrome and enable Chrome's Allow JavaScript from Apple Events setting, then try again."
+                ),
+                "visible_screen_follow_up": {"status": "browser_permission_blocked", "tool": "browser.read_page"},
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertTrue(proof["honest_permission_blocked"])
+
+    def test_full_loop_teams_honesty_rejects_generic_chrome_summary(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": "I read Google Chrome. I can see: What is NOT Random? Veritasium.",
+                "visible_screen_follow_up": {"status": "completed", "tool": "screen.visible_text"},
+            },
+        })
+
+        self.assertFalse(proof["passed"])
+        self.assertIn("Teams proof regressed to a generic Chrome/YouTube visible-screen summary.", proof["failures"])
+
     def test_voice_loop_stream_can_allow_audio_actions_for_live_regression(self):
         captured_payloads = []
 
@@ -1667,6 +1692,45 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertTrue(
             voice_loop_qa.browser_page_follow_up_response_looks_useful(
+                response,
+                command_text="Look in Teams for my newest Music assignment.",
+            )
+        )
+
+    def test_voice_loop_qa_rejects_assignment_subject_mismatch_as_useful(self):
+        response = {
+            "tool": "browser.read_page",
+            "result": {
+                "status": "assignment_subject_mismatch",
+                "reply": (
+                    "I read the visible Teams screen, but it does not look like the Music assignment. "
+                    "I can see assignment-related text: Lesson 2: The Geography of Greece Group Assignment."
+                ),
+                "page_digest_items": ["Lesson 2: The Geography of Greece Group Assignment"],
+            },
+        }
+
+        self.assertFalse(
+            voice_loop_qa.browser_page_follow_up_response_looks_useful(
+                response,
+                command_text="Look in Teams for my newest Music assignment.",
+            )
+        )
+
+    def test_voice_loop_qa_rejects_generic_chrome_visible_screen_for_teams_assignment(self):
+        response = {
+            "tool": "screen.visible_text",
+            "result": {
+                "status": "checked",
+                "detected_assignment_context": False,
+                "reply": "I read Google Chrome. I can see: teams.cloud.microsoft; What is NOT Random?",
+                "page_digest_items": ["teams.cloud.microsoft", "What is NOT Random?"],
+                "visible_text_chars": 900,
+            },
+        }
+
+        self.assertFalse(
+            voice_loop_qa.visible_screen_follow_up_response_looks_useful(
                 response,
                 command_text="Look in Teams for my newest Music assignment.",
             )
@@ -7030,7 +7094,7 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn("Activity", digest)
         self.assertEqual(result["follow_up_questions"], [])
 
-    def test_visible_screen_text_summary_ignores_browser_chrome_time_noise(self):
+    def test_visible_screen_text_summary_refuses_wrong_subject_assignment(self):
         result = visible_screen_text_summary(
             "\n".join([
                 "Chrome File Edit View History Bookmarks Profiles Tab Window Help Mon Jun 15 3:19:10 AM",
@@ -7048,7 +7112,11 @@ class PlannerTests(unittest.TestCase):
             diagnostics={"target_app_name": "Google Chrome", "window_title": "Microsoft Teams"},
         )
 
-        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["status"], "assignment_subject_mismatch")
+        self.assertEqual(result["requested_assignment_subject"], "Music")
+        self.assertFalse(result["assignment_subject_matched"])
+        self.assertEqual(result["follow_up_questions"], [])
+        self.assertIn("does not look like the Music assignment", result["reply"])
         digest = " ".join(result["assignment_digest_items"])
         self.assertIn("Group Assignment", digest)
         self.assertIn("Instructions", digest)

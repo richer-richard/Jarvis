@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 import urllib.error
@@ -69,6 +70,15 @@ CODEX_DEFAULT_PLAN_CASE = {
     "expect_visible_contains": ["Default", "confirmation"],
     "expect_routed_contains": ["prompt", "test", "default"],
 }
+TEAMS_ASSIGNMENT_CASE = {
+    "id": "teams_music_assignment_honesty",
+    "command": (
+        "Hey Jarvis, look in Teams for my newest Music assignment and ask me a list of questions "
+        "to answer so that you have enough information to finish the assignment."
+    ),
+    "expect_tool": ["teams.assignment"],
+    "expect_routed_contains": ["Teams", "Music"],
+}
 
 
 def main() -> int:
@@ -76,7 +86,7 @@ def main() -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--music-bridge-url", default=DEFAULT_MUSIC_BRIDGE_URL)
     parser.add_argument("--output-dir", default=str(REPORT_DIR))
-    parser.add_argument("--case", choices=("music", "ram", "calendar", "magic", "gemma", "codex", "all"), default="all")
+    parser.add_argument("--case", choices=("music", "ram", "calendar", "magic", "gemma", "codex", "teams", "all"), default="all")
     parser.add_argument("--timeout", type=float, default=75.0)
     parser.add_argument("--exercise-live-speech", action="store_true")
     parser.add_argument("--no-report-refresh", action="store_true")
@@ -97,6 +107,8 @@ def main() -> int:
         cases.append(GEMMA_MODEL_PLAN_CASE)
     if args.case in {"codex", "all"}:
         cases.append(CODEX_DEFAULT_PLAN_CASE)
+    if args.case in {"teams", "all"}:
+        cases.append(TEAMS_ASSIGNMENT_CASE)
     results = []
     for case in cases:
         if case["id"] == MUSIC_WAVING_CASE["id"]:
@@ -153,6 +165,16 @@ def main() -> int:
         elif case["id"] == CODEX_DEFAULT_PLAN_CASE["id"]:
             results.append(
                 run_codex_default_plan_case(
+                    case,
+                    base_url=base_url,
+                    run_dir=run_dir / case["id"],
+                    timeout=args.timeout,
+                    exercise_live_speech=args.exercise_live_speech,
+                )
+            )
+        elif case["id"] == TEAMS_ASSIGNMENT_CASE["id"]:
+            results.append(
+                run_teams_assignment_case(
                     case,
                     base_url=base_url,
                     run_dir=run_dir / case["id"],
@@ -255,8 +277,9 @@ def run_music_waving_case(
             status = "failed"
             warnings.append("Voice loop failed.")
         elif voice_status != "passed":
-            status = "warning"
-            warnings.append(f"Voice loop returned {voice_status}.")
+            if not action_proof.get("honest_permission_blocked"):
+                status = "warning"
+                warnings.append(f"Voice loop returned {voice_status}.")
         if not action_proof["passed"]:
             status = "failed"
             warnings.extend(action_proof["failures"])
@@ -731,6 +754,189 @@ def verify_codex_default_plan(codex_proof: dict[str, Any]) -> dict[str, Any]:
         "sent_prompt_to_codex": bool(codex_proof.get("sent_prompt_to_codex")),
         "session_ids_hidden": bool(codex_proof.get("session_ids_hidden")),
     }
+
+
+def run_teams_assignment_case(
+    case: dict[str, Any],
+    *,
+    base_url: str,
+    run_dir: Path,
+    timeout: float,
+    exercise_live_speech: bool,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    before_tabs = chrome_tab_snapshot()
+    write_json(run_dir / "chrome-tabs-before.json", {"tabs": before_tabs})
+    cleanup: dict[str, Any] = {}
+    try:
+        voice_report = voice_loop_qa.run_voice_loop(
+            command_text=case["command"],
+            base_url=base_url,
+            run_dir=run_dir / "voice-loop",
+            length_scale=0.85,
+            timeout=timeout,
+            stt_provider="local",
+            no_permission_prompts=True,
+            expect_tools=list(case["expect_tool"]),
+            expect_routed_contains=list(case["expect_routed_contains"]),
+            exercise_live_speech=exercise_live_speech,
+            allow_audio_actions=False,
+        )
+        write_json(run_dir / "voice-loop-report.json", voice_report)
+        action_proof = verify_teams_assignment_honesty(voice_report)
+        status = "passed"
+        warnings: list[str] = []
+        voice_status = str(voice_report.get("result", {}).get("status") or "failed")
+        if voice_status == "failed":
+            status = "failed"
+            warnings.append("Voice loop failed.")
+        elif voice_status != "passed":
+            if not action_proof.get("honest_permission_blocked"):
+                status = "warning"
+                warnings.append(f"Voice loop returned {voice_status}.")
+        if not action_proof["passed"]:
+            status = "failed"
+            warnings.extend(action_proof["failures"])
+        return {
+            "case_id": case["id"],
+            "status": status,
+            "warnings": warnings,
+            "command": case["command"],
+            "voice_loop_status": voice_status,
+            "voice_loop_report": str(run_dir / "voice-loop-report.json"),
+            "action_proof": action_proof,
+            "cleanup": cleanup,
+            "total_seconds": round(time.monotonic() - started, 3),
+        }
+    finally:
+        after_tabs = chrome_tab_snapshot()
+        cleanup.update(clean_new_chrome_tabs(before_tabs, after_tabs, hosts=("teams.microsoft.com", "teams.cloud.microsoft")))
+        write_json(run_dir / "chrome-tabs-after.json", {"tabs": after_tabs})
+        write_json(run_dir / "cleanup.json", cleanup)
+
+
+def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, Any]:
+    result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
+    visible_reply = str(result.get("visible_reply_preview") or "")
+    lower_reply = visible_reply.casefold()
+    follow_up = result.get("visible_screen_follow_up") if isinstance(result.get("visible_screen_follow_up"), dict) else {}
+    failures: list[str] = []
+    inspected_music = (
+        "assignment-related text" in lower_reply
+        and "questions i need answered" in lower_reply
+        and any(token in lower_reply for token in ("music", "musical", "song", "instrument"))
+    )
+    honest_not_inspected = "have not inspected the newest music assignment" in lower_reply
+    honest_wrong_subject = "does not look like the music assignment" in lower_reply
+    honest_permission_blocked = (
+        "chrome is blocking jarvis from controlling the current page" in lower_reply
+        or "chrome control permission" in lower_reply
+    )
+    if not (inspected_music or honest_not_inspected or honest_wrong_subject or honest_permission_blocked):
+        failures.append("Teams proof neither inspected the Music assignment nor failed honestly.")
+    if "what is not random" in lower_reply or "veritasium" in lower_reply:
+        failures.append("Teams proof regressed to a generic Chrome/YouTube visible-screen summary.")
+    if "geography of greece" in lower_reply and "does not look like the music assignment" not in lower_reply:
+        failures.append("Teams proof summarized a Geography assignment as if it were Music.")
+    if follow_up.get("status") == "completed" and "screen.visible_text" == follow_up.get("tool") and not inspected_music:
+        failures.append("Teams visible-screen follow-up completed without proving Music assignment content.")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "inspected_music": inspected_music,
+        "honest_not_inspected": honest_not_inspected,
+        "honest_wrong_subject": honest_wrong_subject,
+        "honest_permission_blocked": honest_permission_blocked,
+        "visible_reply_preview": visible_reply[:500],
+        "follow_up_status": str(follow_up.get("status") or ""),
+    }
+
+
+def chrome_tab_snapshot() -> list[dict[str, str]]:
+    script = '''
+set output to ""
+tell application "Google Chrome"
+  repeat with w in windows
+    repeat with t in tabs of w
+      set output to output & (id of w as text) & tab & (URL of t as text) & linefeed
+    end repeat
+  end repeat
+end tell
+return output
+'''
+    completed = subprocess.run(
+        ["/usr/bin/osascript", "-e", script],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    tabs: list[dict[str, str]] = []
+    if completed.returncode != 0:
+        return tabs
+    for line in completed.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        window_id, url = line.split("\t", 1)
+        tabs.append({"window_id": window_id, "url": url})
+    return tabs
+
+
+def clean_new_chrome_tabs(
+    before_tabs: list[dict[str, str]],
+    after_tabs: list[dict[str, str]],
+    *,
+    hosts: tuple[str, ...],
+) -> dict[str, Any]:
+    before_pairs = {(tab.get("window_id", ""), tab.get("url", "")) for tab in before_tabs}
+    new_urls = []
+    for tab in after_tabs:
+        pair = (tab.get("window_id", ""), tab.get("url", ""))
+        url = str(tab.get("url") or "")
+        if pair in before_pairs:
+            continue
+        if any(host in url for host in hosts):
+            new_urls.append(url)
+    if not new_urls:
+        return {"chrome_tabs_closed": 0, "new_target_tabs": 0}
+    conditions = "\n".join(
+        f'      if tabUrl is "{escape_applescript_string(url)}" then set end of closeList to t'
+        for url in new_urls
+    )
+    script = f'''
+tell application "Google Chrome"
+  repeat with w in windows
+    set closeList to {{}}
+    repeat with t in tabs of w
+      set tabUrl to URL of t
+{conditions}
+    end repeat
+    repeat with t in closeList
+      close t
+    end repeat
+  end repeat
+end tell
+'''
+    completed = subprocess.run(
+        ["/usr/bin/osascript", "-e", script],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    return {
+        "chrome_tabs_closed": len(new_urls) if completed.returncode == 0 else 0,
+        "new_target_tabs": len(new_urls),
+        "cleanup_returncode": completed.returncode,
+        "cleanup_error": completed.stderr.strip()[-500:],
+    }
+
+
+def escape_applescript_string(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
 
 def music_bridge_request(
