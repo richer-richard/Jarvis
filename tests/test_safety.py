@@ -18648,6 +18648,88 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Year 6 Talent Show rehearsal and performance details", result["email_summary"])
         self.assertNotIn("could not make a fuller English summary locally", result["email_summary"])
 
+    def test_email_summary_fallback_combines_repeated_feedback_form_links(self):
+        messages = [
+            {
+                "sender": "Sharpay Cao 曹宗悦",
+                "subject": "Children's Day feedback form",
+                "received": "Today",
+                "read_state": "read",
+                "snippet": "Please complete this feedback form: https://example.test/first",
+            },
+            {
+                "sender": "Sharpay Cao 曹宗悦",
+                "subject": "Reminder: Children's Day feedback form",
+                "received": "Yesterday",
+                "read_state": "read",
+                "snippet": "Reminder to complete the feedback form using this link: https://example.test/second",
+            },
+        ]
+        with patch("jarvis.tools.EMAIL_SUMMARY_BACKEND", "deterministic"):
+            result = jarvis_tools._summarize_email_messages(
+                messages,
+                mailbox="Apple Mail",
+                selection_mode="sender_recent",
+                unread_count=0,
+            )
+
+        self.assertIn("gave 2 links to feedback forms", result["email_summary"])
+        self.assertEqual(result["email_summary"].count("feedback form"), 1)
+        self.assertNotIn("https://example.test", result["email_summary"])
+
+    def test_email_summary_ollama_keeps_missing_feedback_form_context(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "response": "- Sharpay shared student council interview results."
+                }).encode("utf-8")
+
+        messages = [
+            {
+                "sender": "Sharpay Cao 曹宗悦",
+                "subject": "Student council results",
+                "received": "Today",
+                "read_state": "read",
+                "snippet": "Selected students move on to interviews.",
+            },
+            {
+                "sender": "Sharpay Cao 曹宗悦",
+                "subject": "Children's Day feedback form",
+                "received": "Yesterday",
+                "read_state": "read",
+                "snippet": "Please complete this feedback form: https://example.test/first",
+            },
+            {
+                "sender": "Sharpay Cao 曹宗悦",
+                "subject": "Reminder: Children's Day feedback form",
+                "received": "Yesterday",
+                "read_state": "read",
+                "snippet": "Reminder to complete the feedback form using this link: https://example.test/second",
+            },
+        ]
+        with patch("jarvis.tools.EMAIL_SUMMARY_BACKEND", "ollama"), \
+             patch("jarvis.tools.EMAIL_SUMMARY_MODEL", "qwen-test"), \
+             patch("jarvis.tools._find_executable", return_value="/opt/homebrew/bin/ollama"), \
+             patch("jarvis.tools._ensure_ollama_server_running", return_value={"running": True, "status": "running", "autostarted": False}), \
+             patch("jarvis.tools.urllib.request.urlopen", return_value=FakeResponse()):
+            result = jarvis_tools._summarize_email_messages(
+                messages,
+                mailbox="Apple Mail",
+                selection_mode="sender_recent",
+                unread_count=0,
+            )
+
+        self.assertEqual(result["email_summary_status"], "completed")
+        self.assertIn("student council interview results", result["email_summary"])
+        self.assertIn("gave 2 links to feedback forms", result["email_summary"])
+        self.assertNotIn("https://example.test", result["email_summary"])
+
     def test_apple_mail_script_selects_unread_first_then_latest(self):
         script = jarvis_tools._apple_mail_newest_applescript(2, 250)
 

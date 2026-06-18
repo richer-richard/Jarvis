@@ -14515,6 +14515,7 @@ def _summarize_email_messages(
         if natural_summary:
             summary = natural_summary
             language_normalized = True
+    summary = _email_summary_with_missing_form_context(summary, fallback)
     return {
         **base,
         "email_summary_backend": "ollama",
@@ -14526,6 +14527,22 @@ def _summarize_email_messages(
         **_email_summary_duration_fields(started_at),
         "email_summary": summary,
     }
+
+
+def _email_summary_with_missing_form_context(summary: str, fallback: str) -> str:
+    if not fallback or "feedback form" not in fallback.lower():
+        return summary
+    if "feedback form" in summary.lower() or "feedback forms" in summary.lower():
+        return summary
+    form_lines = [
+        line.strip()
+        for line in fallback.splitlines()
+        if "feedback form" in line.lower() or "feedback forms" in line.lower()
+    ]
+    if not form_lines:
+        return summary
+    combined = "\n".join([line for line in [summary.strip(), *form_lines[:2]] if line])
+    return combined[:900].strip()
 
 
 def _email_summary_prompt(
@@ -14675,6 +14692,8 @@ def _voice_friendly_english_email_summary(
     if not messages:
         return "No email content was available to summarize."
     lines: list[str] = []
+    form_counts: dict[tuple[str, str, str], int] = {}
+    form_order: list[tuple[str, str, str]] = []
     for message in messages[:5]:
         raw = " ".join(
             _clean_local_field(message.get(field))
@@ -14687,11 +14706,11 @@ def _voice_friendly_english_email_summary(
         has_link = bool(re.search(r"(?i)\b(?:https?://|www\.|link)\b|链接", raw))
         duration = _email_voice_duration(raw)
         if has_form or has_link:
-            topic_text = f" about {topic}" if topic else ""
-            sentence = f"- {sender} gave a link to a feedback form{topic_text} that you may need to fill in"
-            if duration:
-                sentence += f"; it should take about {duration}"
-            lines.append(sentence + ".")
+            signature = (sender, topic, duration)
+            if signature not in form_counts:
+                form_order.append(signature)
+                form_counts[signature] = 0
+            form_counts[signature] += 1
             continue
         english_preview = _email_voice_english_preview(raw)
         if english_preview:
@@ -14704,6 +14723,16 @@ def _voice_friendly_english_email_summary(
         else:
             lines.append(f"- {sender} sent an email about {subject}.")
             lines.append("- You may want to check it when you have time; Jarvis could not make a fuller English summary locally.")
+    for sender, topic, duration in form_order:
+        count = form_counts[(sender, topic, duration)]
+        topic_text = f" about {topic}" if topic else ""
+        if count > 1:
+            sentence = f"- {sender} gave {count} links to feedback forms{topic_text} that you may need to fill in"
+        else:
+            sentence = f"- {sender} gave a link to a feedback form{topic_text} that you may need to fill in"
+        if duration:
+            sentence += f"; it should take about {duration}"
+        lines.append(sentence + ".")
     return "\n".join(lines)
 
 
