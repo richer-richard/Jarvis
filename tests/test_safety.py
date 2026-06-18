@@ -18131,6 +18131,63 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("recent messages", result["reply"].lower())
         summary_mock.assert_not_called()
 
+    def test_email_read_only_check_accepts_bounded_scan_limit_override(self):
+        mail_result = {
+            "status": "checked",
+            "messages": [{
+                "sender": "Sharpay Cao",
+                "subject": "Student council",
+                "received": "Today",
+                "read_state": "read",
+                "snippet": "Please check this.",
+            }],
+            "summary_messages": [{
+                "sender": "Sharpay Cao",
+                "subject": "Student council",
+                "received": "Today",
+                "read_state": "read",
+                "snippet": "Please check this.",
+            }],
+            "inbox_count": 100,
+            "scanned_count": 75,
+            "unread_count": 0,
+            "match_count": 3,
+            "selection_mode": "sender_latest",
+            "parsed_body_count": 0,
+            "filter_applied": True,
+        }
+        with patch("jarvis.tools.app_availability", side_effect=[
+            {"available": True, "matches": ["/Applications/Microsoft Outlook.app"], "app": "Microsoft Outlook"},
+            {"available": True, "matches": ["/System/Applications/Mail.app"], "app": "Mail"},
+        ]), \
+             patch("jarvis.tools.shutil.which", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools.EMAIL_SUMMARY_BACKEND", "deterministic"), \
+             patch("jarvis.tools._apple_mail_messages", return_value=mail_result) as mail_mock:
+            result = outlook_read_only_check(
+                limit=1,
+                sender_query="Sharpay",
+                date_range="past_month",
+                scan_limit_override=75,
+            )
+
+        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["scan_limit"], 75)
+        self.assertEqual(mail_mock.call_args.args[1], 75)
+        self.assertEqual(mail_mock.call_args.kwargs["sender_query"], "Sharpay")
+        self.assertEqual(mail_mock.call_args.kwargs["date_range"], "past_month")
+
+    def test_email_read_only_check_ignores_invalid_scan_limit_override(self):
+        with patch("jarvis.tools.app_availability", side_effect=[
+            {"available": True, "matches": ["/Applications/Microsoft Outlook.app"], "app": "Microsoft Outlook"},
+            {"available": True, "matches": ["/System/Applications/Mail.app"], "app": "Mail"},
+        ]), \
+             patch("jarvis.tools.shutil.which", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools._apple_mail_messages", return_value={"status": "empty", "messages": [], "filter_applied": True}) as mail_mock:
+            result = outlook_read_only_check(limit=1, sender_query="Sharpay", scan_limit_override="not-a-number")
+
+        self.assertEqual(result["scan_limit"], jarvis_tools.OUTLOOK_MAX_SCAN_MESSAGES)
+        self.assertEqual(mail_mock.call_args.args[1], jarvis_tools.OUTLOOK_MAX_SCAN_MESSAGES)
+
     def test_email_selection_not_found_reply_is_speakable(self):
         reply = jarvis_tools._email_selection_not_found_reply(
             "Apple Mail",

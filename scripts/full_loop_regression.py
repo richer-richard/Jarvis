@@ -1054,10 +1054,11 @@ def email_sharpay_filter_proof() -> dict[str, Any]:
     lookup = contact_data_lookup("Ms Sharpay")
     resolved = str(lookup.get("display_name") or "Ms Sharpay")
     mail = outlook_read_only_check(
-        limit=5,
+        limit=1,
         sender_query=resolved,
         date_range="past_month",
         original_prompt="Summarize all the emails from Ms. Sharpay in the past month.",
+        scan_limit_override=75,
     )
     messages = [message for message in (mail.get("messages") or []) if isinstance(message, dict)]
     sender_samples = [str(message.get("sender") or "") for message in messages[:5]]

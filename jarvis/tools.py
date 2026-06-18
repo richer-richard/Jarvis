@@ -14019,6 +14019,7 @@ def outlook_read_only_check(
     selection: str | None = None,
     date_range: str | None = None,
     original_prompt: str | None = None,
+    scan_limit_override: int | str | None = None,
 ) -> dict[str, Any]:
     """Try a bounded read-only unread-first inbox summary, preferring Apple Mail."""
     command_started_at = time.monotonic()
@@ -14029,7 +14030,15 @@ def outlook_read_only_check(
         return result
 
     safe_limit = max(1, min(int(limit), 25))
-    scan_limit = max(safe_limit, OUTLOOK_MAX_SCAN_MESSAGES)
+    if scan_limit_override is None:
+        configured_scan_limit = OUTLOOK_MAX_SCAN_MESSAGES
+    else:
+        try:
+            configured_scan_limit = int(scan_limit_override)
+        except (TypeError, ValueError):
+            configured_scan_limit = OUTLOOK_MAX_SCAN_MESSAGES
+        configured_scan_limit = max(safe_limit, min(configured_scan_limit, OUTLOOK_MAX_SCAN_MESSAGES))
+    scan_limit = max(safe_limit, configured_scan_limit)
     clean_sender_query = _clean_email_filter_query(sender_query)
     clean_selection = _clean_email_filter_query(selection)
     clean_date_range = _clean_email_date_range(date_range)
