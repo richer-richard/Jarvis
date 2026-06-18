@@ -18772,6 +18772,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn('selectionHint is "all_matching"', script)
         self.assertIn('set selectionMode to "sender_recent"', script)
+        self.assertIn("set candidateIndexes to {}", script)
+        self.assertIn('selectionMode is "sender_recent"', script)
+        self.assertIn("set bestIndex to item slotIndex of candidateIndexes", script)
         self.assertIn('set selectionMode to "sender_latest"', script)
         self.assertIn('selectionMode is not "sender_recent"', script)
         self.assertIn('set sinceDate to (current date) - (30 * 24 * 60 * 60)', script)

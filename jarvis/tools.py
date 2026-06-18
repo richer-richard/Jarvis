@@ -20288,6 +20288,7 @@ end cleanText
 	    set maxItems to {limit}
 	    set unreadCount to 0
         set matchCount to 0
+        set candidateIndexes to {{}}
 	    repeat with itemIndex from 1 to scanCount
 	        set currentMessage to item itemIndex of inboxMessages
 	        try
@@ -20310,6 +20311,7 @@ end cleanText
                 end if
                 if countMessage then
                     set matchCount to matchCount + 1
+                    if senderFilter is not "" and selectionHint is "all_matching" and (count of candidateIndexes) < maxItems then set end of candidateIndexes to itemIndex
 	                if not (read status of currentMessage) then set unreadCount to unreadCount + 1
                 end if
 	        end try
@@ -20340,6 +20342,9 @@ end cleanText
 	        set bestDate to missing value
             if selectionMode is "recent" then
                 set bestIndex to slotIndex
+            else if selectionMode is "sender_recent" then
+                if slotIndex > (count of candidateIndexes) then exit repeat
+                set bestIndex to item slotIndex of candidateIndexes
             else
                 repeat with itemIndex from 1 to scanCount
                     if selectedIndexes does not contain itemIndex then
