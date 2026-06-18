@@ -2552,7 +2552,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Jarvis Overnight Launch Report", report)
         self.assertIn("Jarvis Overnight Workboard", workboard)
         self.assertIn("The latest live bundle is Jarvis 0.1.test build 999", workboard)
-        self.assertIn("current live bundle includes the 0.1.453 LocalOS music hardening", workboard)
+        self.assertIn("current live bundle includes native Music app bridge playback proof", workboard)
         self.assertIn("morning cleanup helper", workboard)
         self.assertIn("Latest closed-loop voice QA exercised live speech playback, observed active speech", workboard)
         self.assertNotIn("sandbox blocks a fresh Swift rebuild", workboard)
@@ -2592,9 +2592,9 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("closed-loop voice QA", report)
         self.assertIn("<h2>Headline</h2>", report)
         self.assertIn("Live Jarvis 0.1.test build 999", report)
-        self.assertIn("activation-required state", report)
-        self.assertIn("Chrome still requires one real LocalOS player click", report)
-        self.assertIn("keeps normal playback owned by LocalOS", report)
+        self.assertIn("music playback is proven through the native Music app bridge", report)
+        self.assertIn("older LocalOS/Chrome browser-audio fallback paths may still need one real player click", report)
+        self.assertIn("native Music bridge playback is proven in the full-loop gate", report)
         self.assertIn("live-launched proof now matches 0.1.439", report)
         self.assertIn("scripts/report_refresh.py", report)
         self.assertIn("scripts/pre_build_gate.py", report)
@@ -2790,7 +2790,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         })
 
         self.assertIn("source-side Swift compile proof is green", workboard)
-        self.assertIn("Chrome-tab-aware reconnect logic", workboard)
+        self.assertIn("native Music app bridge playback proof", workboard)
         self.assertNotIn("sandbox blocks a fresh Swift rebuild", workboard)
 
     def test_workboard_focus_keeps_remaining_gap_broad(self):

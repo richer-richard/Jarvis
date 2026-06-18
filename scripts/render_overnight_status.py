@@ -473,7 +473,7 @@ PROOF_ITEMS = [
 TRY_ITEMS = [
     "Ask Jarvis to open the Teams bookmark or search imported Chrome bookmarks for Teams; the Jarvis browser panel should appear, and Chrome remains the lane for already-logged-in pages.",
     "Open Perms and check Chrome Automation; if it says Needs Automation Access, allow Jarvis.app under Privacy & Security > Automation > Google Chrome before expecting current-page summaries.",
-    "Ask Jarvis to play a LocalOS song; if it says the song is queued but Chrome needs one click, click the LocalOS player once, then retry the command.",
+    "Ask Jarvis to play Waving Through a Window; the current full-loop proof uses the native Music app bridge, auto-starts Music.app if needed, confirms playback, then stops it during cleanup.",
     "Ask Jarvis about Chrome login migration; it should say it will use Chrome for authenticated sites and should not copy cookies or session stores.",
     "Ask Jarvis to check Calendar; it should answer quickly. If it says the cache is unavailable, the remaining work is macOS permission/app-identity access, not a slow planner hang.",
     "Ask Jarvis to test a model; if the MacBook Air worker is unreachable, it should ask before running the model locally on the 16 GB MacBook Pro.",
@@ -492,7 +492,7 @@ TRY_ITEMS = [
 RISK_ITEMS = [
     "Calendar reading still depends on the new Jarvis 0.1.373 Calendar Cache tile being Ready; if it says Needs Full Disk Access, grant Jarvis.app Full Disk Access and reopen Jarvis before expecting real schedule summaries.",
     "Chrome active-page reading now routes correctly, but Teams-page summaries still depend on the new Chrome Automation tile being Ready; Jarvis will not copy Chrome cookies or sessions into WebKit.",
-    "The LocalOS music bridge is live, but Chrome may still refuse browser audio until the LocalOS player gets one real click; Jarvis now reports that as activation-required instead of pretending playback started.",
+    "Music's primary proof now uses the native Music app bridge. Older LocalOS/Chrome fallback paths may still require a real click, but Jarvis should report that honestly instead of claiming playback.",
     "MacBook Air remote-worker probing currently cannot proceed because Tailscale is stopped on this Mac; Jarvis now detects that quickly and should ask before running model tests locally.",
     "Groq works as Jarvis's fast conversation model, but the scored middle-model comparison showed it should not be trusted for safety-sensitive planning without stronger prompting or a safer model layer.",
     "GPT-OSS 20B Cloud returned empty visible replies in the newest comparison and should not be treated as a dependable middle model yet.",
@@ -1589,7 +1589,7 @@ def render_workboard(context: dict[str, Any]) -> str:
   <main>
     <section>
       <h2>Current Focus</h2>
-      <p>{e(focus_bundle_sentence)} The current live bundle includes the 0.1.453 LocalOS music hardening, Chrome-tab-aware reconnect logic, and morning cleanup helper; source-side Swift compile proof is green.{e(voice_proof_sentence)} Jarvis already has hardened command payload handling, native visible-screen OCR, automatic read-only Teams follow-up after Chrome handoff, assignment-line OCR extraction, targeted follow-up questions, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and a reusable behavior matrix. The remaining product gap is real-device voice, music, browser, Teams, and app-control QA when Leo is present.</p>
+      <p>{e(focus_bundle_sentence)} The current live bundle includes native Music app bridge playback proof, legacy LocalOS/Chrome fallback honesty, and the morning cleanup helper; source-side Swift compile proof is green.{e(voice_proof_sentence)} Jarvis already has hardened command payload handling, native visible-screen OCR, automatic read-only Teams follow-up after Chrome handoff, assignment-line OCR extraction, targeted follow-up questions, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and a reusable behavior matrix. The remaining product gap is real-device voice, music, browser, Teams, and app-control QA when Leo is present.</p>
       <div class="meter"><div style="width: 98%"></div></div>
     </section>
     <section>
@@ -1717,7 +1717,7 @@ def headline_section(context: dict[str, Any]) -> str:
     cards = [
         (
             f"Live {bundle}",
-            "Jarvis now has a real full-loop gate for Leo's spoken prompts: audio in, tool route, action proof, speech audit, and cleanup; LocalOS music still reports browser autoplay as an activation-required state and keeps normal playback owned by LocalOS.",
+            "Jarvis now has a real full-loop gate for Leo's spoken prompts: audio in, tool route, action proof, speech audit, and cleanup; music playback is proven through the native Music app bridge while older LocalOS/Chrome fallback paths stay honest about activation blocks.",
         ),
         (
             "Proof",
@@ -1725,7 +1725,7 @@ def headline_section(context: dict[str, Any]) -> str:
         ),
         (
             "Caveat",
-            "Chrome still requires one real LocalOS player click in some browser-audio paths, and Teams still depends on signed-in Chrome permissions; the new proof makes Jarvis fail honestly instead of claiming it read the wrong page.",
+            "Teams still depends on signed-in Chrome permissions, and older LocalOS/Chrome browser-audio fallback paths may still need one real player click; the new proof keeps those limits honest instead of claiming the wrong thing worked.",
         ),
     ]
     body = '<div class="grid headline">' + "".join(
@@ -1753,7 +1753,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
     cards = [
         (
             "Try First",
-            "Ask Jarvis to check status, check Calendar, or queue a LocalOS song; if LocalOS says one click is needed, click the player once and retry.",
+            "Ask Jarvis to check status, check Calendar, or play Waving Through a Window through the native Music app bridge.",
         ),
         (
             "Best Proof",
@@ -1761,7 +1761,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Honest Limit",
-            "Teams page reading is still blocked by Chrome Automation permission, and hands-free LocalOS playback is still limited by Chrome's user-gesture rule.",
+            "Teams page reading still depends on Chrome Automation permission; older LocalOS/Chrome fallback playback may still need one real player click, but native Music bridge playback is proven in the full-loop gate.",
         ),
     ]
     body = '<div class="grid spotlight">' + "".join(
