@@ -793,11 +793,17 @@ def proof_items_with_verification(
     if full_loop and full_loop.get("path"):
         case_summary = str(full_loop.get("case_summary") or "")
         case_note = f", cases {case_summary}" if case_summary else ""
+        latency_label = str(full_loop.get("latency_budget_label") or "")
+        slowest_case = str(full_loop.get("slowest_case_id") or "")
+        slowest_seconds = float(full_loop.get("slowest_case_seconds") or 0.0)
+        speed_note = ""
+        if latency_label and slowest_case:
+            speed_note = f", latency budgets {latency_label}, slowest {slowest_case} {slowest_seconds:.3f}s"
         items.append(
             "Latest full-loop real-action regression: "
             f"{full_loop['label']}, command {full_loop['command']!r}, "
             f"selected {full_loop['selected_title']!r}, voice loop {full_loop['voice_loop_status']}, "
-            f"cleanup {full_loop['cleanup_label']}{case_note} ({full_loop['path']})."
+            f"cleanup {full_loop['cleanup_label']}{speed_note}{case_note} ({full_loop['path']})."
         )
     if crash and crash.get("path"):
         crash_version = str(crash.get("version") or "unknown")
@@ -1265,6 +1271,29 @@ def latest_full_loop_regression() -> dict[str, Any]:
         for item in results
         if isinstance(item, dict) and item.get("case_id")
     ]
+    timed_results: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        try:
+            seconds = float(item.get("total_seconds") or 0.0)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        if seconds > 0.0:
+            timed_results.append({**item, "_total_seconds_float": seconds})
+    slowest = max(timed_results, key=lambda item: float(item.get("_total_seconds_float") or 0.0), default={})
+    budgeted_results = [
+        item
+        for item in results
+        if isinstance(item, dict) and item.get("latency_budget_seconds") is not None
+    ]
+    budget_passed = sum(1 for item in budgeted_results if item.get("latency_budget_status") == "passed")
+    budget_total = len(budgeted_results)
+    budget_failed = [
+        str(item.get("case_id") or "")
+        for item in budgeted_results
+        if item.get("latency_budget_status") == "failed"
+    ]
     action_proof = first.get("action_proof") if isinstance(first.get("action_proof"), dict) else {}
     cleanup = first.get("cleanup") if isinstance(first.get("cleanup"), dict) else {}
     stop_ok = bool(nested(cleanup, "stop").get("ok"))
@@ -1279,6 +1308,10 @@ def latest_full_loop_regression() -> dict[str, Any]:
         "command": str(first.get("command") or ""),
         "case_ids": case_ids,
         "case_summary": ", ".join(case_ids),
+        "slowest_case_id": str(slowest.get("case_id") or ""),
+        "slowest_case_seconds": round(float(slowest.get("_total_seconds_float") or 0.0), 3),
+        "latency_budget_label": f"{budget_passed}/{budget_total} passed" if budget_total else "",
+        "latency_budget_failed": budget_failed,
         "selected_title": str(action_proof.get("selected_title") or ""),
         "voice_loop_status": str(first.get("voice_loop_status") or ""),
         "cleanup_label": f"stop {'ok' if stop_ok else 'failed'}, close {'ok' if close_ok else 'failed'}",

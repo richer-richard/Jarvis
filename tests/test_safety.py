@@ -2490,6 +2490,9 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "voice_loop_status": "passed",
                 "cleanup_label": "stop ok, close ok",
                 "case_summary": "music_play_waving_through_window, ram_activity_monitor, calendar_today_schedule",
+                "latency_budget_label": "8/8 passed",
+                "slowest_case_id": "email_sharpay_month",
+                "slowest_case_seconds": 45.327,
             },
             "worker_source_kind": "bundled app resources",
             "launch_mode": "regular Dock app",
@@ -2650,10 +2653,17 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "voice_loop_status": "passed",
                 "cleanup_label": "stop ok, close ok",
                 "case_summary": "music_play_waving_through_window, ram_activity_monitor, calendar_today_schedule",
+                "latency_budget_label": "8/8 passed",
+                "slowest_case_id": "email_sharpay_month",
+                "slowest_case_seconds": 45.327,
             },
         )
         self.assertTrue(any(
             "cases music_play_waving_through_window, ram_activity_monitor, calendar_today_schedule" in item
+            for item in full_loop_proof
+        ))
+        self.assertTrue(any(
+            "latency budgets 8/8 passed, slowest email_sharpay_month 45.327s" in item
             for item in full_loop_proof
         ))
         self.assertEqual(render_overnight_status.bundle_label("0.1.439", "439"), "Jarvis 0.1.439 build 439")
