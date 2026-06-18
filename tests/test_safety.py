@@ -335,6 +335,36 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["passed"])
         self.assertIn("Model proof says it ran a model.", proof["failures"])
 
+    def test_full_loop_codex_plan_accepts_default_without_sending(self):
+        proof = full_loop_regression.verify_codex_default_plan({
+            "tool": "codex.chat_plan",
+            "status": "planned",
+            "called_codex": False,
+            "started_codex_job": False,
+            "sent_prompt_to_codex": False,
+            "selected_chat_name": "Default",
+            "session_ids_hidden": True,
+            "would_resume_configured_session": True,
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertFalse(proof["sent_prompt_to_codex"])
+
+    def test_full_loop_codex_plan_rejects_silent_send(self):
+        proof = full_loop_regression.verify_codex_default_plan({
+            "tool": "codex.chat_plan",
+            "status": "planned",
+            "called_codex": True,
+            "started_codex_job": True,
+            "sent_prompt_to_codex": True,
+            "selected_chat_name": "Default",
+            "session_ids_hidden": True,
+            "would_resume_configured_session": True,
+        })
+
+        self.assertFalse(proof["passed"])
+        self.assertIn("Codex proof unexpectedly sent or started Codex.", proof["failures"])
+
     def test_voice_loop_stream_can_allow_audio_actions_for_live_regression(self):
         captured_payloads = []
 
@@ -9244,6 +9274,22 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(preview.tool, "codex.chat_plan")
         self.assertEqual(preview.result["plan"]["selected_chat_name"], "Default")
         self.assertFalse(preview.result["plan"]["sent_prompt_to_codex"])
+
+    def test_codex_send_prompt_accepts_common_stt_mishearings_without_sending(self):
+        for heard_name in ("Cortex", "Kodak"):
+            with self.subTest(heard_name=heard_name):
+                command = f"open {heard_name} and send a prompt called test in the Default chat"
+                result = Planner().handle(command)
+                preview = Planner().preview(command)
+
+                self.assertEqual(result.tool, "codex.chat_plan")
+                self.assertFalse(result.executed)
+                self.assertTrue(result.confirmation["required"])
+                self.assertEqual(result.result["selected_chat_name"], "Default")
+                self.assertFalse(result.result["sent_prompt_to_codex"])
+                self.assertEqual(preview.tool, "codex.chat_plan")
+                self.assertEqual(preview.result["plan"]["selected_chat_name"], "Default")
+                self.assertFalse(preview.result["plan"]["sent_prompt_to_codex"])
 
     def test_contact_tools_route_and_parse_fallback_entities(self):
         with patch("jarvis.planner.contact_data_lookup", return_value={"tool": "contacts.lookup", "status": "found", "executed": True, "reply": "Known."}) as lookup_mock:

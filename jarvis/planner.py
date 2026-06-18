@@ -4791,7 +4791,7 @@ def _looks_like_codex_speed_status(lower: str) -> bool:
 
 
 def _looks_like_codex_chat_status(lower: str) -> bool:
-    if "codex" not in lower:
+    if not _mentions_codex_product(lower):
         return False
     chat_cues = (
         "codex chat",
@@ -4814,7 +4814,7 @@ def _looks_like_codex_chat_status(lower: str) -> bool:
 
 
 def _looks_like_codex_chat_plan(lower: str) -> bool:
-    if "codex" not in lower or "chat" not in lower:
+    if not _mentions_codex_product(lower) or "chat" not in lower:
         return False
     plan_cues = (
         "codex chat plan",
@@ -4837,7 +4837,7 @@ def _looks_like_codex_chat_plan(lower: str) -> bool:
 
 
 def _looks_like_codex_chat_send_request(lower: str) -> bool:
-    if "codex" not in lower:
+    if not _mentions_codex_product(lower):
         return False
     status_cues = ("status", "activity", "jobs", "progress", "speed", "memory")
     if any(cue in lower for cue in status_cues):
@@ -4850,6 +4850,10 @@ def _looks_like_codex_chat_send_request(lower: str) -> bool:
         and any(cue in lower for cue in prompt_cues)
         and any(cue in lower for cue in chat_cues)
     )
+
+
+def _mentions_codex_product(lower: str) -> bool:
+    return any(alias in lower for alias in ("codex", "cortex", "kodak"))
 
 
 def _looks_like_codex_activity_status(lower: str) -> bool:

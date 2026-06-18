@@ -10,20 +10,21 @@ spoken reply, time every stage, and clean up any app/browser state it created.
 ## Current Task Stack
 
 - Top-level goal: Jarvis passes Leo-style real-world tests before a build.
-- Current branch: full-loop QA harness plus Music App bridge integration.
-- Immediate subtask: prove or build a Music App playback verification path for
-  "Play Waving Through a Window."
-- Why this matters: music exposed false success, hidden playback, mystery audio,
-  LocalOS ownership confusion, and weak cleanup.
+- Current branch: full-loop QA harness plus canonical Jarvis prompt coverage.
+- Immediate subtask: expand the full-loop matrix across Leo's overnight prompt
+  list while keeping every external action verified and cleaned up.
+- Why this matters: recent bugs were false successes, hidden playback, stale UI
+  claims, STT mishearings, silent tool sends, and weak cleanup.
 - Done proof for current subtask:
   - A script can generate a spoken-command audio artifact.
   - The script can send the command to Jarvis.
-  - The script can verify the Music app or bridge reports real playback.
-  - The script can stop playback and close/minimize the Music window after the
-    test.
+  - The script can verify external proofs for Music, RAM, Calendar, commerce,
+    model-test planning, and Codex Default-chat routing.
+  - The script can stop playback and close/minimize the Music window after any
+    Music test.
   - The script writes JSON/Markdown evidence with timings and any failure.
-- Return point: expand the same full-loop harness to Calendar, RAM, Codex,
-  Teams, email-contact, and Magic Keyboard prompts.
+- Return point: expand the same full-loop harness to Teams and email-contact
+  prompts, then tighten visible/spoken reply comparison.
 
 ## Rules For Tonight
 
@@ -59,6 +60,12 @@ spoken reply, time every stage, and clean up any app/browser state it created.
   "Hey Jarvis, play Waving Through a Window", route it through Jarvis, verify
   native Music reports real playback of the Dear Evan Hansen Tony Awards track,
   audit the Jarvis speech payload, then stop playback and close the Music window.
+- `scripts/full_loop_regression.py` now also covers Activity Monitor-style RAM,
+  Calendar today, Magic Keyboard price-to-yuan, Gemma 3 4B remote-first model
+  planning, and Codex Default-chat planning without sending.
+- Jarvis planner tests now cover common STT mishearings where Codex becomes
+  "Cortex" or "Kodak"; those still route to the Codex chat plan and still require
+  typed confirmation before any send.
 
 ## Cleanup Obligations
 
@@ -94,3 +101,11 @@ spoken reply, time every stage, and clean up any app/browser state it created.
   `runtime/full_loop_regression/20260618-233912/summary.json`, adding the Gemma
   3 4B model-test planning case with a remote-first/no-local-model-run guardrail.
   Full Python safety suite then passed 843/843.
+- 2026-06-18 23:55 CST: focused Codex Default-chat full-loop regression passed at
+  `runtime/full_loop_regression/20260618-235441/summary.json`, proving Jarvis can
+  plan the Default Codex chat route without silently sending the prompt.
+- 2026-06-18 23:56 CST: combined full-loop regression passed 6/6 at
+  `runtime/full_loop_regression/20260618-235500/summary.json`, covering native
+  Music playback, RAM, Calendar, Magic Keyboard yuan conversion, Gemma 3 4B model
+  planning, and Codex Default-chat safety planning. Full Python safety suite then
+  passed 846/846.

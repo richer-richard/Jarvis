@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from jarvis.tools import calendar_today_schedule, commerce_price_convert, memory_usage_status, model_test_plan  # noqa: E402
+from jarvis.tools import codex_chat_plan  # noqa: E402
 from scripts import voice_loop_qa  # noqa: E402
 from scripts.render_overnight_status import normalize_base_url  # noqa: E402
 
@@ -61,6 +62,13 @@ GEMMA_MODEL_PLAN_CASE = {
     "expect_visible_contains": ["Gemma 3 4B"],
     "expect_routed_contains": ["Gemma", "4B"],
 }
+CODEX_DEFAULT_PLAN_CASE = {
+    "id": "codex_default_plan",
+    "command": "Hey Jarvis, open Codex and send a prompt called test in the Default chat.",
+    "expect_tool": ["codex.chat_plan"],
+    "expect_visible_contains": ["Default", "confirmation"],
+    "expect_routed_contains": ["prompt", "test", "default"],
+}
 
 
 def main() -> int:
@@ -68,7 +76,7 @@ def main() -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--music-bridge-url", default=DEFAULT_MUSIC_BRIDGE_URL)
     parser.add_argument("--output-dir", default=str(REPORT_DIR))
-    parser.add_argument("--case", choices=("music", "ram", "calendar", "magic", "gemma", "all"), default="all")
+    parser.add_argument("--case", choices=("music", "ram", "calendar", "magic", "gemma", "codex", "all"), default="all")
     parser.add_argument("--timeout", type=float, default=75.0)
     parser.add_argument("--exercise-live-speech", action="store_true")
     parser.add_argument("--no-report-refresh", action="store_true")
@@ -87,6 +95,8 @@ def main() -> int:
         cases.append(MAGIC_KEYBOARD_YUAN_CASE)
     if args.case in {"gemma", "all"}:
         cases.append(GEMMA_MODEL_PLAN_CASE)
+    if args.case in {"codex", "all"}:
+        cases.append(CODEX_DEFAULT_PLAN_CASE)
     results = []
     for case in cases:
         if case["id"] == MUSIC_WAVING_CASE["id"]:
@@ -133,6 +143,16 @@ def main() -> int:
         elif case["id"] == GEMMA_MODEL_PLAN_CASE["id"]:
             results.append(
                 run_gemma_model_plan_case(
+                    case,
+                    base_url=base_url,
+                    run_dir=run_dir / case["id"],
+                    timeout=args.timeout,
+                    exercise_live_speech=args.exercise_live_speech,
+                )
+            )
+        elif case["id"] == CODEX_DEFAULT_PLAN_CASE["id"]:
+            results.append(
+                run_codex_default_plan_case(
                     case,
                     base_url=base_url,
                     run_dir=run_dir / case["id"],
@@ -636,6 +656,83 @@ def verify_gemma_model_plan(model_proof: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def run_codex_default_plan_case(
+    case: dict[str, Any],
+    *,
+    base_url: str,
+    run_dir: Path,
+    timeout: float,
+    exercise_live_speech: bool,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    voice_report = voice_loop_qa.run_voice_loop(
+        command_text=case["command"],
+        base_url=base_url,
+        run_dir=run_dir / "voice-loop",
+        length_scale=0.85,
+        timeout=timeout,
+        stt_provider="local",
+        no_permission_prompts=True,
+        expect_tools=list(case["expect_tool"]),
+        expect_visible_contains=list(case["expect_visible_contains"]),
+        expect_routed_contains=list(case["expect_routed_contains"]),
+        exercise_live_speech=exercise_live_speech,
+        allow_audio_actions=False,
+    )
+    write_json(run_dir / "voice-loop-report.json", voice_report)
+    codex_proof = codex_chat_plan("open cortex and send a prompt called test in the default chat")
+    write_json(run_dir / "codex-proof.json", codex_proof)
+    action_proof = verify_codex_default_plan(codex_proof)
+    status = "passed"
+    warnings: list[str] = []
+    voice_status = str(voice_report.get("result", {}).get("status") or "failed")
+    if voice_status == "failed":
+        status = "failed"
+        warnings.append("Voice loop failed.")
+    elif voice_status != "passed":
+        status = "warning"
+        warnings.append(f"Voice loop returned {voice_status}.")
+    if not action_proof["passed"]:
+        status = "failed"
+        warnings.extend(action_proof["failures"])
+    return {
+        "case_id": case["id"],
+        "status": status,
+        "warnings": warnings,
+        "command": case["command"],
+        "voice_loop_status": voice_status,
+        "voice_loop_report": str(run_dir / "voice-loop-report.json"),
+        "action_proof": action_proof,
+        "codex_proof": codex_proof,
+        "cleanup": {"required": False, "reason": "Safety-gated Codex plan must not start a Codex job."},
+        "total_seconds": round(time.monotonic() - started, 3),
+    }
+
+
+def verify_codex_default_plan(codex_proof: dict[str, Any]) -> dict[str, Any]:
+    failures: list[str] = []
+    if codex_proof.get("tool") != "codex.chat_plan":
+        failures.append("Codex proof did not come from codex.chat_plan.")
+    if codex_proof.get("status") != "planned":
+        failures.append("Codex proof did not report planned status.")
+    if codex_proof.get("called_codex") or codex_proof.get("started_codex_job") or codex_proof.get("sent_prompt_to_codex"):
+        failures.append("Codex proof unexpectedly sent or started Codex.")
+    if str(codex_proof.get("selected_chat_name") or "") != "Default":
+        failures.append("Codex proof did not select the Default chat.")
+    if not codex_proof.get("session_ids_hidden"):
+        failures.append("Codex proof did not hide session IDs.")
+    if not codex_proof.get("would_resume_configured_session"):
+        failures.append("Codex proof did not identify the configured Default session.")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "selected_chat": str(codex_proof.get("selected_chat_name") or ""),
+        "sent_prompt_to_codex": bool(codex_proof.get("sent_prompt_to_codex")),
+        "session_ids_hidden": bool(codex_proof.get("session_ids_hidden")),
+    }
+
+
 def music_bridge_request(
     base_url: str,
     method: str,
@@ -706,6 +803,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
             if proof.get("source_label") and proof.get("price") and proof.get("converted")
             else f"{proof.get('model')} via {proof.get('preferred_lane')}"
             if proof.get("model") and proof.get("preferred_lane")
+            else f"{proof.get('selected_chat')} Codex chat, sent={proof.get('sent_prompt_to_codex')}"
+            if proof.get("selected_chat")
             else "(none)"
         )
         lines.extend(
