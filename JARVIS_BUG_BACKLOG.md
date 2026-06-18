@@ -28,6 +28,10 @@ Status legend:
    - Jarvis must not start hidden `afplay`, hidden browser audio, mystery audio,
      or another playback source that the media keys cannot pause.
    - Stop Music should be an emergency brake from the Jarvis menu bar.
+   - 2026-06-19 proof update: the full-loop music case now uses the native Music
+     app bridge as the proven playback owner and fails if cleanup does not verify
+     playback stopped. Broader product risk remains for ad-hoc music commands and
+     legacy LocalOS/Chrome fallback paths.
 
 3. Partially fixed/risky: Jarvis speech/mute can become unsafe or annoying.
    - Leo reported Jarvis speaking when it should not, being impossible to mute,
@@ -42,6 +46,12 @@ Status legend:
      transcribe Jarvis's audio back to compare with the visible reply.
    - Existing harnesses help, but real app/browser/Teams/music proof remains
      uneven.
+   - 2026-06-19 proof update: voice-loop QA now scores live speech against the
+     exact spoken payload when visible and spoken text intentionally differ, and
+     a live Calendar speech check passed with `reply_similarity_target:
+     spoken_payload`. This improves the harness, but the broader real-world
+     prompt set is still not fully proven with physical speaker/microphone
+     capture.
 
 5. Partially fixed/risky: Jarvis must use model/tool choice, not fake keyword
    hacks, except where Leo explicitly allows a primitive tool.
@@ -83,9 +93,13 @@ Status legend:
    - Example: "Ms. Sharpay" may be a nickname/phonetic label; Jarvis should infer
      the real sender name from local mail metadata and remember the alias.
 
-7. Open/unknown: bounded date/sender email searches need real proof.
+7. Fixed/proved: bounded date/sender email searches need real proof.
    - Example target prompt: "Summarize all the emails from Ms. Sharpay in the
      past month."
+   - 2026-06-19 proof update: this prompt now resolves `Ms. Sharpay` to
+     `Sharpay Cao 曹宗悦`, preserves the "all emails" intent as `all_matching`,
+     selects `sender_recent`, verifies 12 matching messages with 5 summarized
+     recent messages, and passes the live full-loop email case.
 
 ## Model Routing And Prompting Bugs
 
