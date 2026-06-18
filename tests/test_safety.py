@@ -156,6 +156,7 @@ from scripts import (
     compare_middle_models,
     generate_tts_audition,
     full_loop_regression,
+    pre_build_gate,
     probe_gemma3n_audio,
     render_overnight_status,
     repair_local_stt_model,
@@ -439,6 +440,89 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertFalse(proof["passed"])
         self.assertIn("Email proof exposed a raw link in the spoken/visible summary.", proof["failures"])
+
+    def test_pre_build_gate_default_steps_run_full_loop_before_cleanup(self):
+        steps = pre_build_gate.build_steps(
+            base_url="http://127.0.0.1:8765",
+            exercise_live_speech=False,
+            skip_python_tests=False,
+            skip_full_loop=False,
+            skip_cleanup=False,
+        )
+
+        self.assertEqual(
+            [step["id"] for step in steps],
+            [
+                "python_safety_suite",
+                "full_loop_regression",
+                "cleanup_chrome_test_tabs",
+                "report_refresh",
+            ],
+        )
+        full_loop_command = steps[1]["command"]
+        self.assertIn("scripts/full_loop_regression.py", full_loop_command)
+        self.assertIn("--case", full_loop_command)
+        self.assertIn("all", full_loop_command)
+        self.assertNotIn("--exercise-live-speech", full_loop_command)
+
+    def test_pre_build_gate_can_exercise_live_speech_explicitly(self):
+        steps = pre_build_gate.build_steps(
+            base_url="http://127.0.0.1:8765",
+            exercise_live_speech=True,
+            skip_python_tests=True,
+            skip_full_loop=False,
+            skip_cleanup=True,
+        )
+
+        self.assertEqual([step["id"] for step in steps], ["full_loop_regression", "report_refresh"])
+        self.assertIn("--exercise-live-speech", steps[0]["command"])
+
+    def test_pre_build_gate_rejects_non_loopback_base_url(self):
+        with self.assertRaises(ValueError):
+            pre_build_gate.run_gate(
+                base_url="https://example.com",
+                output_dir=Path(tempfile.mkdtemp()),
+                skip_python_tests=True,
+                skip_full_loop=True,
+                skip_cleanup=True,
+            )
+
+    def test_pre_build_gate_writes_latest_and_runs_cleanup_after_failure(self):
+        commands = []
+
+        def fake_runner(command, timeout):
+            commands.append(command)
+            is_full_loop = any("full_loop_regression.py" in str(part) for part in command)
+            return subprocess.CompletedProcess(
+                command,
+                1 if is_full_loop else 0,
+                stdout="ok",
+                stderr="bad full loop" if is_full_loop else "",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            summary = pre_build_gate.run_gate(
+                base_url="http://127.0.0.1:8765",
+                output_dir=Path(temp_dir),
+                skip_python_tests=True,
+                skip_full_loop=False,
+                skip_cleanup=False,
+                runner=fake_runner,
+                timeout=1,
+            )
+
+            self.assertFalse(summary["ok"])
+            self.assertEqual(summary["status"], "failed")
+            self.assertTrue(any(
+                any("full_loop_regression.py" in str(part) for part in command)
+                for command in commands
+            ))
+            self.assertTrue(any(
+                any("cleanup_chrome_test_tabs.py" in str(part) for part in command)
+                for command in commands
+            ))
+            self.assertTrue((Path(temp_dir) / "latest.json").exists())
+            self.assertTrue((Path(temp_dir) / "latest.md").exists())
 
     def test_voice_loop_stream_can_allow_audio_actions_for_live_regression(self):
         captured_payloads = []

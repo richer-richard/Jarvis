@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""Run the Jarvis pre-build proof gate and write a stable handoff report."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any, Callable
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.render_overnight_status import normalize_base_url  # noqa: E402
+
+
+REPORT_DIR = PROJECT_ROOT / "runtime" / "pre_build_gate"
+DEFAULT_BASE_URL = "http://127.0.0.1:8765"
+
+
+CommandRunner = Callable[[list[str], float], subprocess.CompletedProcess[str]]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--output-dir", default=str(REPORT_DIR))
+    parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--exercise-live-speech", action="store_true")
+    parser.add_argument("--skip-python-tests", action="store_true")
+    parser.add_argument("--skip-full-loop", action="store_true")
+    parser.add_argument("--skip-cleanup", action="store_true")
+    args = parser.parse_args(argv)
+
+    try:
+        base_url = normalize_base_url(args.base_url)
+    except ValueError as error:
+        print(f"Refused unsafe base URL: {error}", file=sys.stderr)
+        return 2
+
+    summary = run_gate(
+        base_url=base_url,
+        output_dir=Path(args.output_dir).resolve(),
+        timeout=args.timeout,
+        exercise_live_speech=args.exercise_live_speech,
+        skip_python_tests=args.skip_python_tests,
+        skip_full_loop=args.skip_full_loop,
+        skip_cleanup=args.skip_cleanup,
+    )
+    print(f"Report: {summary['report_path']}")
+    print(f"Passed: {summary['passed']}/{summary['total']}")
+    print(f"Status: {summary['status']}")
+    return 0 if summary["ok"] else 1
+
+
+def default_runner(command: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def run_gate(
+    *,
+    base_url: str = DEFAULT_BASE_URL,
+    output_dir: Path = REPORT_DIR,
+    timeout: float = 180.0,
+    exercise_live_speech: bool = False,
+    skip_python_tests: bool = False,
+    skip_full_loop: bool = False,
+    skip_cleanup: bool = False,
+    runner: CommandRunner = default_runner,
+) -> dict[str, Any]:
+    base_url = normalize_base_url(base_url)
+    run_dir = allocate_run_dir(output_dir)
+    started = time.monotonic()
+    steps = build_steps(
+        base_url=base_url,
+        exercise_live_speech=exercise_live_speech,
+        skip_python_tests=skip_python_tests,
+        skip_full_loop=skip_full_loop,
+        skip_cleanup=skip_cleanup,
+    )
+    results: list[dict[str, Any]] = []
+    for step in steps:
+        result = run_step(step, timeout=timeout, runner=runner)
+        results.append(result)
+        write_summary(
+            make_summary(
+                base_url=base_url,
+                run_dir=run_dir,
+                results=results,
+                started=started,
+                complete=False,
+            ),
+            run_dir,
+            output_dir,
+        )
+        if not result["ok"] and not step.get("always_run_next"):
+            break
+
+    if not skip_cleanup and not any(item["id"] == "cleanup_chrome_test_tabs" for item in results):
+        cleanup_step = cleanup_chrome_step()
+        results.append(run_step(cleanup_step, timeout=timeout, runner=runner))
+
+    summary = make_summary(
+        base_url=base_url,
+        run_dir=run_dir,
+        results=results,
+        started=started,
+        complete=True,
+    )
+    write_summary(summary, run_dir, output_dir)
+    return summary
+
+
+def build_steps(
+    *,
+    base_url: str,
+    exercise_live_speech: bool,
+    skip_python_tests: bool,
+    skip_full_loop: bool,
+    skip_cleanup: bool,
+) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = []
+    if not skip_python_tests:
+        steps.append(
+            {
+                "id": "python_safety_suite",
+                "label": "Python safety suite",
+                "command": [sys.executable, "-m", "unittest", "tests.test_safety"],
+            }
+        )
+    if not skip_full_loop:
+        full_loop_command = [
+            sys.executable,
+            "scripts/full_loop_regression.py",
+            "--base-url",
+            base_url,
+            "--case",
+            "all",
+            "--timeout",
+            "75",
+        ]
+        if exercise_live_speech:
+            full_loop_command.append("--exercise-live-speech")
+        steps.append(
+            {
+                "id": "full_loop_regression",
+                "label": "Full-loop spoken-command regression",
+                "command": full_loop_command,
+            }
+        )
+    if not skip_cleanup:
+        steps.append(cleanup_chrome_step())
+    steps.append(
+        {
+            "id": "report_refresh",
+            "label": "Refresh overnight report",
+            "command": [sys.executable, "scripts/report_refresh.py", "--base-url", base_url],
+            "always_run_next": True,
+        }
+    )
+    return steps
+
+
+def cleanup_chrome_step() -> dict[str, Any]:
+    return {
+        "id": "cleanup_chrome_test_tabs",
+        "label": "Clean up Jarvis Chrome test tabs",
+        "command": [sys.executable, "scripts/cleanup_chrome_test_tabs.py", "--execute", "--json"],
+        "always_run_next": True,
+    }
+
+
+def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        completed = runner(list(step["command"]), timeout)
+        return {
+            "id": step["id"],
+            "label": step["label"],
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "seconds": round(time.monotonic() - started, 3),
+            "command": list(step["command"]),
+            "stdout_tail": tail_text(completed.stdout),
+            "stderr_tail": tail_text(completed.stderr),
+        }
+    except subprocess.TimeoutExpired as error:
+        return {
+            "id": step["id"],
+            "label": step["label"],
+            "ok": False,
+            "returncode": "timeout",
+            "seconds": round(time.monotonic() - started, 3),
+            "command": list(step["command"]),
+            "stdout_tail": tail_text(error.stdout or ""),
+            "stderr_tail": tail_text(error.stderr or f"Timed out after {timeout}s"),
+        }
+
+
+def make_summary(
+    *,
+    base_url: str,
+    run_dir: Path,
+    results: list[dict[str, Any]],
+    started: float,
+    complete: bool,
+) -> dict[str, Any]:
+    passed = sum(1 for item in results if item.get("ok"))
+    failed = sum(1 for item in results if not item.get("ok"))
+    status = "passed" if complete and failed == 0 and results else "failed" if failed else "running"
+    return {
+        "schema": "jarvis.pre_build_gate.v1",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "base_url": base_url,
+        "run_dir": str(run_dir),
+        "report_path": str(run_dir / "summary.json"),
+        "latest_path": str(run_dir.parent / "latest.json"),
+        "status": status,
+        "ok": status == "passed",
+        "passed": passed,
+        "failed": failed,
+        "total": len(results),
+        "complete": complete,
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "results": results,
+    }
+
+
+def write_summary(summary: dict[str, Any], run_dir: Path, output_dir: Path) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_json(run_dir / "summary.json", summary)
+    write_json(output_dir / "latest.json", summary)
+    markdown = render_markdown(summary)
+    (run_dir / "summary.md").write_text(markdown, encoding="utf-8")
+    (output_dir / "latest.md").write_text(markdown, encoding="utf-8")
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+
+
+def render_markdown(summary: dict[str, Any]) -> str:
+    lines = [
+        "# Jarvis Pre-Build Gate",
+        "",
+        f"- Status: {summary.get('status')}",
+        f"- Passed: {summary.get('passed')}/{summary.get('total')}",
+        f"- Run dir: {summary.get('run_dir')}",
+    ]
+    for result in summary.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        icon = "PASS" if result.get("ok") else "FAIL"
+        lines.extend(
+            [
+                "",
+                f"## {icon} {result.get('label')}",
+                f"- Step: {result.get('id')}",
+                f"- Seconds: {result.get('seconds')}",
+                f"- Return code: {result.get('returncode')}",
+            ]
+        )
+        if result.get("stderr_tail"):
+            lines.append(f"- Stderr: `{result.get('stderr_tail')}`")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def allocate_run_dir(output_dir: Path) -> Path:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for suffix in ["", *[f"-{index:02d}" for index in range(2, 100)]]:
+        candidate = output_dir / f"{stamp}{suffix}"
+        try:
+            candidate.mkdir()
+            return candidate
+        except FileExistsError:
+            continue
+    fallback = output_dir / f"{stamp}-{time.monotonic_ns()}"
+    fallback.mkdir()
+    return fallback
+
+
+def tail_text(value: str, *, limit: int = 1800) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
