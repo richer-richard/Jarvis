@@ -11122,8 +11122,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.455}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-455}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.456}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-456}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('cleanup_numbered_app_bundles()', script)
         self.assertIn("find \"$OUTPUT_ROOT\" -maxdepth 1 -type d -name \"$APP_NAME-*.app\" -exec rm -rf {} +", script)
