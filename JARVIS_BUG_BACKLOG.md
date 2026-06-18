@@ -264,6 +264,11 @@ Status legend:
 8. Partially fixed/risky: mystery audio kept playing after Jarvis quit or tabs
    closed.
    - Future music tests must inventory active media owners.
+   - 2026-06-19 proof update: the Music full-loop case now snapshots `afplay`
+     before and after playback cleanup and fails if a new hidden `afplay`
+     process survives. Live focused proof at
+     `runtime/full_loop_regression/20260619-034949/summary.json` passed with
+     `new_afplay_processes_after: []`.
 
 9. Open/unknown: Stop Music from menu bar should mute/stop all Jarvis-started
    music or, better, all music should be in LocalOS so media keys work.

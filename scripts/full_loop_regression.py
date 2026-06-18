@@ -312,6 +312,8 @@ def run_music_waving_case(
     run_dir.mkdir(parents=True, exist_ok=True)
     cleanup: dict[str, Any] = {}
     result: dict[str, Any] | None = None
+    before_afplay = afplay_process_snapshot()
+    write_json(run_dir / "afplay-before.json", {"processes": before_afplay})
     try:
         preflight = music_bridge_request(music_bridge_url, "GET", "/health", timeout=3.5, auth=False)
 
@@ -374,6 +376,9 @@ def run_music_waving_case(
             timeout=3.5,
         )
         if result is not None:
+            after_afplay = afplay_process_snapshot()
+            cleanup["afplay_processes_after"] = after_afplay
+            cleanup["new_afplay_processes_after"] = new_processes_since(before_afplay, after_afplay)
             result["cleanup"] = cleanup
             result["total_seconds"] = round(time.monotonic() - started, 3)
             if not cleanup["verified_stopped"]:
@@ -383,7 +388,44 @@ def run_music_waving_case(
                     warnings = []
                     result["warnings"] = warnings
                 warnings.append("Music cleanup did not verify playback stopped.")
+            if cleanup["new_afplay_processes_after"]:
+                result["status"] = "failed"
+                warnings = result.get("warnings")
+                if not isinstance(warnings, list):
+                    warnings = []
+                    result["warnings"] = warnings
+                warnings.append("Music cleanup left a new hidden afplay process running.")
         write_json(run_dir / "cleanup.json", cleanup)
+
+
+def afplay_process_snapshot() -> list[dict[str, Any]]:
+    completed = subprocess.run(
+        ["ps", "ax", "-o", "pid=,command="],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return []
+    processes: list[dict[str, Any]] = []
+    for line in completed.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped or "afplay" not in stripped:
+            continue
+        pid_text, _, command = stripped.partition(" ")
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        processes.append({"pid": pid, "command": command.strip()})
+    return processes
+
+
+def new_processes_since(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    before_pids = {int(item.get("pid")) for item in before if isinstance(item.get("pid"), int)}
+    return [item for item in after if isinstance(item.get("pid"), int) and int(item["pid"]) not in before_pids]
 
 
 def wait_for_music_playback(music_bridge_url: str, *, timeout: float) -> dict[str, Any]:
