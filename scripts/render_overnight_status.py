@@ -1740,7 +1740,7 @@ def headline_section(context: dict[str, Any]) -> str:
     cards = [
         (
             f"Live {bundle}",
-            "Jarvis now has a real full-loop gate for Leo's spoken prompts: audio in, tool route, action proof, speech audit, cleanup, and stop-proof music playback through the native Music app bridge.",
+            "Jarvis now has a real full-loop gate for Leo's spoken prompts: audio in, tool route, action proof, speech audit, cleanup, and stop-proof music playback. In that gate, music playback is proven through the native Music app bridge.",
         ),
         (
             "Proof",

@@ -1847,13 +1847,6 @@ def run_native_visible_screen_follow_up(
             "attempts": 1,
             "duration_seconds": round(time.monotonic() - started, 3),
         }
-    if initial_browser_page_follow_up.get("status") == "browser_permission_blocked":
-        return {
-            **result,
-            **initial_browser_page_follow_up,
-            "attempts": 0,
-            "duration_seconds": round(time.monotonic() - started, 3),
-        }
     if initial_browser_page_follow_up.get("status") == "login_gate_visible":
         return {
             **result,
@@ -1862,39 +1855,34 @@ def run_native_visible_screen_follow_up(
             "duration_seconds": round(time.monotonic() - started, 3),
         }
 
-    browser_open = open_visible_screen_follow_up_url(command_response, timeout=timeout)
-    result.update(browser_open)
-    if browser_open.get("attempted"):
-        time.sleep(VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS)
+    browser_page_follow_up = initial_browser_page_follow_up
+    if initial_browser_page_follow_up.get("status") != "browser_permission_blocked":
+        browser_open = open_visible_screen_follow_up_url(command_response, timeout=timeout)
+        result.update(browser_open)
+        if browser_open.get("attempted"):
+            time.sleep(VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS)
 
-    browser_page_follow_up = run_browser_page_follow_up(
-        command_text=command_text,
-        base_url=base_url,
-        follow_up_dir=follow_up_dir,
-        timeout=timeout,
-    )
-    result["browser_page_follow_up"] = compact_direct_follow_up(browser_page_follow_up)
-    if browser_page_follow_up.get("status") == "completed":
-        return {
-            **result,
-            **browser_page_follow_up,
-            "attempts": 1,
-            "duration_seconds": round(time.monotonic() - started, 3),
-        }
-    if browser_page_follow_up.get("status") == "browser_permission_blocked":
-        return {
-            **result,
-            **browser_page_follow_up,
-            "attempts": 0,
-            "duration_seconds": round(time.monotonic() - started, 3),
-        }
-    if browser_page_follow_up.get("status") == "login_gate_visible":
-        return {
-            **result,
-            **browser_page_follow_up,
-            "attempts": 0,
-            "duration_seconds": round(time.monotonic() - started, 3),
-        }
+        browser_page_follow_up = run_browser_page_follow_up(
+            command_text=command_text,
+            base_url=base_url,
+            follow_up_dir=follow_up_dir,
+            timeout=timeout,
+        )
+        result["browser_page_follow_up"] = compact_direct_follow_up(browser_page_follow_up)
+        if browser_page_follow_up.get("status") == "completed":
+            return {
+                **result,
+                **browser_page_follow_up,
+                "attempts": 1,
+                "duration_seconds": round(time.monotonic() - started, 3),
+            }
+        if browser_page_follow_up.get("status") == "login_gate_visible":
+            return {
+                **result,
+                **browser_page_follow_up,
+                "attempts": 0,
+                "duration_seconds": round(time.monotonic() - started, 3),
+            }
 
     latest_failure: dict[str, Any] | None = None
     max_attempts = max(
@@ -2073,9 +2061,12 @@ def run_native_visible_screen_follow_up_attempt(
     visible_reply = extract_visible_reply(summary_response)
     summary_status = str(summary_result.get("status") or "")
     useful = visible_screen_follow_up_response_looks_useful(summary_response, command_text=command_text)
+    status = "completed" if useful else "response_not_useful"
+    if not useful and summary_status in {"login_gate_visible", "assignment_subject_mismatch"}:
+        status = summary_status
     return {
         "used": useful,
-        "status": "completed" if useful else "login_gate_visible" if summary_status == "login_gate_visible" else "response_not_useful",
+        "status": status,
         "probe_returncode": completed.returncode,
         "probe_stdout_tail": stdout[-500:],
         "probe_stderr_tail": stderr[-500:],
@@ -2259,6 +2250,8 @@ def compact_direct_follow_up(follow_up: dict[str, Any]) -> dict[str, Any]:
 
 
 def merge_follow_up_failures(browser_page_follow_up: dict[str, Any], latest_failure: dict[str, Any] | None) -> dict[str, Any]:
+    if latest_failure and latest_failure.get("status") in {"assignment_subject_mismatch", "login_gate_visible"}:
+        return latest_failure
     if browser_page_follow_up.get("status") == "browser_permission_blocked":
         merged = dict(latest_failure or {})
         merged.update(

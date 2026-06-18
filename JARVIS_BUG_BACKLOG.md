@@ -297,6 +297,11 @@ Status legend:
      Teams assignment text, but it was `Lesson 2: The Geography of Greece Group
      Assignment` while Leo asked for the newest Music assignment. Jarvis must
      either navigate to Music or say the visible assignment does not match Music.
+   - 2026-06-19 proof update: the full-loop Teams case now tries native
+     visible-screen OCR once even when Chrome page text is blocked by
+     Automation permission, preserves `assignment_subject_mismatch`, and proved
+     live that the visible page is `Lesson 2: The Geography of Greece Group
+     Assignment`, not the requested Music assignment.
 
 6. Partially fixed/risky: Jarvis should not open random extra Chrome tabs during
    tests and leave them for Leo.

@@ -483,6 +483,28 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["passed"])
         self.assertIn("Teams proof regressed to a generic Chrome/YouTube visible-screen summary.", proof["failures"])
 
+    def test_full_loop_teams_honesty_accepts_visible_screen_subject_mismatch(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": (
+                    "Opening your Teams bookmark in signed-in Chrome now. "
+                    "I have not inspected the newest Music assignment until a later visible page or screen read succeeds."
+                ),
+                "visible_screen_follow_up": {
+                    "status": "assignment_subject_mismatch",
+                    "tool": "screen.visible_text",
+                    "visible_reply_preview": (
+                        "I read the visible Teams screen, but it does not look like the Music assignment. "
+                        "I can see assignment-related text: Lesson 2: The Geography of Greece Group Assignment."
+                    ),
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertTrue(proof["honest_wrong_subject"])
+        self.assertIn("Geography of Greece", proof["visible_reply_preview"])
+
     def test_full_loop_email_sharpay_accepts_resolved_sender_summary(self):
         proof = full_loop_regression.verify_email_sharpay_honesty({
             "result": {
@@ -2145,7 +2167,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(report["result"]["visible_screen_follow_up"]["status"], "browser_permission_blocked")
         self.assertIn("Automation access", report["result"]["visible_reply_preview"])
 
-    def test_voice_loop_qa_visible_screen_followup_limits_ocr_retries_when_browser_permission_blocked(self):
+    def test_voice_loop_qa_visible_screen_followup_tries_ocr_once_when_browser_permission_blocked(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch(
                  "scripts.voice_loop_qa.run_browser_page_follow_up",
@@ -2178,11 +2200,11 @@ class VerifySafeScriptTests(unittest.TestCase):
                 timeout=5.0,
             )
 
-        self.assertEqual(attempt_mock.call_count, 0)
+        self.assertEqual(attempt_mock.call_count, 1)
         open_mock.assert_not_called()
         self.assertEqual(result["status"], "browser_permission_blocked")
         self.assertEqual(result["tool"], "browser.read_page")
-        self.assertEqual(result["attempts"], 0)
+        self.assertEqual(result["attempts"], 1)
         self.assertFalse(result["browser_open_attempted"])
 
     def test_voice_loop_qa_visible_screen_followup_stops_immediately_when_browser_page_read_sees_login_gate(self):
@@ -2258,11 +2280,51 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(browser_mock.call_count, 2)
         open_mock.assert_called_once()
-        self.assertEqual(attempt_mock.call_count, 0)
+        self.assertEqual(attempt_mock.call_count, 1)
         self.assertEqual(result["status"], "browser_permission_blocked")
         self.assertEqual(result["tool"], "browser.read_page")
-        self.assertEqual(result["attempts"], 0)
+        self.assertEqual(result["attempts"], 1)
         self.assertTrue(result["browser_open_attempted"])
+
+    def test_voice_loop_qa_visible_screen_followup_preserves_assignment_mismatch_after_browser_block(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 return_value={
+                     "used": False,
+                     "status": "browser_permission_blocked",
+                     "tool": "browser.read_page",
+                     "response_status": "automation_not_allowed",
+                     "visible_reply_preview": "Chrome is blocking Jarvis from controlling the current page.",
+                 },
+             ), \
+             patch("scripts.voice_loop_qa.open_visible_screen_follow_up_url") as open_mock, \
+             patch(
+                 "scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt",
+                 return_value={
+                     "used": False,
+                     "status": "assignment_subject_mismatch",
+                     "tool": "screen.visible_text",
+                     "response_status": "assignment_subject_mismatch",
+                     "visible_reply_preview": (
+                         "I read the visible Teams screen, but it does not look like the Music assignment. "
+                         "I can see assignment-related text: Lesson 2: The Geography of Greece Group Assignment."
+                     ),
+                 },
+             ) as attempt_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+            )
+
+        open_mock.assert_not_called()
+        self.assertEqual(attempt_mock.call_count, 1)
+        self.assertEqual(result["status"], "assignment_subject_mismatch")
+        self.assertEqual(result["tool"], "screen.visible_text")
+        self.assertEqual(result["attempts"], 1)
 
     def test_voice_loop_qa_expectations_check_tool_visible_and_routed_text(self):
         passed = voice_loop_qa.evaluate_expectations(
