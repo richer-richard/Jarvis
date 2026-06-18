@@ -121,6 +121,7 @@ def ensure_latest_artifacts() -> dict[str, Any]:
             full_loop_regression.REPORT_DIR / "latest.json",
             full_loop_regression.REPORT_DIR / "latest.md",
             full_loop_regression.render_markdown,
+            payload_filter=full_loop_regression.is_canonical_summary,
         ),
         "codex_cli_proxy_benchmark": _write_latest_from_newest(
             codex_cli_proxy_benchmark.REPORT_DIR.glob("codex-cli-proxy-benchmark-*.json"),
@@ -146,6 +147,7 @@ def _write_latest_from_newest(
     render_markdown: Any,
     *,
     transform_payload: Any = None,
+    payload_filter: Any = None,
 ) -> dict[str, Any]:
     paths = sorted(
         (Path(path) for path in candidates),
@@ -164,6 +166,14 @@ def _write_latest_from_newest(
             payload = json.loads(source.read_text(encoding="utf-8"))
             if transform_payload is not None:
                 payload = transform_payload(payload)
+            if payload_filter is not None and not payload_filter(payload):
+                skipped.append(
+                    {
+                        "source": str(source),
+                        "error": "filtered",
+                    }
+                )
+                continue
             markdown = render_markdown(payload)
             latest_json_path.parent.mkdir(parents=True, exist_ok=True)
             latest_md_path.parent.mkdir(parents=True, exist_ok=True)

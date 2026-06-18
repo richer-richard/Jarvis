@@ -229,6 +229,8 @@ def main() -> int:
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "base_url": base_url,
         "run_dir": str(run_dir),
+        "case_selection": args.case,
+        "canonical_latest": args.case == "all",
         "status": "passed" if failed == 0 and warnings == 0 else "warning" if failed == 0 else "failed",
         "passed": passed,
         "warning": warnings,
@@ -236,16 +238,16 @@ def main() -> int:
         "total": len(results),
         "results": results,
     }
-    write_summary(summary, run_dir, Path(args.output_dir).resolve())
+    write_summary(summary, run_dir, Path(args.output_dir).resolve(), update_latest=bool(summary["canonical_latest"]))
     if not args.no_report_refresh:
         try:
             from scripts.report_refresh import refresh_report_surfaces_quietly
 
             summary["report_refresh"] = refresh_report_surfaces_quietly(base_url)
-            write_summary(summary, run_dir, Path(args.output_dir).resolve())
+            write_summary(summary, run_dir, Path(args.output_dir).resolve(), update_latest=bool(summary["canonical_latest"]))
         except Exception as error:  # pragma: no cover - defensive live-only path.
             summary["report_refresh"] = {"ok": False, "error": f"{type(error).__name__}: {error}"}
-            write_summary(summary, run_dir, Path(args.output_dir).resolve())
+            write_summary(summary, run_dir, Path(args.output_dir).resolve(), update_latest=bool(summary["canonical_latest"]))
 
     print(f"Report: {run_dir / 'summary.json'}")
     for result in results:
@@ -1152,12 +1154,17 @@ def music_bridge_request(
         return {"ok": False, "error": f"{type(error).__name__}: {error}"}
 
 
-def write_summary(summary: dict[str, Any], run_dir: Path, output_dir: Path) -> None:
+def is_canonical_summary(summary: dict[str, Any]) -> bool:
+    return bool(summary.get("canonical_latest")) or str(summary.get("case_selection") or "") == "all"
+
+
+def write_summary(summary: dict[str, Any], run_dir: Path, output_dir: Path, *, update_latest: bool = True) -> None:
     write_json(run_dir / "summary.json", summary)
-    write_json(output_dir / "latest.json", summary)
     markdown = render_markdown(summary)
     (run_dir / "summary.md").write_text(markdown, encoding="utf-8")
-    (output_dir / "latest.md").write_text(markdown, encoding="utf-8")
+    if update_latest:
+        write_json(output_dir / "latest.json", summary)
+        (output_dir / "latest.md").write_text(markdown, encoding="utf-8")
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:

@@ -580,6 +580,47 @@ class VerifySafeScriptTests(unittest.TestCase):
             self.assertTrue((Path(temp_dir) / "latest.json").exists())
             self.assertTrue((Path(temp_dir) / "latest.md").exists())
 
+    def test_full_loop_focused_summary_does_not_update_global_latest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "focused"
+            summary = {
+                "schema": "jarvis.full_loop_regression.v1",
+                "case_selection": "email",
+                "canonical_latest": False,
+                "status": "passed",
+                "passed": 1,
+                "total": 1,
+                "results": [],
+            }
+
+            full_loop_regression.write_summary(summary, run_dir, root, update_latest=False)
+
+            self.assertTrue((run_dir / "summary.json").exists())
+            self.assertTrue((run_dir / "summary.md").exists())
+            self.assertFalse((root / "latest.json").exists())
+            self.assertFalse((root / "latest.md").exists())
+
+    def test_full_loop_all_summary_updates_global_latest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "all"
+            summary = {
+                "schema": "jarvis.full_loop_regression.v1",
+                "case_selection": "all",
+                "canonical_latest": True,
+                "status": "passed",
+                "passed": 8,
+                "total": 8,
+                "results": [],
+            }
+
+            full_loop_regression.write_summary(summary, run_dir, root, update_latest=True)
+
+            self.assertTrue((root / "latest.json").exists())
+            self.assertTrue((root / "latest.md").exists())
+            self.assertEqual(json.loads((root / "latest.json").read_text(encoding="utf-8"))["total"], 8)
+
     def test_voice_loop_stream_can_allow_audio_actions_for_live_regression(self):
         captured_payloads = []
 
@@ -3000,6 +3041,41 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(latest_text, "value=1\n")
         self.assertEqual(result["skipped"][0]["source"], str(new))
         self.assertIn("JSONDecodeError", result["skipped"][0]["error"])
+
+    def test_report_refresh_latest_artifact_backfill_can_filter_focused_reports(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            canonical = root / "canonical.json"
+            focused = root / "focused.json"
+            latest_json = root / "latest.json"
+            latest_md = root / "latest.md"
+            canonical.write_text(
+                json.dumps({"case_selection": "all", "canonical_latest": True, "total": 8}),
+                encoding="utf-8",
+            )
+            focused.write_text(
+                json.dumps({"case_selection": "email", "canonical_latest": False, "total": 1}),
+                encoding="utf-8",
+            )
+            os.utime(canonical, (1, 1))
+            os.utime(focused, (2, 2))
+
+            result = report_refresh._write_latest_from_newest(
+                [canonical, focused],
+                latest_json,
+                latest_md,
+                lambda payload: f"total={payload['total']}\n",
+                payload_filter=full_loop_regression.is_canonical_summary,
+            )
+            latest_payload = json.loads(latest_json.read_text(encoding="utf-8"))
+            latest_text = latest_md.read_text(encoding="utf-8")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], str(canonical))
+        self.assertEqual(latest_payload["total"], 8)
+        self.assertEqual(latest_text, "total=8\n")
+        self.assertEqual(result["skipped"][0]["source"], str(focused))
+        self.assertEqual(result["skipped"][0]["error"], "filtered")
 
     def test_report_refresh_latest_artifact_backfill_reports_all_corrupt_sources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
