@@ -215,6 +215,43 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["passed"])
         self.assertIn("Regressed to the old DragonForce false match.", proof["failures"])
 
+    def test_full_loop_music_case_exercises_autostart_when_preflight_down(self):
+        calls = []
+
+        def fake_music_bridge_request(_base_url, method, path, **_kwargs):
+            calls.append((method, path))
+            if method == "GET" and path == "/health":
+                return {"ok": False, "error": {"code": "music_bridge_unreachable"}}
+            return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.music_bridge_request", side_effect=fake_music_bridge_request), \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop, \
+             patch("scripts.full_loop_regression.wait_for_music_playback") as wait_for_music_playback:
+            run_voice_loop.return_value = {"result": {"status": "passed"}}
+            wait_for_music_playback.return_value = {
+                "ok": True,
+                "playing": True,
+                "nowPlaying": {
+                    "title": "Dear Evan Hansen | 2017 Tony Awards",
+                    "fileName": "Dear Evan Hansen.mp3",
+                },
+            }
+
+            result = full_loop_regression.run_music_waving_case(
+                full_loop_regression.MUSIC_WAVING_CASE,
+                base_url="http://127.0.0.1:8765",
+                music_bridge_url="http://127.0.0.1:47879",
+                run_dir=Path(tmpdir) / "music",
+                timeout=1.0,
+                exercise_live_speech=False,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertFalse(result["preflight"]["ok"])
+        self.assertTrue(run_voice_loop.called)
+        self.assertIn(("POST", "/stop"), calls)
+
     def test_full_loop_memory_proof_accepts_activity_monitor_equivalent(self):
         proof = full_loop_regression.verify_memory_usage({
             "tool": "diagnostics.memory_usage",

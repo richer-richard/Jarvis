@@ -273,14 +273,6 @@ def run_music_waving_case(
     cleanup: dict[str, Any] = {}
     try:
         preflight = music_bridge_request(music_bridge_url, "GET", "/health", timeout=3.5, auth=False)
-        if not preflight.get("ok"):
-            return {
-                "case_id": case["id"],
-                "status": "failed",
-                "error": "Music bridge is not healthy.",
-                "preflight": preflight,
-                "total_seconds": round(time.monotonic() - started, 3),
-            }
 
         voice_report = voice_loop_qa.run_voice_loop(
             command_text=case["command"],
@@ -320,6 +312,7 @@ def run_music_waving_case(
             "voice_loop_status": voice_status,
             "voice_loop_report": str(run_dir / "voice-loop-report.json"),
             "action_proof": action_proof,
+            "preflight": preflight,
             "playback_state": playback,
             "cleanup": cleanup,
             "total_seconds": round(time.monotonic() - started, 3),
