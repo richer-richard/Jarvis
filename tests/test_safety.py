@@ -1744,6 +1744,17 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(payloads[0]["text"], long_spoken.strip())
         self.assertGreater(len(payloads[0]["text"]), len("Short preview."))
 
+    def test_voice_loop_qa_report_keeps_full_text_next_to_previews(self):
+        source = (PROJECT_ROOT / "scripts" / "voice_loop_qa.py").read_text(encoding="utf-8")
+
+        self.assertIn('"visible_reply": visible_reply', source)
+        self.assertIn('"visible_reply_preview": visible_reply[:500]', source)
+        self.assertIn("reply_expected_text = speech_payload_text(final_audit_item, fallback=visible_reply)", source)
+        self.assertIn('"reply_expected_text": reply_expected_text', source)
+        self.assertIn('"reply_expected_text_preview": reply_expected_text[:500]', source)
+        self.assertIn('"spoken_text": text', source)
+        self.assertIn('"text_preview": text[:500]', source)
+
     def test_voice_loop_qa_stream_command_events_adds_relative_timestamps(self):
         class FakeStream:
             def __enter__(self):

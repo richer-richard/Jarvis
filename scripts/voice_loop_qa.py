@@ -610,7 +610,7 @@ def run_voice_loop(
             reply_tts = final_audit_item.get("tts") if isinstance(final_audit_item.get("tts"), dict) else {}
             reply_transcription = final_audit_item.get("stt") if isinstance(final_audit_item.get("stt"), dict) else {}
             reply_audio_source = "speech_audit_final_payload"
-            reply_expected_text = str(final_audit_item.get("text_preview") or "").strip() or visible_reply
+            reply_expected_text = speech_payload_text(final_audit_item, fallback=visible_reply)
             reply_similarity_target = "spoken_payload"
         else:
             stage_started = time.monotonic()
@@ -667,6 +667,7 @@ def run_voice_loop(
             "command_response_tool": command_response.get("tool"),
             "command_response_result": command_response_result_summary(command_response),
             "final_visible_tool": effective_response.get("tool") if isinstance(effective_response, dict) else "",
+            "visible_reply": visible_reply,
             "visible_reply_preview": visible_reply[:500],
             "expectation": expectation,
             "stream_event_count": len(stream_events),
@@ -679,6 +680,7 @@ def run_voice_loop(
             "reply_transcript": reply_transcript,
             "reply_similarity": similarity,
             "reply_similarity_target": reply_similarity_target,
+            "reply_expected_text": reply_expected_text,
             "reply_expected_text_preview": reply_expected_text[:500],
         }
         return report
@@ -937,6 +939,7 @@ def run_speech_audit(
             "command_response_tool": command_response.get("tool") if command_response else "",
             "final_visible_tool": effective_response.get("tool") if isinstance(effective_response, dict) else "",
             "command_response_result": response_result,
+            "visible_reply": visible_reply,
             "visible_reply_preview": visible_reply[:500],
             "expectation": expectation,
             "stream_event_count": len(stream_events),
@@ -1030,6 +1033,7 @@ def _audit_spoken_payload_item(
         "source": source,
         "reason": payload.get("reason"),
         "tool": payload.get("tool"),
+        "spoken_text": text,
         "text_preview": text[:500],
         "intended_leaks": intended_leaks,
         "audio_path": str(audio_path),
