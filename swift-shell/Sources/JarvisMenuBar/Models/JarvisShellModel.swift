@@ -274,10 +274,11 @@ final class JarvisShellModel: ObservableObject {
         chatExportText = "Stopping music..."
         Task {
             do {
-                _ = try await sendStopMusic()
+                let response = try await sendStopMusic()
+                let reply = assistantReply(for: response).trimmingCharacters(in: .whitespacesAndNewlines)
                 state = "Ready"
-                chatExportText = "Music stop sent"
-                messages.append(ChatMessage(role: .system, text: "Jarvis sent the music stop command."))
+                chatExportText = reply.isEmpty ? "Music stop sent" : reply
+                messages.append(ChatMessage(role: .jarvis, text: reply.isEmpty ? "Music stop sent." : reply))
             } catch {
                 state = "Error"
                 chatExportText = "Music stop failed"
