@@ -218,7 +218,7 @@ def print_latest_verification() -> None:
         print(f"Verification includes: {', '.join(highlights)}")
     window_probe = verification_window_probe(results)
     if window_probe:
-        print(f"Window probe: {window_probe}")
+        print(f"Latest window probe: {window_probe}")
 
 
 def print_requirement_audit() -> None:

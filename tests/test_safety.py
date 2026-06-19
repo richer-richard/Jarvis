@@ -23151,6 +23151,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("session locked", summary)
         self.assertIn("lock screen", summary)
 
+    def test_morning_status_labels_window_probe_as_latest_verifier_evidence(self):
+        source = (PROJECT_ROOT / "scripts" / "morning_status.py").read_text(encoding="utf-8")
+        self.assertIn("Latest window probe:", source)
+        self.assertNotIn("print(f\"Window probe:", source)
+
 
 class CompareMiddleModelsScriptTests(unittest.TestCase):
     def test_heavy_local_candidate_requires_flag_and_env_unlock(self):
