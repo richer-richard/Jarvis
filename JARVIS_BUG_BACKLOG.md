@@ -25,6 +25,10 @@ Status legend:
      ID, removed before final answer display and in the defer cleanup path, and
      excluded from future model history. Regression tests cover the stale row
      lifecycle.
+   - 2026-06-19 proof update: native Outlook/screen status rows and streaming
+     status rows are now assigned to the replaceable answer placeholder instead
+     of being appended as permanent "Working" rows. Regression tests guard the
+     placeholder assignment.
    - Remaining task-honesty subcases still need app-side state confirmation and
      stay tracked in their own music/Teams/tool sections below.
 

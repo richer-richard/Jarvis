@@ -15588,6 +15588,36 @@ class RuntimeSurfaceTests(unittest.TestCase):
         busy_clear = model_source.index("isBusy = false", defer_start)
         self.assertLess(defer_stop, busy_clear)
 
+    def test_swift_visible_status_placeholders_are_replaced_by_final_answer(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        outlook_branch = model_source[
+            model_source.index("if Self.shouldUseNativeOutlookRead(commandText)"):
+            model_source.index("} else if Self.shouldUseNativeVisibleScreenRead(commandText)")
+        ]
+        screen_branch = model_source[
+            model_source.index("} else if Self.shouldUseNativeVisibleScreenRead(commandText)"):
+            model_source.index("} else {", model_source.index("} else if Self.shouldUseNativeVisibleScreenRead(commandText)"))
+        ]
+        self.assertIn('placeholderId = appendJarvisMessage(text: statusText, detail: "Working")', outlook_branch)
+        self.assertIn('placeholderId = appendJarvisMessage(text: statusText, detail: "Working")', screen_branch)
+        self.assertNotIn('_ = appendJarvisMessage(text: statusText, detail: "Working")', outlook_branch)
+        self.assertNotIn('_ = appendJarvisMessage(text: statusText, detail: "Working")', screen_branch)
+
+        streaming_status_branch = model_source[
+            model_source.index("onStatus: { status in"):
+            model_source.index("onDelta: { delta in")
+        ]
+        self.assertIn('placeholderId = self.appendJarvisMessage(text: statusText, detail: "Working")', streaming_status_branch)
+        self.assertNotIn('_ = self.appendJarvisMessage(text: statusText, detail: "Working")', streaming_status_branch)
+
     def test_swift_progress_nudges_use_natural_wording(self):
         model_source = (
             PROJECT_ROOT

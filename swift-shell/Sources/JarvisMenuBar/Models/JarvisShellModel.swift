@@ -1435,7 +1435,7 @@ final class JarvisShellModel: ObservableObject {
             var response: CommandResponse
             if Self.shouldUseNativeOutlookRead(commandText) {
                 let statusText = "Checking what Outlook is showing now."
-                _ = appendJarvisMessage(text: statusText, detail: "Working")
+                placeholderId = appendJarvisMessage(text: statusText, detail: "Working")
                 visibleStatusLines.append(statusText)
                 updateSummonThinking(statusText)
                 if await shouldSpeakAfterBackendMuteRefresh() {
@@ -1446,7 +1446,7 @@ final class JarvisShellModel: ObservableObject {
                 response = try await runNativeOutlookRead(commandText)
             } else if Self.shouldUseNativeVisibleScreenRead(commandText) {
                 let statusText = "Checking the visible screen now."
-                _ = appendJarvisMessage(text: statusText, detail: "Working")
+                placeholderId = appendJarvisMessage(text: statusText, detail: "Working")
                 visibleStatusLines.append(statusText)
                 updateSummonThinking(statusText)
                 if await shouldSpeakAfterBackendMuteRefresh() {
@@ -1483,7 +1483,7 @@ final class JarvisShellModel: ObservableObject {
                                         )
                                     )
                                 } else {
-                                    _ = self.appendJarvisMessage(text: statusText, detail: "Working")
+                                    placeholderId = self.appendJarvisMessage(text: statusText, detail: "Working")
                                 }
                                 if progressTask == nil {
                                     progressTask = self.startProgressNudges(for: commandText, turnID: turnID)
@@ -1505,7 +1505,7 @@ final class JarvisShellModel: ObservableObject {
                                 )
                             )
                         } else {
-                            _ = self.appendJarvisMessage(text: statusText, detail: "Working")
+                            placeholderId = self.appendJarvisMessage(text: statusText, detail: "Working")
                         }
                         if progressTask == nil {
                             progressTask = self.startProgressNudges(for: commandText, turnID: turnID)
