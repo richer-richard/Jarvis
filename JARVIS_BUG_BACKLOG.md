@@ -593,6 +593,9 @@ Status legend:
 
 2. Partially fixed/risky: live regression matrix terminology was unclear to Leo.
    - Future reports should explain testing terms in product language.
+   - 2026-06-19 proof update: master-report proof copy now calls the user-facing
+     artifact an eight-prompt behavior check, while keeping the internal file
+     path stable for scripts and artifacts.
 
 3. Partially fixed/risky: tests can be too synthetic.
    - Leo repeatedly asked for real spoken input, real app output, and real action

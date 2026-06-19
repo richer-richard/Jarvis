@@ -546,8 +546,8 @@ SUPPORTING_FILES = [
     ("runtime/model_benchmarks/", "Fast latency smoke reports"),
     ("runtime/model_benchmarks/latest.json", "Latest fast-latency smoke summary"),
     ("runtime/model_benchmarks/latest.md", "Latest fast-latency smoke notes"),
-    ("runtime/regression_prompt_matrix/latest.json", "Latest eight-prompt regression matrix summary"),
-    ("runtime/regression_prompt_matrix/latest.md", "Latest eight-prompt regression matrix notes"),
+    ("runtime/regression_prompt_matrix/latest.json", "Latest eight-prompt behavior check summary"),
+    ("runtime/regression_prompt_matrix/latest.md", "Latest eight-prompt behavior check notes"),
     ("runtime/conversation_context/", "Conversation-context smoke reports"),
     ("runtime/conversation_context/latest.json", "Latest conversation-context smoke summary"),
     ("runtime/conversation_context/latest.md", "Latest conversation-context smoke notes"),
@@ -771,7 +771,7 @@ def proof_items_with_verification(
         )
     if regression_matrix and regression_matrix.get("path"):
         items.append(
-            "Latest eight-prompt regression matrix: "
+            "Latest eight-prompt behavior check: "
             f"{regression_matrix['label']}, "
             f"{regression_matrix['speech_payload_count']} speech payloads, "
             f"{regression_matrix['speech_leak_count']} speech leaks, "
@@ -1823,7 +1823,7 @@ def headline_section(context: dict[str, Any]) -> str:
         ),
         (
             "Proof",
-            f"{full_loop_label} full-loop real-action checks, {python_tests} Python tests, {context['verification']['label']} safe verifier, plus the older behavior matrix is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks. Sharpay email proves sender_recent matching, Teams proves wrong-subject OCR honesty, Music proves no hidden afplay leftovers, and voice QA scores spoken payloads.",
+            f"{full_loop_label} full-loop real-action checks, {python_tests} Python tests, {context['verification']['label']} safe verifier, plus the reusable eight-prompt behavior check is {matrix_label} with {speech_payloads} speech payloads and {speech_leaks} leaks. Sharpay email proves sender_recent matching, Teams proves wrong-subject OCR honesty, Music proves no hidden afplay leftovers, and voice QA scores spoken payloads.",
         ),
         (
             "Caveat",
@@ -1847,7 +1847,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
     full_loop_text = f" Full-loop: {full_loop.get('label')}." if full_loop.get("path") else ""
     matrix = context.get("regression_matrix") if isinstance(context.get("regression_matrix"), dict) else {}
     matrix_text = (
-        f" Behavior matrix: {matrix.get('label')}, max first visible "
+        f" Eight-prompt behavior check: {matrix.get('label')}, max first visible "
         f"{float(matrix.get('max_first_visible_seconds') or 0):.3f}s."
         if matrix.get("path")
         else ""
@@ -1859,7 +1859,7 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, closed-loop voice QA, and post-patch matrix proof.{full_loop_text}{latency_text} {matrix_text}".strip(),
+            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, closed-loop voice QA, and post-patch behavior proof.{full_loop_text}{latency_text} {matrix_text}".strip(),
         ),
         (
             "Honest Limit",

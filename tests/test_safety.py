@@ -3159,11 +3159,12 @@ class VerifySafeScriptTests(unittest.TestCase):
             },
         )
         self.assertIn(
-            "Latest eight-prompt regression matrix: 8/8 passed, 16 speech payloads, "
+            "Latest eight-prompt behavior check: 8/8 passed, 16 speech payloads, "
             "0 speech leaks, max first visible 1.845s "
             "(runtime/regression_prompt_matrix/20260617-233458/summary.json).",
             proof,
         )
+        self.assertNotIn("Latest eight-prompt regression matrix", proof)
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             matrix_root = root / "runtime" / "regression_prompt_matrix"
