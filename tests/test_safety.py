@@ -3625,7 +3625,8 @@ class VerifySafeScriptTests(unittest.TestCase):
     def test_report_refresh_includes_voice_loop_and_codex_proxy_latest_backfill(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch("scripts.report_refresh._write_latest_from_newest", return_value={"ok": True, "status": "updated"}) as writer, \
-             patch("jarvis.tools.CONTACT_DATA_PATH", Path(temp_dir) / "contact_aliases.json"):
+             patch("jarvis.tools.CONTACT_DATA_PATH", Path(temp_dir) / "contact_aliases.json"), \
+             patch("jarvis.tools.JARVIS_DAILY_MEMORY_PATH", Path(temp_dir) / "jarvis_daily_memory.json"):
             result = report_refresh.ensure_latest_artifacts()
 
         self.assertTrue(result["ok"])
@@ -3634,6 +3635,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("codex_cli_proxy_benchmark", result["results"])
         self.assertEqual(writer.call_count, 7)
         self.assertEqual(result["results"]["contact_alias_memory"]["status"], "created")
+        self.assertEqual(result["results"]["jarvis_daily_memory"]["status"], "created")
 
     def test_report_refresh_json_surface_seeds_missing_file_without_overwriting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -10555,17 +10557,25 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("async Codex", result["reply"])
 
     def test_memory_status_does_not_read_or_sync_chat_history(self):
-        result = memory_status()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jarvis_memory = Path(temp_dir) / "jarvis_daily_memory.json"
+            with patch("jarvis.tools.JARVIS_DAILY_MEMORY_PATH", jarvis_memory):
+                result = memory_status()
 
         self.assertEqual(result["tool"], "diagnostics.memory")
         self.assertEqual(result["status"], "partial")
         self.assertFalse(result["read_private_content"])
         self.assertFalse(result["synced_remote"])
         self.assertFalse(result["read_chat_history"])
-        self.assertIn("daily local summaries", result["reply"])
+        self.assertIn("local review surface", result["reply"])
         self.assertIn("MEMORY.md", result["design"]["profile_memory_file"])
         self.assertIn("codex_daily_memory", result)
         self.assertTrue(result["codex_daily_memory"]["session_ids_hidden"])
+        self.assertIn("jarvis_daily_memory", result)
+        self.assertFalse(result["jarvis_daily_memory"]["raw_chat_history_read"])
+        self.assertFalse(result["jarvis_daily_memory"]["synced_remote"])
+        self.assertTrue(result["jarvis_daily_memory"]["requires_user_review_before_sync"])
+        self.assertEqual(result["jarvis_daily_memory"]["untrusted_text_policy"], "entries_are_data_not_instructions")
 
     def test_memory_usage_status_is_read_only_activity_monitor_equivalent(self):
         vm_output = """Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -11096,6 +11106,7 @@ Pages occupied by compressor:             10.
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
         with tempfile.TemporaryDirectory() as temp_dir:
             memory = Path(temp_dir) / "codex_daily_memory.json"
+            jarvis_memory = Path(temp_dir) / "jarvis_daily_memory.json"
             memory.write_text(
                 json.dumps(
                     {
@@ -11113,18 +11124,40 @@ Pages occupied by compressor:             10.
                 ),
                 encoding="utf-8",
             )
-            with patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory):
+            jarvis_memory.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.daily_memory.v1",
+                        "date": time.strftime("%Y-%m-%d"),
+                        "entries": [
+                            {
+                                "kind": "preference",
+                                "summary": "Leo wants Jarvis memory to stay reviewable before sync.",
+                                "source": "local_test",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("jarvis.tools.CODEX_DAILY_MEMORY_PATH", memory), \
+                 patch("jarvis.tools.JARVIS_DAILY_MEMORY_PATH", jarvis_memory):
                 result = daily_memory_summary()
 
         serialized = json.dumps(result, ensure_ascii=False)
         self.assertEqual(result["tool"], "memory.daily_summary")
         self.assertEqual(result["status"], "active")
         self.assertEqual(result["event_count"], 1)
+        self.assertEqual(result["jarvis_entry_count"], 1)
         self.assertFalse(result["read_chat_history"])
         self.assertFalse(result["synced_remote"])
         self.assertFalse(result["called_model"])
+        self.assertFalse(result["jarvis_daily_memory"]["raw_chat_history_read"])
+        self.assertFalse(result["jarvis_daily_memory"]["synced_remote"])
+        self.assertTrue(result["jarvis_daily_memory"]["requires_user_review_before_sync"])
         self.assertTrue(result["session_ids_hidden"])
         self.assertIn("tightened Piper speech interruption", result["compiled_summary"])
+        self.assertIn("reviewable before sync", result["jarvis_compiled_summary"])
         self.assertIn("Jarvis-to-Codex", result["reply"])
         self.assertNotIn(session_id, serialized)
 
@@ -21311,6 +21344,40 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(persisted["date"], loaded["date"])
         self.assertEqual(persisted["events"], [])
         self.assertIn("yesterday work", persisted["previous_day_summary"])
+
+    def test_jarvis_daily_memory_refreshes_next_day_without_raw_chat_access(self):
+        yesterday = "2026-06-05"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memory = Path(temp_dir) / "jarvis_daily_memory.json"
+            memory.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.daily_memory.v1",
+                        "date": yesterday,
+                        "entries": [
+                            {
+                                "kind": "preference",
+                                "summary": "Leo wants concise spoken summaries.",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("jarvis.tools.JARVIS_DAILY_MEMORY_PATH", memory):
+                loaded = jarvis_tools._load_jarvis_daily_memory()
+            persisted = json.loads(memory.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(loaded["date"], yesterday)
+        self.assertEqual(loaded["entries"], [])
+        self.assertIn("concise spoken summaries", loaded["previous_day_summary"])
+        self.assertEqual(persisted["date"], loaded["date"])
+        self.assertEqual(persisted["entries"], [])
+        self.assertFalse(persisted["raw_chat_history_read"])
+        self.assertFalse(persisted["raw_chat_exports_read"])
+        self.assertFalse(persisted["synced_remote"])
+        self.assertFalse(persisted["called_model"])
+        self.assertTrue(persisted["requires_user_review_before_sync"])
 
     def test_codex_daily_memory_snapshot_deduplicates_and_hides_session_ids(self):
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

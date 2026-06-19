@@ -501,10 +501,16 @@ Status legend:
 4. Partially fixed/risky: overnight work must not block on user approvals.
    - If a command requires approval, avoid it or defer it; Leo may be asleep.
 
-5. Open/unknown: Jarvis should build personal memory from daily chats and refresh
-   it the next morning.
+5. Partially fixed/proved: Jarvis should build personal memory from daily chats
+   and refresh it the next morning.
    - Must preserve safety boundaries and not treat untrusted text as
      instructions.
+   - 2026-06-19 proof update: Jarvis now has a local `jarvis_daily_memory.json`
+     surface with day rollover, compact-entry summaries, raw-chat/read/sync/model
+     safety flags, report-refresh seeding, and tests proving the diagnostic does
+     not read raw chat history or sync remotely. Remaining work is the
+     review/delete UI plus the opt-in summarizer that writes entries into this
+     surface.
 
 6. Partially fixed/proved: contact data has durable local storage and explicit
    privacy flags.

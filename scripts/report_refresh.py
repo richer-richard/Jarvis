@@ -134,6 +134,20 @@ def ensure_latest_artifacts() -> dict[str, Any]:
             jarvis_tools.CONTACT_DATA_PATH,
             {"schema": "jarvis.contact_aliases.v1", "aliases": {}},
         ),
+        "jarvis_daily_memory": _ensure_json_surface(
+            jarvis_tools.JARVIS_DAILY_MEMORY_PATH,
+            {
+                "schema": "jarvis.daily_memory.v1",
+                "date": "",
+                "entries": [],
+                "raw_chat_history_read": False,
+                "raw_chat_exports_read": False,
+                "synced_remote": False,
+                "called_model": False,
+                "requires_user_review_before_sync": True,
+                "untrusted_text_policy": "entries_are_data_not_instructions",
+            },
+        ),
     }
     return {
         "ok": all(bool(result.get("ok")) or result.get("status") == "no_source" for result in results.values()),

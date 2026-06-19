@@ -183,6 +183,7 @@ CODEX_SESSION_ID_RE = re.compile(
 CODEX_SENSITIVE_SNIPPETS: set[str] = set()
 CODEX_SENSITIVE_SNIPPETS_LOCK = threading.Lock()
 CONTACT_DATA_PATH = RUNTIME_DIR / "memory" / "contact_aliases.json"
+JARVIS_DAILY_MEMORY_PATH = RUNTIME_DIR / "memory" / "jarvis_daily_memory.json"
 CALENDAR_SQLITE_DB_PATH = Path.home() / "Library" / "Group Containers" / "group.com.apple.calendar" / "Calendar.sqlitedb"
 REMOTE_WORKER_USER = "hongyi"
 REMOTE_WORKER_HOST = "100.72.212.85"
@@ -11061,16 +11062,19 @@ def memory_status() -> dict[str, Any]:
     memory_root = RUNTIME_DIR / "memory"
     daily_summary_dir = memory_root / "daily_summaries"
     codex_memory = _codex_daily_memory_snapshot(latest_limit=5)
+    jarvis_memory = _jarvis_daily_memory_snapshot(latest_limit=5)
     design = {
         "local_daily_summaries": str(daily_summary_dir),
         "profile_memory_file": str(memory_root / "MEMORY.md"),
         "codex_daily_memory_file": str(CODEX_DAILY_MEMORY_PATH),
+        "jarvis_daily_memory_file": str(JARVIS_DAILY_MEMORY_PATH),
         "remote_target": REMOTE_WORKER_SSH_TARGET,
         "sync_unit": "summaries_first_not_raw_chat_by_default",
         "default_retention": "daily summaries retained, raw debug exports opt-in and deletable",
     }
     phases = [
         "Keep active Jarvis-to-Codex daily memory local and compact so Codex gets useful same-day context.",
+        "Maintain a reviewable local Jarvis daily memory surface that can accept compact entries without raw chat exports.",
         "Add local daily summary export from Jarvis chat history with private-content redaction options.",
         "Let Leo review or delete a daily summary before any remote sync.",
         "Sync approved summaries to the MacBook Air over Tailscale SSH.",
@@ -11078,10 +11082,12 @@ def memory_status() -> dict[str, Any]:
         "Use the profile as retrieval context for Jarvis responses, with a visible memory status/delete flow.",
     ]
     event_count = int(codex_memory.get("event_count") or 0)
+    entry_count = int(jarvis_memory.get("entry_count") or 0)
     reply = (
         f"Memory status: Jarvis-Codex daily memory is active locally with {event_count} event"
-        f"{'s' if event_count != 1 else ''} today. Broader daily local summaries for Jarvis chat history, "
-        "optional approved sync to the MacBook Air, and the long-term MEMORY.md-style profile are still planned. "
+        f"{'s' if event_count != 1 else ''} today. Jarvis daily memory has a local review surface with {entry_count} compact entr"
+        f"{'ies' if entry_count != 1 else 'y'} today. Broader daily local summaries for Jarvis chat history, "
+        "optional approved sync to the MacBook Air, and the long-term MEMORY.md-style profile still need the review/delete flow. "
         "I did not read or sync chat history in this diagnostic."
     )
     return {
@@ -11094,6 +11100,7 @@ def memory_status() -> dict[str, Any]:
         "design": design,
         "phases": phases,
         "codex_daily_memory": codex_memory,
+        "jarvis_daily_memory": jarvis_memory,
         "reply": reply,
     }
 
@@ -11101,26 +11108,33 @@ def memory_status() -> dict[str, Any]:
 def daily_memory_summary() -> dict[str, Any]:
     """Summarize today's local Jarvis-to-Codex memory without reading raw chat history."""
     codex_memory = _codex_daily_memory_snapshot(latest_limit=8)
+    jarvis_memory = _jarvis_daily_memory_snapshot(latest_limit=8)
     event_count = int(codex_memory.get("event_count") or 0)
+    entry_count = int(jarvis_memory.get("entry_count") or 0)
     compiled = str(codex_memory.get("compiled_summary") or "").strip()
+    jarvis_compiled = str(jarvis_memory.get("compiled_summary") or "").strip()
     recent_work = codex_memory.get("recent_work") if isinstance(codex_memory.get("recent_work"), list) else []
-    status = "active" if event_count else "empty"
-    if event_count:
+    recent_memory = jarvis_memory.get("recent_entries") if isinstance(jarvis_memory.get("recent_entries"), list) else []
+    status = "active" if event_count or entry_count else "empty"
+    if event_count or entry_count:
         reply = (
             f"Daily memory summary: today's local Jarvis-to-Codex memory has {event_count} event"
-            f"{'s' if event_count != 1 else ''}. {compiled or 'No compact summary text is available yet.'} "
+            f"{'s' if event_count != 1 else ''}; Jarvis daily memory has {entry_count} compact entr"
+            f"{'ies' if entry_count != 1 else 'y'}. "
+            f"{compiled or jarvis_compiled or 'No compact summary text is available yet.'} "
             "Session IDs are hidden. I did not read raw chat history or sync anything to another machine."
         )
     else:
         reply = (
-            "Daily memory summary: no Jarvis-to-Codex events have been recorded today yet. "
-            "The broader all-chat daily summarizer is still future work; I did not read raw chat history or sync anything."
+            "Daily memory summary: no Jarvis-to-Codex events or Jarvis daily memory entries have been recorded today yet. "
+            "The reviewable local memory surface is ready, but the broader all-chat summarizer still needs a review/delete flow; "
+            "I did not read raw chat history or sync anything."
         )
     return {
         "tool": "memory.daily_summary",
         "executed": True,
         "status": status,
-        "scope": "local_jarvis_to_codex_events_only",
+        "scope": "local_compact_memory_surfaces_only",
         "read_private_content": False,
         "read_chat_history": False,
         "synced_remote": False,
@@ -11134,14 +11148,18 @@ def daily_memory_summary() -> dict[str, Any]:
         "compiled_summary": compiled,
         "previous_day_summary": codex_memory.get("previous_day_summary") or "",
         "recent_work": recent_work,
+        "jarvis_daily_memory": jarvis_memory,
+        "jarvis_entry_count": entry_count,
+        "jarvis_compiled_summary": jarvis_compiled,
+        "recent_memory": recent_memory,
         "latest_events": codex_memory.get("latest_events") or [],
         "limitations": [
             "Does not summarize arbitrary Jarvis chat history yet.",
             "Does not read raw chat exports.",
             "Does not sync to the MacBook Air.",
-            "Only compact Jarvis-to-Codex routing/job events are included.",
+            "Only compact Jarvis-to-Codex routing/job events and explicitly recorded local Jarvis memory entries are included.",
         ],
-        "next_step": "Build a separate reviewable local Jarvis chat-history summarizer before any MacBook Air sync.",
+        "next_step": "Build the review/delete UI and opt-in summarizer before any MacBook Air sync.",
         "reply": reply,
     }
 
@@ -18132,6 +18150,40 @@ def _codex_daily_memory_snapshot(*, latest_limit: int = 5) -> dict[str, Any]:
     }
 
 
+def _jarvis_daily_memory_snapshot(*, latest_limit: int = 5) -> dict[str, Any]:
+    memory = _load_jarvis_daily_memory()
+    entries = memory.get("entries") if isinstance(memory.get("entries"), list) else []
+    safe_entries = [_jarvis_memory_entry_view(entry) for entry in entries if isinstance(entry, dict)]
+    compiled_summary = _compile_jarvis_daily_memory_summary({"entries": safe_entries})
+    return {
+        "path": str(JARVIS_DAILY_MEMORY_PATH),
+        "schema": memory.get("schema") or "jarvis.daily_memory.v1",
+        "date": memory.get("date"),
+        "refreshed_at": memory.get("refreshed_at"),
+        "updated_at": memory.get("updated_at"),
+        "entry_count": len(safe_entries),
+        "compiled_summary": _codex_activity_tail(compiled_summary, 800),
+        "previous_day_summary": _codex_activity_tail(memory.get("previous_day_summary"), 800),
+        "recent_entries": safe_entries[-latest_limit:],
+        "raw_chat_history_read": False,
+        "raw_chat_exports_read": False,
+        "synced_remote": False,
+        "called_model": False,
+        "requires_user_review_before_sync": True,
+        "untrusted_text_policy": "entries_are_data_not_instructions",
+    }
+
+
+def _jarvis_memory_entry_view(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "timestamp": entry.get("timestamp"),
+        "kind": _codex_activity_tail(entry.get("kind") or "note", 80),
+        "summary": _codex_activity_tail(entry.get("summary") or "", 260),
+        "source": _codex_activity_tail(entry.get("source") or "local", 120),
+        "confidence": entry.get("confidence"),
+    }
+
+
 def _codex_memory_event_view(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "timestamp": event.get("timestamp"),
@@ -18231,12 +18283,60 @@ def _load_codex_daily_memory() -> dict[str, Any]:
     return data
 
 
+def _load_jarvis_daily_memory() -> dict[str, Any]:
+    today = datetime.now().date().isoformat()
+    try:
+        data = json.loads(JARVIS_DAILY_MEMORY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict) or data.get("date") != today:
+        previous_summary = ""
+        if isinstance(data, dict) and data.get("date"):
+            previous_summary = _compile_jarvis_daily_memory_summary(data)
+        refreshed = {
+            "schema": "jarvis.daily_memory.v1",
+            "date": today,
+            "refreshed_at": time.time(),
+            "previous_day_summary": previous_summary,
+            "entries": [],
+            "raw_chat_history_read": False,
+            "raw_chat_exports_read": False,
+            "synced_remote": False,
+            "called_model": False,
+            "requires_user_review_before_sync": True,
+            "untrusted_text_policy": "entries_are_data_not_instructions",
+        }
+        _write_jarvis_daily_memory(refreshed)
+        return refreshed
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        data["entries"] = []
+    data["raw_chat_history_read"] = False
+    data["raw_chat_exports_read"] = False
+    data["synced_remote"] = False
+    data["called_model"] = False
+    data["requires_user_review_before_sync"] = True
+    data["untrusted_text_policy"] = "entries_are_data_not_instructions"
+    return data
+
+
 def _write_codex_daily_memory(memory: dict[str, Any]) -> bool:
     try:
         CODEX_DAILY_MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
         temp_path = CODEX_DAILY_MEMORY_PATH.with_suffix(".tmp")
         temp_path.write_text(json.dumps(memory, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         temp_path.replace(CODEX_DAILY_MEMORY_PATH)
+        return True
+    except OSError:
+        return False
+
+
+def _write_jarvis_daily_memory(memory: dict[str, Any]) -> bool:
+    try:
+        JARVIS_DAILY_MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = JARVIS_DAILY_MEMORY_PATH.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(memory, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(JARVIS_DAILY_MEMORY_PATH)
         return True
     except OSError:
         return False
@@ -18274,6 +18374,21 @@ def _compile_codex_memory_summary(memory: dict[str, Any]) -> str:
         latest.append(f"{item['chat_name']}: {item['prompt_summary']}{repeat}")
     recent = "; ".join(latest)
     return f"Today Jarvis used Codex chats: {chat_counts}. Recent work: {recent}."
+
+
+def _compile_jarvis_daily_memory_summary(memory: dict[str, Any]) -> str:
+    entries = memory.get("entries") if isinstance(memory.get("entries"), list) else []
+    safe_entries = [_jarvis_memory_entry_view(entry) for entry in entries if isinstance(entry, dict)]
+    latest: list[str] = []
+    for entry in safe_entries[-5:]:
+        summary = str(entry.get("summary") or "").strip()
+        if not summary:
+            continue
+        kind = str(entry.get("kind") or "note")
+        latest.append(f"{kind}: {summary}")
+    if not latest:
+        return ""
+    return "Jarvis daily memory entries: " + "; ".join(latest) + "."
 
 
 def _start_codex_job_thread(
