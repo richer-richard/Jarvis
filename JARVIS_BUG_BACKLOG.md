@@ -645,6 +645,10 @@ Status legend:
 
 4. Fixed/proved at least once: app version must be visible in the app, e.g.
    "Jarvis 0.1.xxx".
+   - 2026-06-20 proof update: canonical bundle defaults were bumped to
+     Jarvis 0.1.469 build 469, and live health reported
+     `Jarvis 0.1.469 build 469 is online and ready` with worker launch identity
+     matching the bundle.
 
 5. Fixed/proved at least once: final user-facing replies should end with the
    Jarvis version number.

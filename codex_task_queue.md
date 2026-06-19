@@ -64,3 +64,5 @@
 - [x] Full `tests.test_safety` passed `940/940` for the context/wake status summary.
 - [x] Made `JarvisWakeListener.start()` idempotent so repeated Start Hey Jarvis triggers do not stack a second permission/session cycle on top of an already-running listener.
 - [x] Swift build passed, `jarvis-menu-bar --self-test` passed, full `tests.test_safety` passed `940/940`, rebuilt live `output/Jarvis.app` launched, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-005458.json`.
+- [x] Bumped canonical `output/Jarvis.app` to Jarvis `0.1.469` build `469` and refreshed current shipped-highlight copy for the new proof set.
+- [x] Live `build_and_launch_app.sh` reported `Jarvis 0.1.469 build 469 is online and ready`; full `tests.test_safety` passed `940/940`; `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-010714.json`; pre-build gate passed `4/4` with report `runtime/pre_build_gate/20260620-010726/summary.json`.

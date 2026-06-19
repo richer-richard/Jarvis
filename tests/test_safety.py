@@ -11764,8 +11764,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.468}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-468}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.469}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-469}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
