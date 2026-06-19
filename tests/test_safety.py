@@ -5917,6 +5917,13 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["player_open"]["status"], "opened_unconfirmed")
         self.assertIn("Local OS Music is not connected", result["reply"])
         self.assertIn("I opened the Local OS Music Player", result["reply"])
+        self.assertEqual(result["permission_issue"], "localos_music_bridge_not_polling")
+        self.assertFalse(result["requires_user_action"])
+        self.assertIn("refresh the Local OS Music Player", " ".join(result["next_steps"]))
+        self.assertEqual(
+            result["spoken_summary"],
+            "Local OS Music opened, but it has not connected to Jarvis yet.",
+        )
         open_mock.assert_called_once()
 
     def test_localos_music_play_reports_chrome_automation_denied_when_bridge_stays_stale(self):
@@ -5960,6 +5967,13 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(control_path.exists())
         self.assertIn("Chrome is blocking Jarvis", result["reply"])
         self.assertNotIn("Give it a moment", result["reply"])
+        self.assertEqual(result["permission_issue"], "chrome_automation")
+        self.assertTrue(result["requires_user_action"])
+        self.assertIn("Allow Jarvis to control Google Chrome", " ".join(result["next_steps"]))
+        self.assertEqual(
+            result["spoken_summary"],
+            "Chrome is blocking Jarvis from controlling Local OS Music, so playback has not started.",
+        )
 
     def test_localos_music_play_uses_chrome_direct_when_bridge_is_stale_but_page_confirms(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6742,6 +6756,9 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(control_path.exists())
         self.assertIn("Local OS Music is not connected", result["reply"])
         self.assertIn("tried to open", result["reply"])
+        self.assertEqual(result["permission_issue"], "localos_music_player_unavailable")
+        self.assertTrue(result["requires_user_action"])
+        self.assertIn("Open the Local OS Music Player manually", " ".join(result["next_steps"]))
         open_mock.assert_called_once()
 
     def test_localos_music_play_keeps_live_bridge_delay_queued(self):

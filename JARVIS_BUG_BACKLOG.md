@@ -350,6 +350,11 @@ Status legend:
 6. Partially fixed/risky: Chrome/LocalOS refused connection or JavaScript
    control.
    - Jarvis should report this honestly and guide the right permission/action.
+   - 2026-06-19 proof update: LocalOS music `not_queued` bridge failures now
+     include structured `permission_issue`, `requires_user_action`,
+     `next_steps`, and `spoken_summary` fields for Chrome Automation denial,
+     LocalOS bridge not polling, and LocalOS player unavailable states. Focused
+     regressions cover each branch.
 
 7. Fixed/proved at least once: hidden playback via native fallback was removed.
    - Jarvis must not use hidden `afplay` as normal music playback.

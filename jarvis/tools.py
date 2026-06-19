@@ -3374,6 +3374,57 @@ def _localos_music_not_playing_yet_reply(track: dict[str, Any], detail: str = ""
     return f"I found {_localos_music_found_phrase(track)}, but Local OS has not started playback yet.{suffix}"
 
 
+def _localos_music_connection_blocker_details(
+    *,
+    chrome_automation_blocked: bool,
+    player_open_status: str,
+) -> dict[str, Any]:
+    if chrome_automation_blocked:
+        return {
+            "permission_issue": "chrome_automation",
+            "requires_user_action": True,
+            "next_steps": [
+                "Open System Settings > Privacy & Security > Automation.",
+                "Allow Jarvis to control Google Chrome.",
+                "In Chrome, enable View > Developer > Allow JavaScript from Apple Events if it is off.",
+                "Try the music request again after Chrome control is allowed.",
+            ],
+            "spoken_summary": "Chrome is blocking Jarvis from controlling Local OS Music, so playback has not started.",
+        }
+    if player_open_status in {"opened_unconfirmed", "recently_opened"}:
+        return {
+            "permission_issue": "localos_music_bridge_not_polling",
+            "requires_user_action": False,
+            "next_steps": [
+                "Wait a moment for the Local OS Music Player to connect to Jarvis.",
+                "If it still does not connect, refresh the Local OS Music Player window once.",
+                "Try the music request again after the bridge starts polling.",
+            ],
+            "spoken_summary": "Local OS Music opened, but it has not connected to Jarvis yet.",
+        }
+    if player_open_status in {"open_failed", "open_timeout", "unavailable"}:
+        return {
+            "permission_issue": "localos_music_player_unavailable",
+            "requires_user_action": True,
+            "next_steps": [
+                "Open the Local OS Music Player manually.",
+                "Keep the music player window open so it can poll Jarvis.",
+                "Try the music request again after the player is visible.",
+            ],
+            "spoken_summary": "Jarvis could not open Local OS Music automatically, so playback has not started.",
+        }
+    return {
+        "permission_issue": "localos_music_bridge_not_confirmed",
+        "requires_user_action": False,
+        "next_steps": [
+            "Keep the Local OS Music Player open.",
+            "Refresh it once if it does not connect to Jarvis.",
+            "Try the music request again after the bridge confirms polling.",
+        ],
+        "spoken_summary": "Local OS Music has not confirmed its connection to Jarvis yet.",
+    }
+
+
 def _music_app_bridge_enabled_for_live_path() -> bool:
     if os.environ.get("JARVIS_MUSIC_APP_BRIDGE", "1").strip().lower() in {"0", "false", "no", "off"}:
         return False
@@ -4239,6 +4290,10 @@ def localos_music_play(
                     else "I tried to reconnect Local OS Music automatically, but it did not confirm the bridge."
                 )
             )
+        blocker_details = _localos_music_connection_blocker_details(
+            chrome_automation_blocked=chrome_automation_blocked,
+            player_open_status=str(player_open.get("status") or ""),
+        )
         return {
             **base,
             "status": "not_queued",
@@ -4257,6 +4312,7 @@ def localos_music_play(
             "player_open": player_open,
             "bridge_recovery": _localos_music_bridge_recovery(),
             "reply": not_connected_reply,
+            **blocker_details,
             **_duration_fields(started_at),
         }
 
