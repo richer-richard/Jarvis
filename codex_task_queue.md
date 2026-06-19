@@ -88,6 +88,7 @@
 - [x] Refreshed canonical safe verification after the morning-status blocker summary: `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-060123.json`.
 - [x] Reclassified Chrome `execute javascript` denial separately from generic Automation denial: source and bundled `jarvis-browser-page-probe` now report the real Teams failure as `teams_page_text_unavailable`; Swift build passed, bundled probe proof passed, and full `tests.test_safety` passed `975/975`.
 - [x] Fixed a live Teams regression-harness timeout: Chrome tab snapshots now fail soft on AppleScript timeout, `chrome_javascript_unavailable` skips slow Chrome reopen/refocus and goes straight to visible OCR, live Teams proof returned to warning in `25.521s` at `runtime/full_loop_regression/20260620-061623/summary.json`, and full `tests.test_safety` passed `977/977`.
+- [x] Refreshed canonical safe verification after the Chrome/Teams blocker fixes: `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-062107.json`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.
