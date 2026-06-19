@@ -117,6 +117,10 @@ Status legend:
      execution now asks the first model to select the tool before running it;
      deterministic local shortcuts remain available only when model routing is
      explicitly disabled and are labeled `routing.source: deterministic_shortcut`.
+   - 2026-06-20 proof update: Jarvis 0.1.474 rebuilds the live bundled worker
+     with model-route guardrails. If the first model punts a clear RAM,
+     Calendar, or public price-conversion request to plain chat, the planner
+     falls back to the safe read-only tool and records `model_route_fallback`.
 
 ## Email And Summarization Bugs
 

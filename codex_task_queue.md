@@ -39,6 +39,7 @@
 - [x] Harden the full-loop regression reports so RAM, Calendar, and Magic Keyboard cases fail if live Jarvis does not expose `routing.source: model_tool_call`.
 - [x] Add a Hey Jarvis self-test probe proving Stop cancels a pending delayed restart and leaves the listener Off.
 - [x] Add a model-route guardrail so clear RAM/Activity Monitor requests execute the safe memory tool if the first model punts to chat.
+- [x] Rebuild and launch Jarvis `0.1.474` build `474` so the normal bundled app contains the current model-route guardrails.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -51,6 +52,7 @@
 - [x] Model route guardrail added: if the first model completes as `conversation.fast_local` for an unmistakable RAM/Activity Monitor request, Jarvis falls back to `diagnostics.memory_usage` and records `model_route_fallback`. Full `tests.test_safety` passed `950/950`.
 - [x] Current-code release gate refreshed after commit `3a711b4`: `scripts/pre_build_gate.py --base-url http://127.0.0.1:8765` passed `5/5` at `runtime/pre_build_gate/20260620-030913/summary.json`.
 - [x] Expanded model-punt fallback coverage to Calendar and public price conversion; full `tests.test_safety` passed `952/952`.
+- [x] Jarvis `0.1.474` build `474` is live from the canonical `output/Jarvis.app`; health reports `worker_launch_matches_bundle: true`; full `tests.test_safety` passed `952/952`; `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-031851.json`; release gate passed `5/5` at `runtime/pre_build_gate/20260620-031902/summary.json`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.
