@@ -211,6 +211,16 @@ def reset_audio_actions_suppressed(token: contextvars.Token[bool]) -> None:
 
 def audio_actions_are_suppressed() -> bool:
     return bool(AUDIO_ACTIONS_SUPPRESSED.get())
+
+
+def _music_play_tool_available() -> bool:
+    return bool(
+        LOCALOS_MUSIC_SNAPSHOT_PATH.exists()
+        or LOCALOS_ROOT.exists()
+        or (_music_app_bridge_enabled_for_live_path() and MUSIC_APP_BUNDLE_PATH.exists())
+    )
+
+
 LOCALOS_ROOT = PROJECT_ROOT.parent / "localOSroot"
 LOCALOS_SHELL_PATH = LOCALOS_ROOT / "localOS" / "index.html"
 LOCALOS_MUSIC_PLAYER_PATH = LOCALOS_ROOT / "localOS" / "localFiles" / "HTMLfiles" / "!musicPlayer.html"
@@ -699,7 +709,7 @@ def tool_registry() -> dict[str, Any]:
                 "label": "Play Music",
                 "mode": "safe_execute",
                 "risk": "local_audio_playback",
-                "available": LOCALOS_MUSIC_SNAPSHOT_PATH.exists(),
+                "available": _music_play_tool_available(),
                 "description": "Plays a selected track through the native Music app bridge when available. Legacy LocalOS/Chrome control is only a fallback when the Music bridge is explicitly unavailable; Jarvis does not start hidden players.",
             },
             {

@@ -15608,6 +15608,23 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("policy.strong_confirmation", tool_ids)
         self.assertIn("Protected actions", registry["execution_boundary"])
 
+    def test_tool_registry_music_available_when_native_bridge_app_exists_without_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot_path = Path(temp_dir) / "missing_snapshot.json"
+            localos_root = Path(temp_dir) / "missing_localos"
+            app_path = Path(temp_dir) / "Music.app"
+            app_path.mkdir()
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
+                 patch.object(jarvis_tools, "LOCALOS_ROOT", localos_root), \
+                 patch.object(jarvis_tools, "MUSIC_APP_BUNDLE_PATH", app_path), \
+                 patch("jarvis.tools._music_app_bridge_enabled_for_live_path", return_value=True):
+                registry = tool_registry()
+
+        music_tool = next(tool for tool in registry["tools"] if tool["id"] == "localos.music_play")
+        self.assertTrue(music_tool["available"])
+        self.assertEqual(music_tool["label"], "Play Music")
+        self.assertIn("native Music app bridge", music_tool["description"])
+
     def test_self_check_open_app_route_is_preview_only(self):
         fake_plan = {
             "tool": "app.open",

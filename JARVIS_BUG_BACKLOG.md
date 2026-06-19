@@ -42,6 +42,10 @@ Status legend:
      `legacy_localos_fallback_allowed`; when the native bridge is active and does
      not confirm playback, the result is `played_by=none` and explicitly refuses
      legacy LocalOS/Chrome/hidden-player fallback.
+   - 2026-06-19 proof update: the tool registry now marks music playback
+     available when the native Music bridge app exists, even if no LocalOS
+     snapshot has been written yet, so Jarvis does not hide the preferred music
+     tool behind stale LocalOS state.
 
 3. Partially fixed/risky: Jarvis speech/mute can become unsafe or annoying.
    - Leo reported Jarvis speaking when it should not, being impossible to mute,
