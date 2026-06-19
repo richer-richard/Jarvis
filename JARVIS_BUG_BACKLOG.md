@@ -189,9 +189,17 @@ Status legend:
     - It also said "Yes sir" after wake, then dictation/menu-bar flickered and
       stopped hearing him.
 
-11. Open/unknown: Hey Jarvis should always listen after Start Hey Jarvis until
-    Leo stops it.
+11. Partially fixed/proved: Hey Jarvis should always listen after Start Hey
+    Jarvis until Leo stops it.
     - It should not require repeatedly starting/listening.
+    - 2026-06-19 proof update: the wake listener keeps `shouldKeepRunning` true
+      after Start, schedules recovery restarts after silent recognizer endings,
+      restarts after captured commands with `postCommandRestartDelaySeconds`, and
+      gates restart tasks on `self.shouldKeepRunning` so Stop Hey Jarvis remains
+      the explicit off switch. Regression coverage checks restart storms,
+      silent endings, post-command restart delay, and source-level restart paths.
+    - Remaining risk: live macOS Speech/AVAudioEngine availability can still
+      interrupt listening if permissions or the speech service fail.
 
 12. Partially fixed/risky: wake acknowledgement should usually be quiet.
     - Leo decided not to say "Yes Sir" after wake because he will start speaking
