@@ -1,3 +1,4 @@
+import ast
 import io
 import json
 import os
@@ -198,6 +199,24 @@ from scripts.morning_status import (
 
 
 class VerifySafeScriptTests(unittest.TestCase):
+    def test_no_duplicate_test_method_names(self):
+        source = (PROJECT_ROOT / "tests" / "test_safety.py").read_text(encoding="utf-8")
+        module = ast.parse(source)
+        duplicates = []
+        for node in module.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            seen: dict[str, int] = {}
+            for item in node.body:
+                if not isinstance(item, ast.FunctionDef) or not item.name.startswith("test"):
+                    continue
+                if item.name in seen:
+                    duplicates.append(f"{node.name}.{item.name}:{seen[item.name]},{item.lineno}")
+                else:
+                    seen[item.name] = item.lineno
+
+        self.assertEqual([], duplicates)
+
     def test_full_loop_case_selection_covers_all_canonical_user_prompts_once(self):
         selected = full_loop_regression.select_full_loop_cases("all")
         selected_ids = [case["id"] for case in selected]

@@ -61,6 +61,7 @@
 - [x] Rebuilt and launched Jarvis `0.1.476` build `476` so the normal `output/Jarvis.app` contains the Music wrong-track stop guard; full `tests.test_safety` passed `954/954`, `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-035521.json`, and the release gate passed `5/5` at `runtime/pre_build_gate/20260620-035326/summary.json`.
 - [x] Rebuilt and launched Jarvis `0.1.477` build `477` so play-music status lines say `Starting that in Music now.`; full `tests.test_safety` passed `954/954`, `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-040323.json`, targeted email full-loop proof passed at `runtime/full_loop_regression/20260620-040445/summary.json`, and the release gate passed `5/5` at `runtime/pre_build_gate/20260620-040517/summary.json`.
 - [x] Recovered a hidden Teams proof test that had been overwritten by a duplicate method name; browser-page usefulness and visible-screen usefulness now separately reject generic/non-Music Teams screens, and full `tests.test_safety` passed `955/955`.
+- [x] Added a test-suite integrity guard that fails on duplicate `test_*` method names inside a test class, preventing silently overwritten regression tests from returning; full `tests.test_safety` passed `956/956`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.
