@@ -20,6 +20,7 @@
 - [x] Strip markdown/raw URLs and email addresses from app-visible reply fields, not only from TTS payloads.
 - [x] Force app-launched Jarvis workers onto macOS `say`/plain system defaults so inherited Piper settings cannot return in the app.
 - [x] Rebuild canonical ignored `output/Jarvis.app` after the Swift fixes and verify bundle plist, codesign, menu-bar self-test, and status-helper self-test.
+- [x] Fix the live `output/Jarvis.app` launch hang so stale-process cleanup cannot block before worker monitoring starts, and verify the app launches with one helper and one bundled worker.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -47,3 +48,6 @@
 - [x] Focused visible/speech sanitizer tests passed for removing raw links from displayed command replies and spoken payloads.
 - [x] Focused worker voice-default tests passed, `swift build --product jarvis-menu-bar` passed, and `jarvis-menu-bar --self-test` passed for the macOS `say` provider patch.
 - [x] `swift-shell/scripts/build_app_bundle.sh` rebuilt `output/Jarvis.app` as Jarvis `0.1.468` build `468`; plist lint, codesign verify, bundled `jarvis-menu-bar --self-test`, and bundled `jarvis-status-helper --self-test` passed.
+- [x] Fixed the live app launch path: stale-process cleanup now fails fast instead of hanging in `ps`, launch-time panel open no longer forces a parallel refresh, and worker monitoring performs the initial refresh after readiness.
+- [x] Live `build_and_launch_app.sh` succeeded after the fix; health reported `Jarvis 0.1.468 build 468 is online and ready`, with bundled worker source and `worker_launch_matches_bundle: true`.
+- [x] Full `tests.test_safety` passed `934/934`, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-001017.json`.

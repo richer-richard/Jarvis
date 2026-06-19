@@ -799,3 +799,13 @@ Status legend:
    - Product rule: only confirmed `playing` may become "Started Local OS Music
      playback"; `accepted`, `bridge_not_polling`, and generic failures must say
      playback did not start or is not confirmed yet.
+
+4. Fixed/proved: the real `output/Jarvis.app` could launch as a Dock app but stay
+   offline because startup blocked in stale-process cleanup before worker
+   monitoring ran.
+   - Tests:
+     `test_swift_launch_lets_worker_monitor_own_initial_refresh` and
+     `test_swift_window_self_test_keeps_panel_probe_alive`.
+   - Product rule: launch-time cleanup must fail fast, worker monitoring owns the
+     initial refresh after readiness, and a live launch must show one app, one
+     helper, and one bundled worker before the build is called usable.

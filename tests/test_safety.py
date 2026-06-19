@@ -15267,6 +15267,40 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("private static func sessionScreenIsLocked()", app_source)
         self.assertIn("CGSessionCopyCurrentDictionary()", app_source)
 
+    def test_swift_launch_lets_worker_monitor_own_initial_refresh(self):
+        app_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "App"
+            / "JarvisMenuBarApp.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        launch_block = app_source[
+            app_source.index("registerStatusHelperNotifications()"):
+            app_source.index("return", app_source.index("registerStatusHelperNotifications()"))
+        ]
+        self.assertIn("model.startWorkerMonitoring()", launch_block)
+        self.assertNotIn("model.refresh()", launch_block)
+        self.assertIn("openPanelWindow(refreshModel: false)", launch_block)
+        self.assertIn("private var didCompleteInitialWorkerRefresh = false", model_source)
+        self.assertIn("if !didCompleteInitialWorkerRefresh", model_source)
+        self.assertIn("didCompleteInitialWorkerRefresh = true", model_source)
+        self.assertIn("await self.refreshNow()", model_source)
+        self.assertIn("let deadline = Date().addingTimeInterval(0.8)", app_source)
+        self.assertIn("Thread.sleep(forTimeInterval: 0.02)", app_source)
+        self.assertIn("process.terminate()", app_source)
+        self.assertNotIn("process.waitUntilExit()", app_source)
+
     def test_swift_wake_permission_callbacks_are_not_main_actor_isolated(self):
         listener_source = (
             PROJECT_ROOT

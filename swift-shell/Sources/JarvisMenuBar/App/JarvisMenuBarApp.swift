@@ -340,8 +340,7 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             configureHotKey()
             startStatusHelper()
             model.startWorkerMonitoring()
-            model.refresh()
-            openPanelWindow(refreshModel: true)
+            openPanelWindow(refreshModel: false)
             return
         }
         openPanelWindow(refreshModel: false)
@@ -743,8 +742,15 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         process.standardError = Pipe()
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
+            return ""
+        }
+        let deadline = Date().addingTimeInterval(0.8)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            process.terminate()
             return ""
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()

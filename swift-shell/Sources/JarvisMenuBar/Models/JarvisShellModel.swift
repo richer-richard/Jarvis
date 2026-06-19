@@ -55,6 +55,7 @@ final class JarvisShellModel: ObservableObject {
     private var monitoredCodexJobs: Set<String> = []
     private var codexActivityTask: Task<Void, Never>?
     private var speechMuteStatusTask: Task<Void, Never>?
+    private var didCompleteInitialWorkerRefresh = false
     private var activeTimerTasks: [String: Task<Void, Never>] = [:]
     private var wakeEventLog: [[String: String]] = []
     private var lastWakeRecoveryStatus: String = ""
@@ -178,7 +179,12 @@ final class JarvisShellModel: ObservableObject {
             workerText = status.description
             if status.isReady {
                 connection = "Online"
-                if case .started = status, !isBusy {
+                if !didCompleteInitialWorkerRefresh {
+                    didCompleteInitialWorkerRefresh = true
+                    Task {
+                        await self.refreshNow()
+                    }
+                } else if case .started = status, !isBusy {
                     state = "Worker restarted"
                     Task {
                         await self.refreshNow()
