@@ -304,8 +304,16 @@ Status legend:
 3. Open/unknown: if Jarvis opens a browser, Leo wants to see and interact with it
    in the Jarvis app window.
 
-4. Open/unknown: Chrome bookmarks import was requested for Jarvis browser/task
-   routing.
+4. Fixed/proved: Chrome bookmarks import exists for Jarvis browser/task routing.
+   - Jarvis has local tools `browser.bookmarks_import`,
+     `browser.bookmarks_search`, and `browser.bookmark_open`.
+   - The imported snapshot currently exists at
+     `runtime/integrations/chrome_bookmarks.json` with 23 links from 3 Chrome
+     profiles.
+   - Regression tests prove import/search/open-plan behavior is local,
+     bookmark-opening is planned-only, Teams/authenticated links choose the
+     signed-in Chrome lane, and Chrome cookies/session state are not migrated
+     into WebKit.
 
 5. Open/unknown: Teams assignment target prompt remains a high bar.
    - "Look in Teams for my newest Music assignment and ask me a list of
