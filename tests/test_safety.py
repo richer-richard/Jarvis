@@ -24368,7 +24368,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 print_latest_pre_build_gate()
 
         printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
-        self.assertIn("Latest pre-build gate: failed 0/2 (fatal 1, warnings 1)", printed)
+        self.assertIn("Latest pre-build gate: failed, 0/2 passed (fatal 1, warnings 1)", printed)
         self.assertIn("steps full_loop_regression, cleanup_chrome_test_tabs", printed)
 
     def test_morning_status_pre_build_gate_teams_blocker_summary(self):

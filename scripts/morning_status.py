@@ -245,7 +245,7 @@ def print_latest_pre_build_gate() -> None:
     report_display = display_path(str(report_path))
     step_suffix = f", steps {', '.join(summary['step_ids'])}" if summary["step_ids"] else ""
     print(
-        f"Latest pre-build gate: {summary['status']} {summary['passed']}/{summary['total']} "
+        f"Latest pre-build gate: {summary['status']}, {summary['passed']}/{summary['total']} passed "
         f"{summary['detail']}({report_display}, age {age}{step_suffix})"
     )
     teams_blocker = pre_build_gate_teams_blocker(data)
