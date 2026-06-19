@@ -128,6 +128,13 @@ def _localos_music_stop_summary(result: dict[str, Any]) -> str:
     return "Stopped Jarvis music playback." if result.get("executed") else "Tried to stop Jarvis music playback."
 
 
+def _stop_speaking_summary(result: dict[str, Any]) -> str:
+    reply = str(result.get("reply") or "").strip()
+    if reply:
+        return reply
+    return "Stopped Jarvis speech playback." if result.get("interrupted_previous") else "I was not speaking."
+
+
 NATURAL_LANGUAGE_TOOL_SPECS = [
     {
         "tool": "outlook.visible_summary",
@@ -869,7 +876,8 @@ class Planner:
         if _looks_like_model_context_status(lower):
             return self._result(text, "diagnostics.model_context", "Previewed Jarvis model context.", assessment, model_context_status(_extract_model_context_sample(text), tool_specs=NATURAL_LANGUAGE_TOOL_SPECS, history=history), True)
         if _looks_like_stop_speaking(lower):
-            return self._result(text, "voice.stop_speaking", "Stopped Jarvis speech playback.", assessment, stop_speaking(), True)
+            stop_result = stop_speaking()
+            return self._result(text, "voice.stop_speaking", _stop_speaking_summary(stop_result), assessment, stop_result, True)
         if _looks_like_music_stop_request(lower):
             stop_result = localos_music_stop()
             return self._result(text, "localos.music_stop", _localos_music_stop_summary(stop_result), assessment, stop_result, True)
@@ -1740,7 +1748,8 @@ class Planner:
         if selected_tool == "voice.stop_speaking":
             if not execute:
                 return self._preview_result(text, "voice.stop_speaking", assessment, True, plan={"intent": intent})
-            return self._result(text, "voice.stop_speaking", "Stopped Jarvis speech playback.", assessment, stop_speaking(), True)
+            stop_result = stop_speaking()
+            return self._result(text, "voice.stop_speaking", _stop_speaking_summary(stop_result), assessment, stop_result, True)
         if selected_tool == "diagnostics.tool_catalog":
             if not execute:
                 return self._preview_result(text, "diagnostics.tool_catalog", assessment, True, plan={"intent": intent})

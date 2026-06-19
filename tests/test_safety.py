@@ -7433,6 +7433,32 @@ class PlannerTests(unittest.TestCase):
                     result = Planner().handle(command)
                 self.assertEqual(result.tool, expected_tool)
 
+    def test_stop_speaking_summary_uses_real_tool_reply(self):
+        idle_stop = {
+            "tool": "voice.stop_speaking",
+            "status": "idle",
+            "executed": True,
+            "interrupted_previous": False,
+            "reply": "I was not speaking.",
+        }
+        active_stop = {
+            "tool": "voice.stop_speaking",
+            "status": "stopped",
+            "executed": True,
+            "interrupted_previous": True,
+            "reply": "Stopped speaking.",
+        }
+
+        with patch("jarvis.planner.stop_speaking", return_value=idle_stop):
+            idle_result = Planner().handle("stop talking")
+        with patch("jarvis.planner.stop_speaking", return_value=active_stop):
+            active_result = Planner().handle("stop Jarvis speech")
+
+        self.assertEqual(idle_result.tool, "voice.stop_speaking")
+        self.assertEqual(idle_result.summary, "I was not speaking.")
+        self.assertEqual(active_result.tool, "voice.stop_speaking")
+        self.assertEqual(active_result.summary, "Stopped speaking.")
+
     def test_capability_status_reports_daily_memory_as_partial(self):
         result = capabilities_status()
         memory = next(item for item in result["capabilities"] if item["id"] == "memory")

@@ -54,3 +54,5 @@
 - [x] Full `tests.test_safety` passed `934/934`, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-001017.json`.
 - [x] Targeted stale cleanup now uses `pgrep -fl jarvis-menu-bar|jarvis-status-helper`; live relaunch again produced exactly one app, one status helper, and one bundled worker.
 - [x] Full `tests.test_safety` passed `934/934`, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-001717.json`.
+- [x] Stop-speaking route honesty now uses the real `stop_speaking()` reply; live rebuilt Jarvis returned `I was not speaking.` for an idle `stop talking` command without starting speech.
+- [x] Full `tests.test_safety` passed `935/935`, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-002805.json`.

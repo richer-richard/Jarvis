@@ -61,6 +61,11 @@ Status legend:
      head, but the main app now creates a fallback emergency status item if the
      helper executable is missing or fails to launch; the fallback is removed
      again when the helper starts successfully to avoid duplicate heads.
+   - 2026-06-20 proof update: `voice.stop_speaking` now reports the real tool
+     reply for both direct and model-selected routes. An idle stop request says
+     `I was not speaking.` instead of falsely claiming playback was stopped.
+     Regression coverage was added, and live rebuilt Jarvis returned the idle
+     summary without starting any speech process.
 
 4. Open/unknown: full speech-in/action-out/speech-back loop is not yet proved
    across Leo's real target prompts.
