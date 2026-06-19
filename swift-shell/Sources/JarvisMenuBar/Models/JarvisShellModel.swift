@@ -663,7 +663,11 @@ final class JarvisShellModel: ObservableObject {
         guard let activeUntil = latestSpeechLikelyActiveUntil, Date() < activeUntil else {
             return
         }
-        if let bargeInGraceUntil, Date() < bargeInGraceUntil {
+        if Self.shouldIgnoreBargeInDuringGrace(
+            transcript: cleanTranscript,
+            now: Date(),
+            graceUntil: bargeInGraceUntil
+        ) {
             return
         }
         guard Self.shouldStopSpeechForBargeIn(
@@ -2901,6 +2905,14 @@ final class JarvisShellModel: ObservableObject {
         )
     }
 
+    static func testShouldIgnoreBargeInDuringGrace(transcript: String) -> Bool {
+        shouldIgnoreBargeInDuringGrace(
+            transcript: transcript,
+            now: Date(timeIntervalSince1970: 100),
+            graceUntil: Date(timeIntervalSince1970: 101)
+        )
+    }
+
     private static func speechTextPreview(from finalSpeech: Any) -> String {
         guard let payload = finalSpeech as? [String: Any] else {
             return ""
@@ -2988,7 +3000,37 @@ final class JarvisShellModel: ObservableObject {
         return looksLikeIntentionalSpeechBargeIn(cleanTranscript)
     }
 
+    private static func shouldIgnoreBargeInDuringGrace(
+        transcript: String,
+        now: Date,
+        graceUntil: Date?
+    ) -> Bool {
+        guard let graceUntil, now < graceUntil else {
+            return false
+        }
+        return !looksLikeExplicitSpeechBargeIn(transcript)
+    }
+
     private static func looksLikeIntentionalSpeechBargeIn(_ transcript: String) -> Bool {
+        let normalized = normalizeSpeechCheckText(transcript)
+        guard !normalized.isEmpty else {
+            return false
+        }
+        if looksLikeExplicitSpeechBargeIn(transcript) {
+            return true
+        }
+        let tokens = normalized.split(separator: " ").map(String.init)
+        guard tokens.count >= speechBargeInMinimumTokenCount, normalized.count >= 14 else {
+            return false
+        }
+        let fillerTokens: Set<String> = [
+            "a", "an", "and", "the", "to", "of", "in", "on", "it", "is", "was", "were", "um", "uh",
+        ]
+        let contentTokens = tokens.filter { !fillerTokens.contains($0) }
+        return contentTokens.count >= 3
+    }
+
+    private static func looksLikeExplicitSpeechBargeIn(_ transcript: String) -> Bool {
         let normalized = normalizeSpeechCheckText(transcript)
         guard !normalized.isEmpty else {
             return false
@@ -3010,15 +3052,7 @@ final class JarvisShellModel: ObservableObject {
         }) {
             return true
         }
-        let tokens = normalized.split(separator: " ").map(String.init)
-        guard tokens.count >= speechBargeInMinimumTokenCount, normalized.count >= 14 else {
-            return false
-        }
-        let fillerTokens: Set<String> = [
-            "a", "an", "and", "the", "to", "of", "in", "on", "it", "is", "was", "were", "um", "uh",
-        ]
-        let contentTokens = tokens.filter { !fillerTokens.contains($0) }
-        return contentTokens.count >= 3
+        return false
     }
 
     private static func normalizedSpeechTextsMatch(_ lhs: String, _ rhs: String) -> Bool {

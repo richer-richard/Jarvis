@@ -11122,8 +11122,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.457}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-457}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.458}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-458}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('cleanup_numbered_app_bundles()', script)
         self.assertIn("find \"$OUTPUT_ROOT\" -maxdepth 1 -type d -name \"$APP_NAME-*.app\" -exec rm -rf {} +", script)
@@ -13528,6 +13528,13 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("speechBargeInGraceSeconds", model_source)
         self.assertIn("bargeInGraceUntil = Date().addingTimeInterval(Self.speechBargeInGraceSeconds)", model_source)
         self.assertIn("handleSpeechBargeInIfNeeded(transcript:", model_source)
+        self.assertIn("shouldIgnoreBargeInDuringGrace(", model_source)
+        self.assertIn("looksLikeExplicitSpeechBargeIn", model_source)
+        self.assertIn("testShouldIgnoreBargeInDuringGrace", model_source)
+        self.assertLess(
+            model_source.index("shouldIgnoreBargeInDuringGrace("),
+            model_source.index("shouldStopSpeechForBargeIn("),
+        )
         self.assertIn("shouldStopSpeechForBargeIn", model_source)
         self.assertIn("looksLikeIntentionalSpeechBargeIn", model_source)
         self.assertIn("looksLikeCurrentJarvisSpeechEcho", model_source)
@@ -14479,10 +14486,14 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("guard tokens.count >= speechBargeInMinimumTokenCount", model_source)
         self.assertIn("return looksLikeIntentionalSpeechBargeIn(cleanTranscript)", model_source)
         self.assertIn("testShouldStopSpeechForBargeIn", model_source)
+        self.assertIn("testShouldIgnoreBargeInDuringGrace", model_source)
+        self.assertIn("looksLikeExplicitSpeechBargeIn", model_source)
         self.assertIn('"A tiny listener fragment must not stop Jarvis speech."', selftest_source)
         self.assertIn('"Recognized Jarvis echo must not stop Jarvis speech."', selftest_source)
         self.assertIn('"Captured wake command echo must not stop Jarvis speech."', selftest_source)
         self.assertIn('"An intentional interruption should stop Jarvis speech."', selftest_source)
+        self.assertIn('"Explicit interruptions must stop Jarvis speech even inside the wake grace period."', selftest_source)
+        self.assertIn('"Short wake-listener fragments should still be ignored inside the wake grace period."', selftest_source)
 
     def test_swift_menu_bar_icon_left_click_opens_panel_right_click_opens_menu(self):
         app_source = (

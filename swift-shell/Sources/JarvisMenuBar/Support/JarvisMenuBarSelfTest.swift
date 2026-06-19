@@ -211,6 +211,12 @@ enum JarvisMenuBarSelfTest {
         ) else {
             throw SelfTestError.failed("An intentional interruption should stop Jarvis speech.")
         }
+        guard !JarvisShellModel.testShouldIgnoreBargeInDuringGrace(transcript: "wait stop for a second") else {
+            throw SelfTestError.failed("Explicit interruptions must stop Jarvis speech even inside the wake grace period.")
+        }
+        guard JarvisShellModel.testShouldIgnoreBargeInDuringGrace(transcript: "hello") else {
+            throw SelfTestError.failed("Short wake-listener fragments should still be ignored inside the wake grace period.")
+        }
         guard JarvisShellModel.shouldUseNativeHotKeyStatus("hotkey status") else {
             throw SelfTestError.failed("Hotkey status should use the native Swift hotkey snapshot.")
         }

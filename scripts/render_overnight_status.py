@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.458 makes explicit speech interruptions immediate: if you say `stop`, `wait`, or `shut up` while Jarvis is talking, that now beats the wake-listener grace window instead of being mistaken for harmless echo protection.",
     "Jarvis 0.1.457 fixes a Hey Jarvis crash path: wake permission/start/soak self-tests now validate voice usage metadata and skip live TCC prompts in raw self-test mode, so the app fails gracefully instead of macOS killing it for speech privacy metadata.",
     "Jarvis 0.1.456 packages the latest overnight polish: Sharpay email summaries preserve omitted feedback-form context, focused matrix probes cannot downgrade the report, and voice-loop QA JSON now stores full long replies beside compact previews.",
     "Sharpay monthly email summaries are now complete without getting repetitive: if the model omits local feedback-form/link messages, Jarvis adds a concise aggregate line such as `gave two links to feedback forms`, while still suppressing raw URLs from visible and spoken output.",
