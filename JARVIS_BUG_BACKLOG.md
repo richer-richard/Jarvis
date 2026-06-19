@@ -164,10 +164,15 @@ Status legend:
    - Example: visible reply was longer, audio only said "Hello".
    - Required proof: compare TTS/STT transcript with visible final reply.
 
-5. Partially fixed/risky: Jarvis can speak internal tool/model/debug data.
+5. Fixed/proved: Jarvis can speak internal tool/model/debug data.
    - Leo heard model names/technical stuff.
    - Speech firewall must strip Tool time, Fast model time, Groq/Ollama/backend
      rows, worker/audit/verification lines, hidden calls, and links unless needed.
+   - 2026-06-19 proof update: the TTS sanitizer drops backend/model timing,
+     hidden tool calls, Worker/Audit/Verification/App perms/Codex Activity/CLI
+     status rows, and debug-only replies fail quiet as `empty_after_sanitization`.
+     Voice-loop QA now flags those internal status phrases if they appear in
+     spoken transcripts.
 
 6. Fixed/proved at least once: "Shut Up" did not actually mute, and later
    "Keep Blabbering" did not restore speech.

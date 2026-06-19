@@ -1589,7 +1589,9 @@ def _strip_spoken_diagnostic_fragments(text: str) -> str:
     diagnostic_line = re.compile(
         r"^\s*(?:"
         r"tool\s*time\b.*|fast\s*model\s*time\b.*|first\s*visible\b.*|backend\b.*|model\b.*|"
-        r"groq\b.*|ollama\b.*|worker\b.*|verification\b.*|app\s*perms?\b.*|"
+        r"groq\b.*|ollama\b.*|worker\b.*|audit\b.*|verification\b.*|app\s*perms?\b.*|"
+        r"copied\s+\d+\s+messages?\s+app\s*perms?\b.*|"
+        r".*\b(?:app\s*perms?|audit\s+verification|verification\s+passed|worker\s+already\s+online)\b.*|"
         r"codex\s*activity\b.*|cli\s*tail\b.*"
         r")\s*$",
         flags=re.IGNORECASE,

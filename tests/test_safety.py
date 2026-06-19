@@ -1757,8 +1757,12 @@ class VerifySafeScriptTests(unittest.TestCase):
         future_leaky = voice_loop_qa.detect_internal_speech_leaks(
             'Starting that now. \\localos.music_play({"query":"Waving Through a Window"})'
         )
+        status_blob = voice_loop_qa.detect_internal_speech_leaks(
+            "Audit Verification Wake Worker already online. App perms ready. Codex Activity completed."
+        )
         ids = {item["id"] for item in leaky}
         future_ids = {item["id"] for item in future_leaky}
+        status_ids = {item["id"] for item in status_blob}
 
         self.assertEqual(safe, [])
         self.assertEqual(public_domain, [])
@@ -1767,6 +1771,10 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("json_tool_key", ids)
         self.assertIn("selected_tool", ids)
         self.assertIn("internal_tool_id", ids)
+        self.assertIn("audit_verification", status_ids)
+        self.assertIn("worker_already_online", status_ids)
+        self.assertIn("app_perms", status_ids)
+        self.assertIn("codex_activity", status_ids)
 
     def test_voice_loop_qa_extracts_spoken_payloads_from_stream_events(self):
         events = [
@@ -16824,6 +16832,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
             "Backend groq\n"
             "Groq llama-3.3-70b-versatile | Fast model time: 1.3s | First visible: 1.2s\n"
             "Worker already online\n"
+            "Audit Verification Wake Worker already online 23210 events, 27.6 MB, 90d retention, cap 1.0 GB Verification passed 97/97\n"
+            "Copied 5 messages App perms: 0/5 ready Worker Audit Verification Wake Worker already online\n"
         )
         inline = jarvis_tools._sanitize_spoken_text(
             "Hello, sir. What would you like done? | Fast model time: 1.3s | First visible: 1.2s"
@@ -16839,6 +16849,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("Tool time", spoken)
         self.assertNotIn("gpt-oss", spoken)
         self.assertNotIn("Backend", spoken)
+        self.assertNotIn("Audit", spoken)
+        self.assertNotIn("Verification", spoken)
+        self.assertNotIn("App perms", spoken)
+        self.assertNotIn("Worker", spoken)
         self.assertNotIn("Fast model", inline)
 
     def test_auto_speech_sanitizer_drops_future_tool_call_fragments(self):
