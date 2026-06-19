@@ -1244,6 +1244,20 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["closed_count"], 1)
         self.assertIn("close t", run_mock.call_args.args[0][2])
 
+    def test_cleanup_chrome_test_tabs_timeout_is_reported_cleanly(self):
+        with patch(
+            "scripts.cleanup_chrome_test_tabs.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["osascript"], timeout=30),
+        ):
+            result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=True)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["closed_count"], 0)
+        self.assertEqual(result["target_count"], 0)
+        self.assertIn("timed out", result["error"])
+        self.assertEqual(result["timeout_seconds"], 30)
+
     def test_cleanup_chrome_test_tabs_cli_accepts_explicit_dry_run(self):
         with patch("scripts.cleanup_chrome_test_tabs.cleanup_chrome_test_tabs", return_value={
             "ok": True,

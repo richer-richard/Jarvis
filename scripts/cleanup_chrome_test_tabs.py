@@ -63,13 +63,24 @@ return output
 
 def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
     script = _cleanup_applescript(close_targets=execute)
-    completed = subprocess.run(
-        ["osascript", "-e", script],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    try:
+        completed = subprocess.run(
+            ["osascript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as error:
+        return {
+            "ok": False,
+            "executed": execute,
+            "closed_count": 0,
+            "target_count": 0,
+            "targets": [],
+            "error": f"Chrome cleanup timed out after {error.timeout:g}s while reading tab URLs.",
+            "timeout_seconds": error.timeout,
+        }
     if completed.returncode != 0:
         return {
             "ok": False,
