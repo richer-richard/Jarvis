@@ -85,6 +85,7 @@ from .tools import (
     source_access_status,
     start_codex_continue_job,
     start_codex_delegate_job,
+    speech_mute_status,
     stop_speaking,
     stt_audition_status,
     stt_candidate_status,
@@ -275,6 +276,14 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": [],
         "examples": [
             'Stopping my voice now. \\tool({"tool":"voice.stop_speaking","entities":{}})',
+        ],
+    },
+    {
+        "tool": "voice.speech_mute",
+        "description": "Read Jarvis speech mute/readiness status, including whether spoken replies are muted, whether speech is active, and whether TTS is available. Use for speech status, mute status, or whether Jarvis can currently talk.",
+        "entities": [],
+        "examples": [
+            'Checking my speech status now. \\tool({"tool":"voice.speech_mute","entities":{}})',
         ],
     },
     {
@@ -893,6 +902,8 @@ class Planner:
             return self._result(text, "diagnostics.app_identity", "Read app identity status.", assessment, app_identity_status(_extract_app_identity_name(text)), True)
         if _looks_like_source_access_status(lower):
             return self._result(text, "diagnostics.source_access", "Read Jarvis source access status.", assessment, source_access_status(), True)
+        if _looks_like_speech_mute_status(lower):
+            return self._result(text, "voice.speech_mute", "Read Jarvis speech mute status.", assessment, speech_mute_status(), True)
         if _looks_like_tts_status(lower):
             return self._result(text, "diagnostics.tts", "Read local TTS status.", assessment, tts_status(), True)
         if _looks_like_screen_status(lower):
@@ -1270,6 +1281,8 @@ class Planner:
             return self._preview_result(text, "voice.stop_speaking", assessment, True)
         if _looks_like_source_access_status(lower):
             return self._preview_result(text, "diagnostics.source_access", assessment, True)
+        if _looks_like_speech_mute_status(lower):
+            return self._preview_result(text, "voice.speech_mute", assessment, True)
         if _looks_like_git_remote_status(lower):
             return self._preview_result(text, "diagnostics.git", assessment, True)
         if _looks_like_app_identity_status(lower):
@@ -1750,6 +1763,10 @@ class Planner:
                 return self._preview_result(text, "voice.stop_speaking", assessment, True, plan={"intent": intent})
             stop_result = stop_speaking()
             return self._result(text, "voice.stop_speaking", _stop_speaking_summary(stop_result), assessment, stop_result, True)
+        if selected_tool == "voice.speech_mute":
+            if not execute:
+                return self._preview_result(text, "voice.speech_mute", assessment, True, plan={"intent": intent})
+            return self._result(text, "voice.speech_mute", "Read Jarvis speech mute status.", assessment, speech_mute_status(), True)
         if selected_tool == "diagnostics.tool_catalog":
             if not execute:
                 return self._preview_result(text, "diagnostics.tool_catalog", assessment, True, plan={"intent": intent})
@@ -4271,6 +4288,67 @@ def _looks_like_tts_status(lower: str) -> bool:
     return (
         any(cue in lower for cue in tts_cues)
         and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in mutation_cues)
+    )
+
+
+def _looks_like_speech_mute_status(lower: str) -> bool:
+    speech_cues = (
+        "speech status",
+        "voice status",
+        "mute status",
+        "muted",
+        "unmuted",
+        "shut up status",
+        "keep blabbering status",
+        "are you muted",
+        "can you talk",
+        "currently talking",
+        "currently speaking",
+    )
+    status_cues = (
+        "status",
+        "check",
+        "show",
+        "what",
+        "which",
+        "ready",
+        "available",
+        "can",
+        "are you",
+        "is speech",
+    )
+    stt_cues = (
+        "speech recognition",
+        "speech-to-text",
+        "speech to text",
+        "voice recognition",
+        "transcription",
+        "stt",
+    )
+    tts_cues = (
+        "tts",
+        "text-to-speech",
+        "text to speech",
+        "speech output",
+        "spoken reply",
+        "spoken replies",
+        "voice output",
+    )
+    mutation_cues = (
+        "enable",
+        "turn on",
+        "turn off",
+        "mute jarvis",
+        "unmute jarvis",
+        "shut up",
+        "keep blabbering",
+    )
+    return (
+        any(cue in lower for cue in speech_cues)
+        and any(cue in lower for cue in status_cues)
+        and not any(cue in lower for cue in stt_cues)
+        and not any(cue in lower for cue in tts_cues)
         and not any(cue in lower for cue in mutation_cues)
     )
 

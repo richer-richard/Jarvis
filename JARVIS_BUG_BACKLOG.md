@@ -470,6 +470,11 @@ Status legend:
      music` passed in 10.505s, selected `Dear Evan Hansen | 2017 Tony Awards`,
      verified the native Music bridge reported playing, stopped playback, closed
      the Music window, and left `new_afplay_processes_after: []`.
+   - 2026-06-20 proof update: live `scripts/full_loop_regression.py --case
+     music` passed in 7.823s at
+     `runtime/full_loop_regression/20260620-012250/summary.json`; the Music app
+     bridge confirmed playback, cleanup verified stopped playback, and no new
+     hidden `afplay` process survived.
    - 2026-06-19 proof update: after tightening hidden `afplay` detection, a
      second live Music proof at
      `runtime/full_loop_regression/20260619-222618/summary.json` passed in

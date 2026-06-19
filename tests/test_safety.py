@@ -7433,6 +7433,8 @@ class PlannerTests(unittest.TestCase):
             "what do you feed the first model for 'hello Jarvis'": "diagnostics.model_context",
             "stop talking": "voice.stop_speaking",
             "stop Jarvis speech": "voice.stop_speaking",
+            "speech status": "voice.speech_mute",
+            "are you muted": "voice.speech_mute",
             "tool catalog status": "diagnostics.tool_catalog",
             "what tools are fed to the model": "diagnostics.tool_catalog",
             "deep tool catalog": "tools.deep_catalog",

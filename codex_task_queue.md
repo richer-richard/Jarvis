@@ -23,6 +23,8 @@
 - [x] Fix the live `output/Jarvis.app` launch hang so stale-process cleanup cannot block before worker monitoring starts, and verify the app launches with one helper and one bundled worker.
 - [x] Harden stale Jarvis process cleanup with targeted `pgrep` so relaunches can remove duplicate app/helper processes without scanning the whole process table.
 - [x] Audit Copy Chat JSON and speech/debug export paths so internal model/tool text stays debuggable but never appears as user-facing/spoken Jarvis output.
+- [x] Re-run live Music playback proof through the native Music bridge and record the latest no-hidden-audio cleanup evidence.
+- [x] Route `speech status` / mute-status requests to the real `voice.speech_mute` backend state instead of fast-model guessing.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -69,3 +71,5 @@
 - [x] Live `build_and_launch_app.sh` reported `Jarvis 0.1.469 build 469 is online and ready`; full `tests.test_safety` passed `940/940`; `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-010714.json`; pre-build gate passed `4/4` with report `runtime/pre_build_gate/20260620-010726/summary.json`.
 - [x] Re-read `/Users/leoxu/.codex/AGENTS.md` after the latest instruction refresh; active rules now include per-prompt queueing and overnight no-interruption behavior.
 - [x] Hardened Copy Chat JSON turn traces: final speech diagnostics are now redacted, hidden tool-call speech is flagged with `speech_output_safe_for_user: false`, Swift self-test passed, and full `tests.test_safety` passed `940/940`.
+- [x] Live Music proof passed in `7.823s` at `runtime/full_loop_regression/20260620-012250/summary.json`; Music bridge confirmed playback and cleanup left no new hidden `afplay`.
+- [x] Fixed `speech status` routing: focused route test passed, direct planner smoke preserved TTS/STT routes, full `tests.test_safety` passed `940/940`, rebuilt/relaunched Jarvis `0.1.469`, and live `/api/command` returned `voice.speech_mute`.
