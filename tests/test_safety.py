@@ -2457,7 +2457,23 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
         )
 
-    def test_voice_loop_qa_rejects_generic_chrome_visible_screen_for_teams_assignment(self):
+    def test_voice_loop_qa_browser_page_usefulness_rejects_generic_screen_tool_for_teams_assignment(self):
+        response = {
+            "tool": "screen.visible_text",
+            "result": {
+                "status": "checked",
+                "detected_assignment_context": False,
+            },
+        }
+
+        self.assertFalse(
+            voice_loop_qa.browser_page_follow_up_response_looks_useful(
+                response,
+                command_text="Look in Teams for my newest Music assignment.",
+            )
+        )
+
+    def test_voice_loop_qa_visible_screen_usefulness_rejects_generic_chrome_for_teams_assignment(self):
         response = {
             "tool": "screen.visible_text",
             "result": {
