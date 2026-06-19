@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -420,8 +421,21 @@ def afplay_process_snapshot() -> list[dict[str, Any]]:
             pid = int(pid_text)
         except ValueError:
             continue
+        if not is_afplay_process_command(command):
+            continue
         processes.append({"pid": pid, "command": command.strip()})
     return processes
+
+
+def is_afplay_process_command(command: str) -> bool:
+    try:
+        parts = shlex.split(str(command or ""))
+    except ValueError:
+        parts = str(command or "").split()
+    if not parts:
+        return False
+    executable = Path(parts[0]).name
+    return executable == "afplay"
 
 
 def new_processes_since(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -360,6 +360,13 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(full_loop_regression.new_processes_since(before, after), [after[1]])
 
+    def test_full_loop_afplay_snapshot_ignores_piper_worker_afplay_argument(self):
+        self.assertFalse(full_loop_regression.is_afplay_process_command(
+            "python jarvis/piper_warm_worker.py --afplay /usr/bin/afplay --length-scale 0.85"
+        ))
+        self.assertTrue(full_loop_regression.is_afplay_process_command("/usr/bin/afplay hidden.mp3"))
+        self.assertTrue(full_loop_regression.is_afplay_process_command("afplay hidden.mp3"))
+
     def test_full_loop_latency_budget_marks_slow_case_failed(self):
         results = [{"case_id": "music_play_waving_through_window", "status": "passed", "total_seconds": 31.25}]
 

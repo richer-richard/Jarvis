@@ -411,6 +411,19 @@ Status legend:
      process survives. Live focused proof at
      `runtime/full_loop_regression/20260619-034949/summary.json` passed with
      `new_afplay_processes_after: []`.
+   - 2026-06-19 proof update: live `scripts/full_loop_regression.py --case
+     music` passed in 10.505s, selected `Dear Evan Hansen | 2017 Tony Awards`,
+     verified the native Music bridge reported playing, stopped playback, closed
+     the Music window, and left `new_afplay_processes_after: []`.
+   - 2026-06-19 proof update: after tightening hidden `afplay` detection, a
+     second live Music proof at
+     `runtime/full_loop_regression/20260619-222618/summary.json` passed in
+     11.942s with `afplay_processes_after: []`,
+     `new_afplay_processes_after: []`, and `verified_stopped: true`.
+   - 2026-06-19 proof update: hidden `afplay` process detection now checks the
+     executable name, so the Piper worker's `--afplay /usr/bin/afplay` argument
+     is not misreported as hidden playback while real `/usr/bin/afplay ...`
+     processes still fail the Music cleanup proof.
 
 9. Fixed/proved: Stop Music from the menu bar should stop Jarvis-started music
    and leave visible evidence in Jarvis.
