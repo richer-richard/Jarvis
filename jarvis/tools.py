@@ -14314,6 +14314,8 @@ def outlook_read_only_check(
     selection_request = _email_selection_request(clean_selection)
     mail_limit = _email_fetch_limit_for_selection(safe_limit, selection_request)
     mail_selection = _email_source_selection_hint(clean_selection, selection_request)
+    structured_limit = _email_fetch_limit_for_selection(safe_limit, selection_request)
+    structured_selection = _email_source_selection_hint(clean_selection, selection_request)
     app = app_availability("Microsoft Outlook")
     mail_app = app_availability("Mail")
     osascript = _find_executable("osascript")
@@ -14446,7 +14448,7 @@ def outlook_read_only_check(
     completed = None
     outlook_script_failure: dict[str, Any] | None = None
     if OUTLOOK_USE_APPLESCRIPT and osascript:
-        script = _outlook_newest_applescript(safe_limit, scan_limit)
+        script = _outlook_newest_applescript(structured_limit, scan_limit, selection=structured_selection)
         try:
             completed = subprocess.run(
                 [osascript, "-e", script],
@@ -14484,24 +14486,47 @@ def outlook_read_only_check(
     parsed = _parse_outlook_newest_output(completed.stdout if completed is not None else "")
     scanned_count = parsed["scanned_count"]
     inbox_count = parsed["inbox_count"]
+    parsed = _apply_email_selection_request(parsed, selection_request)
     messages = parsed["messages"]
     source = "applescript"
+    source_result = parsed
     if not messages:
         sqlite_result = (
-            _outlook_sqlite_messages(safe_limit, scan_limit)
+            _outlook_sqlite_messages(structured_limit, scan_limit, selection=structured_selection)
             if OUTLOOK_USE_LEGACY_SQLITE
             else {"messages": [], "inbox_count": 0, "scanned_count": 0, "status": "disabled"}
         )
+        sqlite_result = _apply_email_selection_request(sqlite_result, selection_request)
         if sqlite_result["messages"]:
             messages = sqlite_result["messages"]
             scanned_count = sqlite_result["scanned_count"]
             inbox_count = sqlite_result["inbox_count"]
             source = "sqlite"
+            source_result = sqlite_result
         else:
             base["outlook_sqlite_status"] = sqlite_result.get("status")
             if sqlite_result.get("reply"):
                 base["outlook_sqlite_note"] = sqlite_result.get("reply")
             base["visible_ocr_status"] = "skipped_for_generic_email"
+            if (
+                selection_request is not None
+                and int(parsed.get("selection_source_message_count") or sqlite_result.get("selection_source_message_count") or 0) > 0
+            ):
+                return finish({
+                    **base,
+                    "status": "requested_email_not_found",
+                    "reply": _email_selection_not_found_reply("Outlook", selection_request, max(scanned_count, int(sqlite_result.get("scanned_count") or 0))),
+                    "inbox_count": max(inbox_count, int(sqlite_result.get("inbox_count") or 0)),
+                    "scanned_count": max(scanned_count, int(sqlite_result.get("scanned_count") or 0)),
+                    "unread_count": _source_unread_count(source, parsed, messages),
+                    "selection_mode": selection_request["selection_mode"],
+                    "selection_request": selection_request,
+                    "messages": [],
+                    "message_count": 0,
+                    "source": "outlook_selection",
+                    "injection_scan": _messages_injection_scan([], "outlook_selection"),
+                    "prototype_behavior": "Honors explicit email index or range requests and refuses to summarize a different message if the requested position is not available.",
+                })
 
     if not messages:
         mail_failed = mail_result.get("status") in {"needs_permission_or_scripting", "timeout", "automation_error", "osascript_not_found"}
@@ -14542,7 +14567,7 @@ def outlook_read_only_check(
         reply = "I read the visible Outlook window locally with OCR. This fallback summarizes visible screen text rather than a guaranteed full inbox scan."
         email_summary: dict[str, Any] = {}
     else:
-        selected_mode = _selection_mode_for_messages(messages)
+        selected_mode = str(source_result.get("selection_mode") or _selection_mode_for_messages(messages))
         unread_count = int(parsed.get("unread_count") or _unread_count(messages))
         selection_text = _email_selection_reply("Outlook", selected_mode, unread_count, len(messages))
         unread_count = _source_unread_count(source, parsed, messages)
@@ -14561,7 +14586,8 @@ def outlook_read_only_check(
         "inbox_count": inbox_count,
         "scanned_count": scanned_count,
         "unread_count": _source_unread_count(source, parsed, messages),
-        "selection_mode": _selection_mode_for_messages(messages),
+        "selection_mode": str(source_result.get("selection_mode") or _selection_mode_for_messages(messages)),
+        "selection_request": source_result.get("selection_request"),
         "messages": messages,
         "message_count": len(messages),
         "source": source,
@@ -20846,7 +20872,8 @@ end cleanText
 	'''.strip()
 
 
-def _outlook_newest_applescript(limit: int, scan_limit: int) -> str:
+def _outlook_newest_applescript(limit: int, scan_limit: int, *, selection: str | None = None) -> str:
+    selection_hint = _applescript_string(_clean_email_filter_query(selection) or "")
     return f'''
 on cleanText(rawValue)
     set textValue to rawValue as text
@@ -20867,6 +20894,7 @@ end cleanText
 	    set scanCount to {scan_limit}
 	    if inboxCount < scanCount then set scanCount to inboxCount
 	    set maxItems to {limit}
+	    set selectionHint to {selection_hint}
 	    set unreadCount to 0
 	    repeat with itemIndex from 1 to scanCount
 	        set currentMessage to item itemIndex of inboxMessages
@@ -20875,11 +20903,14 @@ end cleanText
 	        end try
 	    end repeat
 	    set selectionMode to "unread"
+	    if selectionHint is "recent" then set selectionMode to "recent"
 	    if unreadCount is 0 then
-	        set selectionMode to "latest"
-	        set maxItems to 1
+	        if selectionMode is not "recent" then
+	            set selectionMode to "latest"
+	            set maxItems to 1
+	        end if
 	    end if
-	    if unreadCount is greater than 0 and unreadCount < maxItems then set maxItems to unreadCount
+	    if selectionMode is not "recent" and unreadCount is greater than 0 and unreadCount < maxItems then set maxItems to unreadCount
 	    if scanCount < maxItems then set maxItems to scanCount
 	    set selectedIndexes to {{}}
 	    set outputText to "INBOX_COUNT" & tab & (inboxCount as text) & tab & "SCANNED" & tab & (scanCount as text) & tab & "UNREAD" & tab & (unreadCount as text) & tab & "SELECTION" & tab & selectionMode
@@ -20894,7 +20925,10 @@ end cleanText
 	                    if selectionMode is "unread" and is read of currentMessage then set includeMessage to false
 	                    if includeMessage then
 	                        set currentDate to time received of currentMessage
-	                        if bestDate is missing value or currentDate > bestDate then
+	                        if selectionMode is "recent" then
+	                            set bestIndex to slotIndex
+	                            exit repeat
+	                        else if bestDate is missing value or currentDate > bestDate then
 	                            set bestDate to currentDate
 	                            set bestIndex to itemIndex
 	                        end if
@@ -21125,7 +21159,7 @@ def _email_summary_body(value: str) -> str:
     return text[:max_chars].strip()
 
 
-def _outlook_sqlite_messages(limit: int, scan_limit: int | None = None) -> dict[str, Any]:
+def _outlook_sqlite_messages(limit: int, scan_limit: int | None = None, *, selection: str | None = None) -> dict[str, Any]:
     db_path = _outlook_sqlite_db_path()
     base: dict[str, Any] = {
         "status": "unavailable",
@@ -21181,14 +21215,19 @@ def _outlook_sqlite_messages(limit: int, scan_limit: int | None = None) -> dict[
         for row in rows
     ]
     unread_count = _unread_count(scanned_messages)
-    messages = _select_unread_or_latest(scanned_messages, limit)
+    if _clean_email_filter_query(selection) == "recent":
+        messages = scanned_messages[: max(1, min(int(limit), 25))]
+        selection_mode = "recent" if messages else "empty"
+    else:
+        messages = _select_unread_or_latest(scanned_messages, limit)
+        selection_mode = _selection_mode_for_messages(messages)
     return {
         **base,
         "status": "checked" if messages else "empty",
         "inbox_count": total,
         "scanned_count": len(scanned_messages),
         "unread_count": unread_count,
-        "selection_mode": _selection_mode_for_messages(messages),
+        "selection_mode": selection_mode,
         "messages": messages,
     }
 

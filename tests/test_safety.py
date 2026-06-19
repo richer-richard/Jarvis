@@ -19584,6 +19584,15 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("set bestIndex to slotIndex", script)
         self.assertIn('if selectionMode is not "recent" then', script)
 
+    def test_outlook_script_has_recent_selection_mode_for_index_requests(self):
+        script = jarvis_tools._outlook_newest_applescript(2, 250, selection="recent")
+
+        self.assertIn('set selectionHint to "recent"', script)
+        self.assertIn('if selectionHint is "recent" then set selectionMode to "recent"', script)
+        self.assertIn('if selectionMode is not "recent" then', script)
+        self.assertIn('if selectionMode is "recent" then', script)
+        self.assertIn("set bestIndex to slotIndex", script)
+
     def test_apple_mail_script_has_sender_recent_selection_for_all_matching_sender_requests(self):
         script = jarvis_tools._apple_mail_newest_applescript(
             5,
@@ -19641,6 +19650,73 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(len(parsed["messages"]), 1)
         self.assertIn("Please send Talent Show details", parsed["messages"][0]["snippet"])
         self.assertEqual(parsed["messages"][0]["_source_path"], "/tmp/message_1.eml")
+
+    def test_outlook_read_only_check_honors_second_email_selection_for_applescript(self):
+        completed = subprocess.CompletedProcess(
+            args=["osascript"],
+            returncode=0,
+            stdout=(
+                "INBOX_COUNT\t5\tSCANNED\t5\tUNREAD\t0\tSELECTION\trecent\n"
+                "MESSAGE\tNewest\tNewest subject\tToday\tread\tNewest message should not be summarized.\n"
+                "MESSAGE\tSecond\tSecond subject\tYesterday\tread\tSecond message should be summarized."
+            ),
+            stderr="",
+        )
+        with patch("jarvis.tools.app_availability", return_value={"available": True, "matches": ["/Applications/Microsoft Outlook.app"], "app": "Microsoft Outlook"}), \
+             patch("jarvis.tools.shutil.which", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools.OUTLOOK_USE_APPLESCRIPT", True), \
+             patch("jarvis.tools.OUTLOOK_USE_LEGACY_SQLITE", False), \
+             patch("jarvis.tools.EMAIL_SUMMARY_BACKEND", "deterministic"), \
+             patch("jarvis.tools._apple_mail_messages", return_value={"messages": [], "inbox_count": 0, "scanned_count": 0, "status": "empty"}), \
+             patch("jarvis.tools.subprocess.run", return_value=completed) as run_mock:
+            result = outlook_read_only_check(limit=1, selection="index:2")
+
+        script = run_mock.call_args.args[0][-1]
+        self.assertIn('set selectionHint to "recent"', script)
+        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["source"], "applescript")
+        self.assertEqual(result["selection_mode"], "index:2")
+        self.assertEqual(result["message_count"], 1)
+        self.assertEqual(result["messages"][0]["sender"], "Second")
+        self.assertIn("second message should be summarized", result["email_summary"].lower())
+        self.assertNotIn("newest message should not", result["email_summary"].lower())
+
+    def test_outlook_read_only_check_honors_second_email_selection_for_sqlite_fallback(self):
+        completed = subprocess.CompletedProcess(
+            args=["osascript"],
+            returncode=0,
+            stdout="INBOX_COUNT\t0\tSCANNED\t0\tUNREAD\t0\tSELECTION\trecent",
+            stderr="",
+        )
+        sqlite_result = {
+            "status": "checked",
+            "messages": [
+                {"sender": "Newest", "subject": "Newest subject", "received": "Today", "read_state": "read", "snippet": "Newest SQLite message should not be summarized."},
+                {"sender": "Second", "subject": "Second subject", "received": "Yesterday", "read_state": "read", "snippet": "Second SQLite message should be summarized."},
+            ],
+            "inbox_count": 5,
+            "scanned_count": 5,
+            "unread_count": 0,
+            "selection_mode": "recent",
+        }
+        with patch("jarvis.tools.app_availability", return_value={"available": True, "matches": ["/Applications/Microsoft Outlook.app"], "app": "Microsoft Outlook"}), \
+             patch("jarvis.tools.shutil.which", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools.OUTLOOK_USE_APPLESCRIPT", True), \
+             patch("jarvis.tools.OUTLOOK_USE_LEGACY_SQLITE", True), \
+             patch("jarvis.tools.EMAIL_SUMMARY_BACKEND", "deterministic"), \
+             patch("jarvis.tools._apple_mail_messages", return_value={"messages": [], "inbox_count": 0, "scanned_count": 0, "status": "empty"}), \
+             patch("jarvis.tools._outlook_sqlite_messages", return_value=sqlite_result) as sqlite_mock, \
+             patch("jarvis.tools.subprocess.run", return_value=completed):
+            result = outlook_read_only_check(limit=1, selection="index:2")
+
+        self.assertEqual(sqlite_mock.call_args.args[0], 2)
+        self.assertEqual(sqlite_mock.call_args.kwargs["selection"], "recent")
+        self.assertEqual(result["status"], "checked")
+        self.assertEqual(result["source"], "sqlite")
+        self.assertEqual(result["selection_mode"], "index:2")
+        self.assertEqual(result["messages"][0]["sender"], "Second")
+        self.assertIn("second sqlite message should be summarized", result["email_summary"].lower())
+        self.assertNotIn("newest sqlite message should not", result["email_summary"].lower())
 
     def test_email_check_summarizes_parsed_body_not_greeting_preview(self):
         mail_result = {

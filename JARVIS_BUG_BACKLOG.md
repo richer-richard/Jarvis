@@ -99,6 +99,11 @@ Status legend:
    - 2026-06-19 proof update: normal structured email checks now default to
      scanning the latest 5 messages, while explicit sender/date requests use a
      wider but bounded 25-message scan and explicit overrides remain bounded.
+   - 2026-06-19 proof update: explicit ordinal requests such as "second email"
+     now stay ordinal across Apple Mail, Outlook AppleScript, and SQLite
+     fallback routes. Outlook and SQLite request recent messages before applying
+     `index:2`, so Jarvis does not summarize the newest email when Leo asks for
+     the second newest.
 
 4. Partially fixed/risky: Jarvis must first say a natural working line, then
    return with the summary.
