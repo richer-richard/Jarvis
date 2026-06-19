@@ -72,6 +72,7 @@ final class JarvisShellModel: ObservableObject {
     private var lastBargeInAt: Date?
     private var browserStatusPinned = false
     var onSpeechMuteStateChanged: (() -> Void)?
+    var onSpeechPlaybackMayStart: (() -> Void)?
     var onSpeechPlaybackLikelyStarted: (() -> Void)?
     private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
     private static let speechMuteStatusPollNanoseconds: UInt64 = 2_000_000_000
@@ -653,6 +654,10 @@ final class JarvisShellModel: ObservableObject {
         latestSpeechPreview = cleanText
         latestSpeechLikelyActiveUntil = Date().addingTimeInterval(Self.estimatedSpeechPlaybackSeconds(for: cleanText))
         onSpeechPlaybackLikelyStarted?()
+    }
+
+    private func prepareEmergencySpeechControls() {
+        onSpeechPlaybackMayStart?()
     }
 
     private func clearSpeechPlaybackWindow() {
@@ -1434,6 +1439,7 @@ final class JarvisShellModel: ObservableObject {
                 visibleStatusLines.append(statusText)
                 updateSummonThinking(statusText)
                 if await shouldSpeakAfterBackendMuteRefresh() {
+                    prepareEmergencySpeechControls()
                     _ = try? await client.speakStatus(statusText)
                 }
                 recordTurnPhase("Working", detail: statusText)
@@ -1444,6 +1450,7 @@ final class JarvisShellModel: ObservableObject {
                 visibleStatusLines.append(statusText)
                 updateSummonThinking(statusText)
                 if await shouldSpeakAfterBackendMuteRefresh() {
+                    prepareEmergencySpeechControls()
                     _ = try? await client.speakStatus(statusText)
                 }
                 recordTurnPhase("Working", detail: statusText)
@@ -1451,6 +1458,7 @@ final class JarvisShellModel: ObservableObject {
             } else {
                 var streamedReply = ""
                 var lastStatusText = ""
+                prepareEmergencySpeechControls()
                 response = try await client.sendStreaming(
                     command: commandText,
                     history: history,
@@ -2217,6 +2225,7 @@ final class JarvisShellModel: ObservableObject {
                 "text_preview": text,
             ]
         }
+        prepareEmergencySpeechControls()
         if let response = try? await client.speakStatus(text),
            let payload = response.speech?.anyValue as? [String: Any] {
             return payload

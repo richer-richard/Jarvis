@@ -13911,6 +13911,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
             model_source.index("let response = try await sendSpeechMute(target)"),
         )
         self.assertIn("model.onSpeechPlaybackLikelyStarted", app_source)
+        self.assertIn("model.onSpeechPlaybackMayStart", app_source)
         self.assertIn("Self.musicStopMenuTitle", app_source)
         self.assertIn("Self.audioUnmuteMenuTitle", app_source)
         self.assertIn("model.stopMusic()", app_source)
@@ -13977,7 +13978,18 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("shouldOpenStatusMenu(eventType: .leftMouseUp, modifierFlags: [.control])", helper_source)
         self.assertNotIn("item.menu = menu", helper_source)
         self.assertIn("onSpeechPlaybackLikelyStarted?()", model_source)
+        self.assertIn("prepareEmergencySpeechControls()", model_source)
+        self.assertIn("onSpeechPlaybackMayStart?()", model_source)
+        self.assertLess(
+            model_source.index("prepareEmergencySpeechControls()\n                    _ = try? await client.speakStatus(statusText)"),
+            model_source.index("_ = try? await client.speakStatus(statusText)"),
+        )
+        self.assertLess(
+            model_source.index("prepareEmergencySpeechControls()\n                response = try await client.sendStreaming"),
+            model_source.index("response = try await client.sendStreaming"),
+        )
         self.assertIn("var onSpeechPlaybackLikelyStarted", model_source)
+        self.assertIn("var onSpeechPlaybackMayStart", model_source)
         self.assertNotIn("JarvisMenuBarApp.environmentFlag(\"JARVIS_SHOW_MENU_BAR_ITEM\"", app_source)
         self.assertIn('"Open Overnight Report"', helper_source)
         self.assertIn("openOvernightReport", app_source)

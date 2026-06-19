@@ -323,6 +323,9 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             model.onSpeechMuteStateChanged = { [weak self] in
                 self?.updateSpeechMuteMenuItem()
             }
+            model.onSpeechPlaybackMayStart = { [weak self] in
+                self?.startStatusHelper()
+            }
             model.onSpeechPlaybackLikelyStarted = { [weak self] in
                 self?.startStatusHelper()
             }

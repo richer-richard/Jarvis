@@ -244,6 +244,9 @@ Status legend:
      backend `suppressed_by_request` and `deferred_to_follow_up` speech payloads
      as non-speaking states, so muted/suppressed/deferred responses cannot
      falsely extend Jarvis's active speech window.
+   - 2026-06-19 proof update: native status-speech and streaming-command paths
+     now reassert the status-helper before possible audio starts, so the menu
+     bar emergency controls are restarted before Jarvis can blabber.
 
 10. Partially fixed/risky: Hey Jarvis crashed or flickered.
     - Leo reported crashes after Start Hey Jarvis.
