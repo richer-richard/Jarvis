@@ -3675,6 +3675,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.477", shipped)
+        self.assertIn("Starting that in Music now", shipped)
         self.assertIn("0.1.476", shipped)
         self.assertIn("wrong track", shipped)
         self.assertIn("never hidden playback", shipped)
@@ -7506,7 +7508,7 @@ class PlannerTests(unittest.TestCase):
     def test_localos_music_stream_status_text_is_natural(self):
         self.assertEqual(
             _stream_status_text({"tool": "localos.music_play"}),
-            "Starting that through Local OS now.",
+            "Starting that in Music now.",
         )
         self.assertEqual(
             _stream_status_text({"tool": "localos.music_stop"}),
@@ -12103,8 +12105,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.476}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-476}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.477}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-477}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
@@ -17872,13 +17874,13 @@ class RuntimeSurfaceTests(unittest.TestCase):
             "Checking your em\\Email(1, 2, 2, False)ail now."
         )
         dotted = jarvis_tools._sanitize_spoken_text(
-            "Starting that through LocalOS now. \\localos.music_play({\"query\":\"Waving Through a Window\"})"
+            "Starting that in Music now. \\localos.music_play({\"query\":\"Waving Through a Window\"})"
         )
         normal_path = jarvis_tools._sanitize_spoken_text("Here is a path C:\\Users\\Leo.")
 
         self.assertEqual(spoken, "Yes sir, checking your calendar now. Your schedule is clear.")
         self.assertEqual(embedded, "Checking your email now.")
-        self.assertEqual(dotted, "Starting that through LocalOS now.")
+        self.assertEqual(dotted, "Starting that in Music now.")
         self.assertIn("\\Users\\Leo", normal_path)
 
     def test_auto_speech_empty_after_diagnostic_sanitization_fails_quiet(self):
@@ -18515,20 +18517,20 @@ class RuntimeSurfaceTests(unittest.TestCase):
         tool_specs = [{"tool": "localos.music_play", "description": "Play music.", "entities": ["query"]}]
 
         result = jarvis_tools._parse_fast_chat_tool_request(
-            'Starting that through LocalOS now. \\localos.music_play({"query":"Waving Through a Window"})',
+            'Starting that in Music now. \\localos.music_play({"query":"Waving Through a Window"})',
             tool_specs,
         )
 
         self.assertIsNotNone(result)
         self.assertEqual(result["selected_tool"], "localos.music_play")
-        self.assertEqual(result["status_text"], "Starting that through LocalOS now.")
+        self.assertEqual(result["status_text"], "Starting that in Music now.")
         self.assertEqual(result["entities"]["query"], "Waving Through a Window")
 
     def test_fast_chat_rejects_direct_named_tool_call_when_not_in_catalog(self):
         tool_specs = [{"tool": "outlook.visible_summary", "description": "Read email.", "entities": ["selection"]}]
 
         result = jarvis_tools._parse_fast_chat_tool_request(
-            'Starting that through LocalOS now. \\localos.music_play({"query":"Waving Through a Window"})',
+            'Starting that in Music now. \\localos.music_play({"query":"Waving Through a Window"})',
             tool_specs,
         )
 
@@ -18741,7 +18743,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
             def __iter__(self):
                 chunks = [
-                    "Starting that through LocalOS now. ",
+                    "Starting that in Music now. ",
                     "\\localos.music",
                     '_play({"query":"Waving Through a Window"})',
                 ]
@@ -18757,11 +18759,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
             events = list(stream_fast_local_chat_events("play Waving Through a Window", tool_specs=tool_specs))
 
         deltas = [event["data"]["text"] for event in events if event["event"] == "delta"]
-        self.assertEqual(deltas, ["Starting that through LocalOS now. "])
+        self.assertEqual(deltas, ["Starting that in Music now. "])
         data = events[-1]["data"]
         self.assertEqual(data["status"], "tool_requested")
         self.assertEqual(data["selected_tool"], "localos.music_play")
-        self.assertEqual(data["status_text"], "Starting that through LocalOS now.")
+        self.assertEqual(data["status_text"], "Starting that in Music now.")
         self.assertEqual(data["entities"]["query"], "Waving Through a Window")
 
     def test_stream_fast_local_chat_keeps_visible_tail_after_mid_sentence_tool_call(self):

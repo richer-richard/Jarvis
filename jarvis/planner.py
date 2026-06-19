@@ -170,7 +170,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
             "limit": "Optional number of candidates to search or choose from, default 10.",
         },
         "examples": [
-            'Starting that through Local OS now. \\tool({"tool":"localos.music_play","entities":{"query":"Waving Through A Window","limit":5}})',
+            'Starting that in Music now. \\tool({"tool":"localos.music_play","entities":{"query":"Waving Through A Window","limit":5}})',
             'Choosing something from Your Pick now. \\tool({"tool":"localos.music_play","entities":{"from_your_pick":true,"limit":12}})',
         ],
     },
@@ -1547,7 +1547,7 @@ class Planner:
                     "selected_tool": selected_tool,
                     "rerouted_from": "localos.music_recommendations",
                     "reroute_reason": (
-                        "Generic Your Pick play requests should queue playback through Local OS."
+                        "Generic Your Pick play requests should start playback through Music when the native bridge is available."
                         if selected_tool == "localos.music_play"
                         else "Generic Your Pick listening requests should be chosen from candidates by the model."
                     ),
@@ -1570,7 +1570,7 @@ class Planner:
                         },
                         "rerouted_from": "localos.music_recommendations",
                         "reroute_reason": (
-                            "Named song play requests should queue playback through Local OS."
+                            "Named song play requests should start playback through Music when the native bridge is available."
                             if selected_tool == "localos.music_play"
                             else "Named song/music requests should search the library, not summarize Your Pick."
                         ),

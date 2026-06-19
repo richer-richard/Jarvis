@@ -980,7 +980,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
             return f"Checking {app_name} now."
     labels = {
         "outlook.visible_summary": "Checking your email now.",
-        "localos.music_play": "Starting that through Local OS now.",
+        "localos.music_play": "Starting that in Music now.",
         "localos.music_stop": "Stopping that music now.",
         "localos.music_recommendations": "Checking your music picks now.",
         "localos.music_choose_from_your_pick": "Choosing from Your Pick now.",

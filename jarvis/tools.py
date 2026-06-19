@@ -17399,7 +17399,7 @@ def _naturalize_fast_chat_tool_status(selected_tool: str, status_text: str) -> s
         return text
     labels = {
         "outlook.visible_summary": "Checking your email now.",
-        "localos.music_play": "Starting that through Local OS now.",
+        "localos.music_play": "Starting that in Music now.",
         "localos.music_stop": "Stopping that music now.",
         "diagnostics.memory_usage": "Checking this Mac now.",
         "calendar.today_schedule": "Checking your calendar now.",

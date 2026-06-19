@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.477 makes music starts sound less stale: play-music working lines now say `Starting that in Music now.` instead of implying the old LocalOS path.",
     "Jarvis 0.1.476 makes Music playback safer: if the native Music bridge reports the wrong track is playing, Jarvis sends `/stop` before returning failure, and the model-facing music catalogs now say native Music bridge first and never hidden playback.",
     "Jarvis 0.1.475 makes mute state harder to miss: when speech is muted, the app chip says `Speech Muted` instead of the vague `Muted` label.",
     "Jarvis 0.1.474 syncs the live bundled worker with the latest model-route guardrails, so RAM, Calendar, and Magic Keyboard price requests still use the safe tool if the first model tries to answer as plain chat.",
