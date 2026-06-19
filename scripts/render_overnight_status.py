@@ -1657,6 +1657,7 @@ def render_workboard(context: dict[str, Any]) -> str:
       <p>{e(focus_bundle_sentence)} The current live bundle includes native Music app bridge playback proof, legacy LocalOS/Chrome fallback honesty, and the morning cleanup helper; source-side Swift compile proof is green.{e(voice_proof_sentence)} Jarvis already has hardened command payload handling, native visible-screen OCR, automatic read-only Teams follow-up after Chrome handoff, assignment-line OCR extraction, targeted follow-up questions, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and a reusable behavior matrix. The remaining product gap is real-device voice, music, browser, Teams, and app-control QA when Leo is present.</p>
       <div class="meter"><div style="width: 98%"></div></div>
     </section>
+    {workboard_operator_checkpoint(context)}
     <section>
       <h2>Checklist</h2>
       <ul class="tasks">{items}</ul>
@@ -1666,6 +1667,36 @@ def render_workboard(context: dict[str, Any]) -> str:
 </body>
 </html>
 """
+
+
+def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
+    checkpoints = [
+        (
+            "Current goal",
+            "Harden Jarvis until every known user-reported bug is fixed or captured by a reliable regression test.",
+        ),
+        (
+            "Current subtask",
+            "Pick the highest-risk open backlog row, patch or prove it, then update tests, the bug backlog, and memory.",
+        ),
+        (
+            "Proof needed",
+            "Focused regression tests, the full Python safety suite or pre-build gate when appropriate, and refreshed report/workboard surfaces.",
+        ),
+        (
+            "Time checkpoint",
+            f"Last rendered {context['updated']}; check the clock before starting each new lane and before any promised morning report.",
+        ),
+        (
+            "Return point",
+            "Resume from JARVIS_BUG_BACKLOG.md plus .memory.md, then inspect git status before editing.",
+        ),
+    ]
+    rows = "".join(
+        f"<li><strong>{e(label)}</strong><span>{e(value)}</span></li>"
+        for label, value in checkpoints
+    )
+    return f"<section><h2>Operator Checkpoint</h2><ul class=\"checkpoint\">{rows}</ul></section>"
 
 
 def workboard_bundle_sentence(context: dict[str, Any]) -> str:

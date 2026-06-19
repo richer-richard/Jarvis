@@ -503,8 +503,13 @@ Status legend:
 5. Fixed/proved at least once: created Chrome tabs must be cleaned before Leo
    wakes.
 
-6. Open/unknown: a robust overnight checklist should keep time, current goal,
+6. Fixed/proved: a robust overnight checklist should keep time, current goal,
    current subtask, proof needed, and return point visible.
+   - 2026-06-19 proof update: the overnight workboard now renders an Operator
+     Checkpoint section with Current goal, Current subtask, Proof needed, Time
+     checkpoint, and Return point. The return point explicitly names
+     `JARVIS_BUG_BACKLOG.md` plus `.memory.md`, and regression tests pin the
+     rendered contract.
 
 ## Canonical Real-World Target Prompts To Keep Testing
 
