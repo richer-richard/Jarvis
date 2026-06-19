@@ -22848,7 +22848,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
     def test_morning_status_process_check_uses_exact_executable_name(self):
         completed = subprocess.CompletedProcess(args=["pgrep"], returncode=1, stdout="", stderr="")
         with patch("scripts.morning_status.subprocess.run", return_value=completed) as run_mock, \
-             patch("scripts.morning_status.get_json", return_value={"muted": True}):
+             patch("scripts.morning_status.get_json", return_value={"muted": True}), \
+             patch("builtins.print"):
             print_process_status("http://127.0.0.1:8765")
 
         commands = [call.args[0] for call in run_mock.call_args_list]
