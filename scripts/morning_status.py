@@ -103,6 +103,7 @@ def main() -> int:
     print(f"Project: {PROJECT_ROOT}")
     print_worker_status(base_url)
     print_latest_verification()
+    print_latest_pre_build_gate()
     print_requirement_audit()
     print_latest_latency_smoke()
     print_current_bundle()
@@ -219,6 +220,56 @@ def print_latest_verification() -> None:
     window_probe = verification_window_probe(results)
     if window_probe:
         print(f"Latest window probe: {window_probe}")
+
+
+def print_latest_pre_build_gate() -> None:
+    latest = PROJECT_ROOT / "runtime" / "pre_build_gate" / "latest.json"
+    if not latest.exists():
+        print("Latest pre-build gate: none")
+        return
+
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"Latest pre-build gate: {latest.relative_to(PROJECT_ROOT)} unreadable ({error})")
+        return
+
+    summary = pre_build_gate_summary(data)
+    age = format_uptime(time_since(latest.stat().st_mtime))
+    report_path = data.get("report_path") or str(latest)
+    report_display = display_path(str(report_path))
+    step_suffix = f", steps {', '.join(summary['step_ids'])}" if summary["step_ids"] else ""
+    print(
+        f"Latest pre-build gate: {summary['status']} {summary['passed']}/{summary['total']} "
+        f"({report_display}, age {age}{step_suffix})"
+    )
+
+
+def pre_build_gate_summary(data: dict[str, Any]) -> dict[str, Any]:
+    results = data.get("results", [])
+    if not isinstance(results, list):
+        results = []
+    step_ids: list[str] = []
+    passed = 0
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        step_id = str(item.get("id") or "").strip()
+        if step_id:
+            step_ids.append(step_id)
+        if item.get("ok"):
+            passed += 1
+    total = int(data.get("total") or len(results))
+    reported_passed = int(data.get("passed") or passed)
+    status = "passed" if data.get("ok") else "needs attention"
+    if data.get("status"):
+        status = str(data.get("status"))
+    return {
+        "status": status,
+        "passed": reported_passed,
+        "total": total,
+        "step_ids": step_ids,
+    }
 
 
 def print_requirement_audit() -> None:

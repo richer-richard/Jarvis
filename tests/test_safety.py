@@ -182,6 +182,7 @@ from scripts.morning_status import (
     format_uptime,
     latency_smoke_summary,
     normalize_base_url,
+    pre_build_gate_summary,
     print_process_status,
     requirement_audit_summary,
     time_since,
@@ -23153,6 +23154,27 @@ class RuntimeSurfaceTests(unittest.TestCase):
             }
         )
         self.assertFalse(slow_after_first["ok"])
+
+    def test_morning_status_pre_build_gate_summary(self):
+        summary = pre_build_gate_summary(
+            {
+                "ok": True,
+                "status": "passed",
+                "passed": 4,
+                "total": 4,
+                "results": [
+                    {"id": "full_loop_regression", "ok": True},
+                    {"id": "stop_speaking_probe", "ok": True},
+                    {"id": "cleanup_chrome_test_tabs", "ok": True},
+                    {"id": "report_refresh", "ok": True},
+                ],
+            }
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["passed"], 4)
+        self.assertEqual(summary["total"], 4)
+        self.assertIn("stop_speaking_probe", summary["step_ids"])
 
     def test_render_overnight_status_latest_latency_smoke_accepts_checked_success(self):
         with tempfile.TemporaryDirectory() as temp_dir:
