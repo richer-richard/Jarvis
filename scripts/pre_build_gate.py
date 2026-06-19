@@ -31,6 +31,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", default=str(REPORT_DIR))
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--exercise-live-speech", action="store_true")
+    parser.add_argument(
+        "--require-live-speech",
+        action="store_true",
+        help="Fail closed unless --exercise-live-speech is also set, so a build cannot be reported as live-speech tested by accident.",
+    )
     parser.add_argument("--skip-python-tests", action="store_true")
     parser.add_argument("--skip-full-loop", action="store_true")
     parser.add_argument("--skip-cleanup", action="store_true")
@@ -47,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=Path(args.output_dir).resolve(),
         timeout=args.timeout,
         exercise_live_speech=args.exercise_live_speech,
+        require_live_speech=args.require_live_speech,
         skip_python_tests=args.skip_python_tests,
         skip_full_loop=args.skip_full_loop,
         skip_cleanup=args.skip_cleanup,
@@ -74,6 +80,7 @@ def run_gate(
     output_dir: Path = REPORT_DIR,
     timeout: float = 180.0,
     exercise_live_speech: bool = False,
+    require_live_speech: bool = False,
     skip_python_tests: bool = False,
     skip_full_loop: bool = False,
     skip_cleanup: bool = False,
@@ -90,7 +97,11 @@ def run_gate(
         skip_cleanup=skip_cleanup,
     )
     results: list[dict[str, Any]] = []
+    if require_live_speech and not exercise_live_speech:
+        results.append(live_speech_requirement_failure())
     for step in steps:
+        if results and any(not item.get("ok") for item in results) and not step.get("always_run_next"):
+            continue
         result = run_step(step, timeout=timeout, runner=runner)
         results.append(result)
         write_summary(
@@ -99,6 +110,8 @@ def run_gate(
                 run_dir=run_dir,
                 results=results,
                 started=started,
+                exercise_live_speech=exercise_live_speech,
+                require_live_speech=require_live_speech,
                 complete=False,
             ),
             run_dir,
@@ -116,6 +129,8 @@ def run_gate(
         run_dir=run_dir,
         results=results,
         started=started,
+        exercise_live_speech=exercise_live_speech,
+        require_live_speech=require_live_speech,
         complete=True,
     )
     write_summary(summary, run_dir, output_dir)
@@ -158,6 +173,7 @@ def build_steps(
                 "label": "Full-loop spoken-command regression",
                 "command": full_loop_command,
                 "timeout_seconds": FULL_LOOP_GATE_TIMEOUT_SECONDS,
+                "proof_contract": speech_proof_contract(exercise_live_speech=exercise_live_speech),
             }
         )
     if not skip_cleanup:
@@ -182,6 +198,35 @@ def cleanup_chrome_step() -> dict[str, Any]:
     }
 
 
+def speech_proof_contract(*, exercise_live_speech: bool) -> dict[str, Any]:
+    return {
+        "speech_mode": "live_playback_exercised" if exercise_live_speech else "suppressed_for_probe",
+        "live_playback_exercised": bool(exercise_live_speech),
+        "physical_speaker_capture": False,
+        "physical_microphone_capture": False,
+        "notes": (
+            "Jarvis live playback is exercised, and exact speech payloads are synthesized/transcribed for content proof."
+            if exercise_live_speech
+            else "Jarvis live playback is suppressed; exact speech payloads are synthesized/transcribed for quiet content proof."
+        ),
+    }
+
+
+def live_speech_requirement_failure() -> dict[str, Any]:
+    return {
+        "id": "live_speech_requirement",
+        "label": "Live speech requirement",
+        "ok": False,
+        "returncode": "not-run",
+        "seconds": 0.0,
+        "timeout_seconds": 0.0,
+        "command": [],
+        "stdout_tail": "",
+        "stderr_tail": "Refused to pass: --require-live-speech was set without --exercise-live-speech.",
+        "proof_contract": speech_proof_contract(exercise_live_speech=False),
+    }
+
+
 def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> dict[str, Any]:
     started = time.monotonic()
     step_timeout = float(step.get("timeout_seconds") or timeout)
@@ -197,6 +242,7 @@ def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> 
             "command": list(step["command"]),
             "stdout_tail": tail_text(completed.stdout),
             "stderr_tail": tail_text(completed.stderr),
+            "proof_contract": step.get("proof_contract"),
         }
     except subprocess.TimeoutExpired as error:
         return {
@@ -209,6 +255,7 @@ def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> 
             "command": list(step["command"]),
             "stdout_tail": tail_text(error.stdout or ""),
             "stderr_tail": tail_text(error.stderr or f"Timed out after {step_timeout}s"),
+            "proof_contract": step.get("proof_contract"),
         }
 
 
@@ -218,6 +265,8 @@ def make_summary(
     run_dir: Path,
     results: list[dict[str, Any]],
     started: float,
+    exercise_live_speech: bool,
+    require_live_speech: bool,
     complete: bool,
 ) -> dict[str, Any]:
     passed = sum(1 for item in results if item.get("ok"))
@@ -237,6 +286,8 @@ def make_summary(
         "total": len(results),
         "complete": complete,
         "duration_seconds": round(time.monotonic() - started, 3),
+        "speech_proof_contract": speech_proof_contract(exercise_live_speech=exercise_live_speech),
+        "require_live_speech": bool(require_live_speech),
         "results": results,
     }
 
@@ -262,6 +313,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"- Status: {summary.get('status')}",
         f"- Passed: {summary.get('passed')}/{summary.get('total')}",
         f"- Run dir: {summary.get('run_dir')}",
+        f"- Speech proof: {summary.get('speech_proof_contract', {}).get('speech_mode')}",
+        f"- Live speech required: {summary.get('require_live_speech')}",
     ]
     for result in summary.get("results", []):
         if not isinstance(result, dict):
@@ -278,6 +331,10 @@ def render_markdown(summary: dict[str, Any]) -> str:
         )
         if result.get("stderr_tail"):
             lines.append(f"- Stderr: `{result.get('stderr_tail')}`")
+        proof = result.get("proof_contract")
+        if isinstance(proof, dict):
+            lines.append(f"- Speech proof: `{proof.get('speech_mode')}`")
+            lines.append(f"- Live playback exercised: `{proof.get('live_playback_exercised')}`")
     return "\n".join(lines).rstrip() + "\n"
 
 

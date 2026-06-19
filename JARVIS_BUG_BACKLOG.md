@@ -66,6 +66,11 @@ Status legend:
      spoken_payload`. This improves the harness, but the broader real-world
      prompt set is still not fully proven with physical speaker/microphone
      capture.
+   - 2026-06-19 proof update: the pre-build gate now publishes an explicit
+     speech proof contract. Quiet default runs are labeled
+     `suppressed_for_probe`; opt-in live playback runs are labeled
+     `live_playback_exercised`; `--require-live-speech` fails closed if live
+     playback proof is required but not enabled.
 
 5. Partially fixed/risky: Jarvis must use model/tool choice, not fake keyword
    hacks, except where Leo explicitly allows a primitive tool.

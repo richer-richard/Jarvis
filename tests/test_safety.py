@@ -702,6 +702,43 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual([step["id"] for step in steps], ["full_loop_regression", "report_refresh"])
         self.assertIn("--exercise-live-speech", steps[0]["command"])
+        self.assertEqual(steps[0]["proof_contract"]["speech_mode"], "live_playback_exercised")
+
+    def test_pre_build_gate_default_report_marks_live_speech_suppressed(self):
+        steps = pre_build_gate.build_steps(
+            base_url="http://127.0.0.1:8765",
+            exercise_live_speech=False,
+            skip_python_tests=True,
+            skip_full_loop=False,
+            skip_cleanup=True,
+        )
+
+        self.assertEqual(steps[0]["proof_contract"]["speech_mode"], "suppressed_for_probe")
+        self.assertFalse(steps[0]["proof_contract"]["live_playback_exercised"])
+
+    def test_pre_build_gate_require_live_speech_fails_closed_without_exercise_flag(self):
+        calls = []
+
+        def fake_runner(command, timeout):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary = pre_build_gate.run_gate(
+                base_url="http://127.0.0.1:8765",
+                output_dir=Path(tmpdir),
+                require_live_speech=True,
+                exercise_live_speech=False,
+                runner=fake_runner,
+            )
+
+        self.assertFalse(summary["ok"])
+        self.assertTrue(summary["require_live_speech"])
+        self.assertEqual(summary["speech_proof_contract"]["speech_mode"], "suppressed_for_probe")
+        self.assertEqual(summary["results"][0]["id"], "live_speech_requirement")
+        self.assertIn("--require-live-speech", summary["results"][0]["stderr_tail"])
+        self.assertFalse(any("full_loop_regression.py" in str(part) for command in calls for part in command))
+        self.assertTrue(any("cleanup_chrome_test_tabs.py" in str(part) for command in calls for part in command))
 
     def test_pre_build_gate_uses_step_specific_timeout_when_present(self):
         calls = []
