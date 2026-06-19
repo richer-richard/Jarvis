@@ -17234,6 +17234,22 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("(", spoken)
         self.assertNotIn(")", spoken)
 
+    def test_visible_reply_sanitizer_removes_raw_links_and_email_addresses(self):
+        visible = jarvis_tools._sanitize_user_visible_text(
+            "Please fill in [the short feedback form](https://example.test/form?id=123) today. "
+            "If needed, email person@example.test or use https://example.test/raw."
+        )
+
+        self.assertEqual(
+            visible,
+            "Please fill in the short feedback form today. If needed, email an email address or use a link",
+        )
+        self.assertNotIn("https://", visible)
+        self.assertNotIn("example.test", visible)
+        self.assertNotIn("@", visible)
+        self.assertNotIn("(", visible)
+        self.assertNotIn(")", visible)
+
     def test_auto_speech_sanitizer_drops_internal_action_sections(self):
         spoken = jarvis_tools._sanitize_spoken_text(
             "Summary:\n"
@@ -20871,6 +20887,40 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("gpt-oss", result["result"]["reply"])
         self.assertNotIn("gpt-oss", result["summary"])
         speak_mock.assert_called_once_with("Opened Microsoft Outlook.", reason="final")
+
+    def test_command_visible_reply_strips_raw_links_before_display(self):
+        mixed_reply = (
+            "The email has [a form](https://example.test/form?id=123) you may need to fill in. "
+            "Raw fallback: https://example.test/raw"
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch.object(
+                server.planner,
+                "handle",
+                return_value=PlannedResult(
+                    command="check email",
+                    tool="outlook.visible_summary",
+                    summary=mixed_reply,
+                    assessment={"category": "safe", "risk_level": 0, "risk_label": "safe", "decision": "allow"},
+                    result={"reply": mixed_reply},
+                    executed=True,
+                ),
+            ), patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final"}) as speak_mock:
+                result = server.command("check email")
+
+        self.assertEqual(
+            result["result"]["reply"],
+            "The email has a form you may need to fill in. Raw fallback: a link",
+        )
+        self.assertNotIn("https://", result["result"]["reply"])
+        self.assertNotIn("example.test", result["result"]["reply"])
+        speak_mock.assert_called_once_with(
+            "The email has a form you may need to fill in. Raw fallback, a link",
+            reason="final",
+        )
 
     def test_stream_command_visible_reply_keeps_answer_but_strips_internal_diagnostics(self):
         mixed_reply = (

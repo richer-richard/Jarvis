@@ -187,6 +187,9 @@ Status legend:
      timing fragments and leaked JSON/tool entities before TTS, and server
      speech selection passes the sanitized payload rather than the original
      reply text.
+   - 2026-06-19 proof update: the visible reply sanitizer now also removes
+     markdown/raw URLs and email addresses from app-visible reply fields before
+     they reach the Jarvis window or Copy Chat JSON.
 
 5. Partially fixed/risky: cloud/local model routing is still a product risk.
    - Candidate lanes mentioned: Groq Llama 70B, GPT OSS 120B cloud, GPT OSS 20B,
