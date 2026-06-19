@@ -1177,7 +1177,7 @@ def run_teams_assignment_case(
                 "Teams workflow was honest but incomplete: Jarvis did not inspect the requested Music assignment."
             )
             if action_proof.get("chrome_page_read_blocked"):
-                warnings.append("Chrome page-read automation was blocked before the visible-screen fallback.")
+                warnings.append("Chrome page-read was blocked before the visible-screen fallback.")
             if action_proof.get("assignments_target_found"):
                 warnings.append("Visible Assignments navigation target was found for the next safe navigation step.")
             if action_proof.get("assignments_navigation_plan_ready"):
@@ -1299,14 +1299,17 @@ tell application "Google Chrome"
 end tell
 return output
 '''
-    completed = subprocess.run(
-        ["/usr/bin/osascript", "-e", script],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
     tabs: list[dict[str, str]] = []
     if completed.returncode != 0:
         return tabs

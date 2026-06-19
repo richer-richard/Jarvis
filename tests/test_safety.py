@@ -472,6 +472,10 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(full_loop_regression.new_media_surfaces_since(before, after), ["Music"])
 
+    def test_full_loop_chrome_tab_snapshot_timeout_fails_soft(self):
+        with patch("scripts.full_loop_regression.subprocess.run", side_effect=subprocess.TimeoutExpired(["osascript"], 10)):
+            self.assertEqual(full_loop_regression.chrome_tab_snapshot(), [])
+
     def test_full_loop_codex_default_uses_voice_routed_alias_command(self):
         fake_voice_report = {
             "result": {
@@ -3032,6 +3036,42 @@ class VerifySafeScriptTests(unittest.TestCase):
         open_mock.assert_not_called()
         self.assertEqual(result["status"], "browser_permission_blocked")
         self.assertEqual(result["tool"], "browser.read_page")
+        self.assertEqual(result["attempts"], 1)
+        self.assertFalse(result["browser_open_attempted"])
+
+    def test_voice_loop_qa_visible_screen_followup_skips_open_when_chrome_javascript_blocked(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 return_value={
+                     "used": False,
+                     "status": "browser_permission_blocked",
+                     "tool": "browser.read_page",
+                     "response_status": "chrome_javascript_unavailable",
+                     "visible_reply_preview": "Chrome allowed tab metadata, but did not allow page text.",
+                 },
+             ), \
+             patch("scripts.voice_loop_qa.open_visible_screen_follow_up_url") as open_mock, \
+             patch(
+                 "scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt",
+                 return_value={
+                     "used": False,
+                     "status": "assignment_subject_mismatch",
+                     "tool": "screen.visible_text",
+                     "visible_reply_preview": "I read the visible Teams screen, but it does not look like the Music assignment.",
+                 },
+             ) as attempt_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+            )
+
+        self.assertEqual(attempt_mock.call_count, 1)
+        open_mock.assert_not_called()
+        self.assertEqual(result["status"], "assignment_subject_mismatch")
         self.assertEqual(result["attempts"], 1)
         self.assertFalse(result["browser_open_attempted"])
 

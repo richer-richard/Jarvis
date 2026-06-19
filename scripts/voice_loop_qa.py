@@ -2056,7 +2056,7 @@ def run_browser_page_follow_up(
     response_status = str(summary_result.get("status") or "")
     visible_reply = extract_visible_reply(summary_response)
     useful = browser_page_follow_up_response_looks_useful(summary_response, command_text=command_text)
-    blocked = response_status in {"automation_not_allowed", "teams_page_text_unavailable"}
+    blocked = response_status in {"automation_not_allowed", "chrome_javascript_unavailable", "teams_page_text_unavailable"}
     login_gate_visible = response_status == "visible_screen_login_gate"
     return {
         "used": useful,
