@@ -449,21 +449,32 @@ def wait_for_music_playback(music_bridge_url: str, *, timeout: float) -> dict[st
     while True:
         state = music_bridge_request(music_bridge_url, "GET", "/playback-state", timeout=3.5)
         last_state = state
-        if bool(state.get("playing")):
+        playback_seconds = _music_playback_seconds(state.get("currentTime"))
+        if bool(state.get("playing")) and playback_seconds is not None and playback_seconds >= 0.5:
             return state
         if time.monotonic() >= deadline:
             return last_state
         time.sleep(0.25)
 
 
+def _music_playback_seconds(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def verify_waving_playback(playback_state: dict[str, Any]) -> dict[str, Any]:
     now_playing = playback_state.get("nowPlaying") if isinstance(playback_state.get("nowPlaying"), dict) else {}
     title = str(now_playing.get("title") or "")
     file_name = str(now_playing.get("fileName") or "")
+    current_time = _music_playback_seconds(playback_state.get("currentTime"))
     haystack = f"{title} {file_name}".casefold()
     failures: list[str] = []
     if not playback_state.get("playing"):
         failures.append("Music app did not report active playback.")
+    if current_time is None or current_time < 0.5:
+        failures.append("Music app did not show playback progress.")
     if "dear evan hansen" not in haystack:
         failures.append("Selected track was not the Dear Evan Hansen recording.")
     if "tony awards" not in haystack:
@@ -475,6 +486,7 @@ def verify_waving_playback(playback_state: dict[str, Any]) -> dict[str, Any]:
         "failures": failures,
         "selected_title": title,
         "selected_file_name": file_name,
+        "selected_current_time": current_time,
     }
 
 

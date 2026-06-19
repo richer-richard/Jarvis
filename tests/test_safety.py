@@ -222,6 +222,7 @@ class VerifySafeScriptTests(unittest.TestCase):
     def test_full_loop_music_proof_accepts_expected_song(self):
         proof = full_loop_regression.verify_waving_playback({
             "playing": True,
+            "currentTime": 1.25,
             "nowPlaying": {
                 "title": "Dear Evan Hansen | 2017 Tony Awards",
                 "fileName": "Dear Evan Hansen.mp3",
@@ -234,6 +235,7 @@ class VerifySafeScriptTests(unittest.TestCase):
     def test_full_loop_music_proof_rejects_old_false_match(self):
         proof = full_loop_regression.verify_waving_playback({
             "playing": True,
+            "currentTime": 2.0,
             "nowPlaying": {
                 "title": "Through The Fire And Flames",
                 "fileName": "Through The Fire And Flames.mp3",
@@ -242,6 +244,33 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertFalse(proof["passed"])
         self.assertIn("Regressed to the old DragonForce false match.", proof["failures"])
+
+    def test_full_loop_music_proof_rejects_playing_without_progress(self):
+        proof = full_loop_regression.verify_waving_playback({
+            "playing": True,
+            "currentTime": 0,
+            "nowPlaying": {
+                "title": "Dear Evan Hansen | 2017 Tony Awards",
+                "fileName": "Dear Evan Hansen.mp3",
+            },
+        })
+
+        self.assertFalse(proof["passed"])
+        self.assertIn("Music app did not show playback progress.", proof["failures"])
+        self.assertEqual(proof["selected_current_time"], 0.0)
+
+    def test_full_loop_music_wait_requires_playback_progress(self):
+        states = iter([
+            {"ok": True, "playing": True, "currentTime": 0.0},
+            {"ok": True, "playing": True, "currentTime": 0.2},
+            {"ok": True, "playing": True, "currentTime": 0.75},
+        ])
+        with patch("scripts.full_loop_regression.music_bridge_request", side_effect=lambda *_args, **_kwargs: next(states)) as request_mock, \
+             patch("scripts.full_loop_regression.time.sleep"):
+            state = full_loop_regression.wait_for_music_playback("http://127.0.0.1:47879", timeout=5.0)
+
+        self.assertEqual(state["currentTime"], 0.75)
+        self.assertEqual(request_mock.call_count, 3)
 
     def test_full_loop_music_case_exercises_autostart_when_preflight_down(self):
         calls = []
@@ -261,6 +290,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             wait_for_music_playback.return_value = {
                 "ok": True,
                 "playing": True,
+                "currentTime": 1.0,
                 "nowPlaying": {
                     "title": "Dear Evan Hansen | 2017 Tony Awards",
                     "fileName": "Dear Evan Hansen.mp3",
@@ -299,6 +329,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             wait_for_music_playback.return_value = {
                 "ok": True,
                 "playing": True,
+                "currentTime": 1.0,
                 "nowPlaying": {
                     "title": "Dear Evan Hansen | 2017 Tony Awards",
                     "fileName": "Dear Evan Hansen.mp3",
@@ -338,6 +369,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             wait_for_music_playback.return_value = {
                 "ok": True,
                 "playing": True,
+                "currentTime": 1.0,
                 "nowPlaying": {
                     "title": "Dear Evan Hansen | 2017 Tony Awards",
                     "fileName": "Dear Evan Hansen.mp3",

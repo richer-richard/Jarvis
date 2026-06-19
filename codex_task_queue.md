@@ -31,6 +31,7 @@
 - [x] Re-check and record current GitHub branch state without pushing: upstream exists and branch is ahead-only.
 - [x] Make `scripts/morning_status.py` print absolute master-report and workboard file paths plus their loopback URLs so Leo can immediately find the proof surfaces.
 - [x] Rebuild Jarvis `0.1.471` so backend `system.status` includes report/workboard surfaces in JSON while the spoken reply stays short.
+- [x] Strengthen the Music full-loop verifier so `playing: true` only passes after playback time advances; live Music proof passed at about 4.0s and cleanup verified stopped.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -86,3 +87,4 @@
 - [x] GitHub state recorded: `git status -sb` reports `codex/jarvis-overnight-20260608...origin/codex/jarvis-overnight-20260608 [ahead 147]`; no push attempted.
 - [x] Morning status now prints the master report/workboard absolute file paths and loopback URLs; focused regression tests passed and live status output shows the new breadcrumbs.
 - [x] Jarvis `0.1.471` build `471` is live; `status` returns `report_surfaces` in the backend payload without putting file paths in the spoken reply, and `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-020440.json`.
+- [x] Music regression proof is stricter: focused tests passed, live `scripts/full_loop_regression.py --case music` passed in `7.511s` with `selected_current_time` about `4.0s`, and full `tests.test_safety` passed `944/944`.

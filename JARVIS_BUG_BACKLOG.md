@@ -445,6 +445,10 @@ Status legend:
      song but `/playback-state` reports it is paused, Jarvis now calls the
      bridge `/resume` endpoint, waits briefly, and only claims success if the
      refreshed playback state confirms the requested song is playing.
+   - 2026-06-20 proof update: the full-loop music verifier now requires playback
+     progress (`currentTime` at least 0.5s), so a stale `playing: true` flag at
+     0:00 no longer counts as real playback. Live proof passed with playback at
+     about 4.0s, then verified stopped with no new hidden `afplay`.
 
 6. Partially fixed/risky: Chrome/LocalOS refused connection or JavaScript
    control.
