@@ -13864,9 +13864,19 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('setSpeechMuted(_ muted: Bool, source: String = "main_app")', client_source)
         self.assertIn('"source": source', client_source)
         self.assertIn('client.setSpeechMuted(target, source: "status_helper")', helper_source)
+        self.assertIn("if target {\n                    _ = try? await client.stopSpeaking()\n                }", helper_source)
+        self.assertLess(
+            helper_source.index("_ = try? await client.stopSpeaking()"),
+            helper_source.index('client.setSpeechMuted(target, source: "status_helper")'),
+        )
         self.assertLess(
             model_source.index("return try await client.setSpeechMuted(muted)"),
             model_source.index("let startup = await workerSupervisor.ensureRunning()"),
+        )
+        self.assertIn("if target {\n                    clearSpeechPlaybackWindow()\n                    _ = try? await client.stopSpeaking()\n                }", model_source)
+        self.assertLess(
+            model_source.index("_ = try? await client.stopSpeaking()"),
+            model_source.index("let response = try await sendSpeechMute(target)"),
         )
         self.assertIn("model.onSpeechPlaybackLikelyStarted", app_source)
         self.assertIn("Self.musicStopMenuTitle", app_source)

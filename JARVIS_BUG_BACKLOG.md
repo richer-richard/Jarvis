@@ -220,6 +220,10 @@ Status legend:
    "Keep Blabbering" did not restore speech.
 
 7. Fixed/proved at least once: Jarvis kept talking after Leo pressed Shut Up.
+   - 2026-06-19 proof update: both the helper-owned menu-bar Shut Up action and
+     the main-window mute action now send `stop talking` before setting the mute
+     flag, so current audio is interrupted instead of only preventing future
+     speech.
 
 8. Fixed/proved at least once: Jarvis was talking while not in the menu bar, so
    Leo could not shut it up.

@@ -227,6 +227,9 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
         speechMuteItem?.title = Self.speechMuteMenuTitle(muted: target)
         Task {
             do {
+                if target {
+                    _ = try? await client.stopSpeaking()
+                }
                 let response = try await client.setSpeechMuted(target, source: "status_helper")
                 knownMuted = response.muted
                 speechMuteItem?.title = Self.speechMuteMenuTitle(muted: response.muted)

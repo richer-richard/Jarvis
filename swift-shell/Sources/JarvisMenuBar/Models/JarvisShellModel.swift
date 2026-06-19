@@ -236,6 +236,10 @@ final class JarvisShellModel: ObservableObject {
         chatExportText = target ? "Muting speech..." : "Restoring speech..."
         Task {
             do {
+                if target {
+                    clearSpeechPlaybackWindow()
+                    _ = try? await client.stopSpeaking()
+                }
                 let response = try await sendSpeechMute(target)
                 applySpeechMuteResponse(response)
                 state = response.muted ? "Muted" : "Ready"
