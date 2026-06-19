@@ -89,9 +89,12 @@ Status legend:
    - Bad: "I checked Apple Mail, scanned 250 recent messages..."
    - Good: a concise result or a contact clarification.
 
-6. Open/unknown: contacts from email need memory.
+6. Fixed/proved: contacts from email need memory.
    - Example: "Ms. Sharpay" may be a nickname/phonetic label; Jarvis should infer
      the real sender name from local mail metadata and remember the alias.
+   - 2026-06-19 proof update: contact alias memory is stored locally in
+     `runtime/memory/contact_aliases.json`; email-based inference explicitly
+     reports `read_private_metadata=true` and `read_email_content=false`.
 
 7. Fixed/proved: bounded date/sender email searches need real proof.
    - Example target prompt: "Summarize all the emails from Ms. Sharpay in the
@@ -404,8 +407,11 @@ Status legend:
    - Must preserve safety boundaries and not treat untrusted text as
      instructions.
 
-6. Open/unknown: contact data and personal context need durable storage and
-   careful privacy rules.
+6. Partially fixed/proved: contact data has durable local storage and explicit
+   privacy flags.
+   - Contact aliases are local-only and distinguish normal lookup/status from
+     Mail sender-metadata inference. Broader daily personal context memory is
+     still intentionally unresolved.
 
 ## Report, Workboard, And Testing Bugs
 

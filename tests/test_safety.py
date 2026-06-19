@@ -10612,6 +10612,12 @@ Pages occupied by compressor:             10.
         self.assertEqual(stt_found["display_name"], "Ms Darbus")
         self.assertEqual(status["alias_count"], 1)
         self.assertEqual(status["aliases"][0]["alias"], "Ms Sharpay")
+        self.assertFalse(stored["read_private_metadata"])
+        self.assertFalse(stored["read_email_content"])
+        self.assertFalse(found["read_private_metadata"])
+        self.assertFalse(found["read_email_content"])
+        self.assertFalse(status["read_private_metadata"])
+        self.assertFalse(status["read_email_content"])
 
     def test_contact_data_infer_from_email_autostores_person_like_sender_match(self):
         mail_result = {
@@ -10630,6 +10636,9 @@ Pages occupied by compressor:             10.
         self.assertEqual(inferred["display_name"], "Sharpay Cao 曹宗悦")
         self.assertEqual(inferred["candidates"][0]["display_name"], "Sharpay Cao 曹宗悦")
         self.assertGreaterEqual(inferred["candidates"][0]["score"], 0.72)
+        self.assertTrue(inferred["read_private_metadata"])
+        self.assertFalse(inferred["read_email_content"])
+        self.assertIn("did not read email bodies", inferred["metadata_privacy_note"])
         self.assertEqual(stored["status"], "found")
         self.assertEqual(stored["display_name"], "Sharpay Cao 曹宗悦")
 
@@ -10649,6 +10658,9 @@ Pages occupied by compressor:             10.
         self.assertEqual(inferred["status"], "needs_confirmation")
         self.assertEqual(inferred["candidates"][0]["display_name"], "Microsoft Teams")
         self.assertLess(inferred["candidates"][0]["score"], 0.72)
+        self.assertTrue(inferred["read_private_metadata"])
+        self.assertFalse(inferred["read_email_content"])
+        self.assertIn("did not read email bodies", inferred["metadata_privacy_note"])
         self.assertEqual(stored["status"], "not_found")
 
     def test_model_test_plan_prefers_remote_worker_for_heavy_models(self):
@@ -11318,8 +11330,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.466}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-466}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.467}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-467}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('cleanup_numbered_app_bundles()', script)
         self.assertIn("find \"$OUTPUT_ROOT\" -maxdepth 1 -type d -name \"$APP_NAME-*.app\" -exec rm -rf {} +", script)

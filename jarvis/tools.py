@@ -11070,6 +11070,8 @@ def contact_data_status() -> dict[str, Any]:
         "executed": True,
         "status": "checked",
         "read_private_content": False,
+        "read_private_metadata": False,
+        "read_email_content": False,
         "synced_remote": False,
         "path": str(CONTACT_DATA_PATH),
         "alias_count": len(visible_aliases),
@@ -11093,6 +11095,8 @@ def contact_data_lookup(alias: str) -> dict[str, Any]:
             "executed": True,
             "status": "found",
             "read_private_content": False,
+            "read_private_metadata": False,
+            "read_email_content": False,
             "alias": stored_alias,
             "requested_alias": clean_alias,
             "display_name": display_name,
@@ -11111,6 +11115,8 @@ def contact_data_lookup(alias: str) -> dict[str, Any]:
         "executed": True,
         "status": "not_found",
         "read_private_content": False,
+        "read_private_metadata": False,
+        "read_email_content": False,
         "alias": clean_alias,
         "suggestions": suggestions,
         "reply": reply,
@@ -11127,6 +11133,8 @@ def contact_data_remember(alias: str, display_name: str, *, source: str = "leo")
             "executed": False,
             "status": "missing_alias_or_name",
             "read_private_content": False,
+            "read_private_metadata": False,
+            "read_email_content": False,
             "reply": "Tell me both the name you use and the actual contact name to remember.",
         }
     data = _load_contact_data()
@@ -11147,6 +11155,8 @@ def contact_data_remember(alias: str, display_name: str, *, source: str = "leo")
         "executed": stored,
         "status": "stored" if stored else "write_failed",
         "read_private_content": False,
+        "read_private_metadata": False,
+        "read_email_content": False,
         "alias": clean_alias,
         "display_name": clean_name,
         "path": str(CONTACT_DATA_PATH),
@@ -11164,6 +11174,8 @@ def contact_data_infer_from_email(alias: str, *, scan_limit: int = 50) -> dict[s
             "executed": False,
             "status": "missing_alias",
             "read_private_content": False,
+            "read_private_metadata": False,
+            "read_email_content": False,
             "reply": "Tell me which contact alias to infer.",
         }
     lookup = contact_data_lookup(clean_alias)
@@ -11175,6 +11187,8 @@ def contact_data_infer_from_email(alias: str, *, scan_limit: int = 50) -> dict[s
             "executed": False,
             "status": "mail_unavailable",
             "read_private_content": False,
+            "read_private_metadata": False,
+            "read_email_content": False,
             "alias": clean_alias,
             "reply": "I do not have a known contact alias yet, and Apple Mail metadata is not available for inference.",
         }
@@ -11197,11 +11211,13 @@ def contact_data_infer_from_email(alias: str, *, scan_limit: int = 50) -> dict[s
             "executed": True,
             "status": "inferred_and_stored" if remembered.get("status") == "stored" else "inferred_not_stored",
             "read_private_content": True,
+            "read_private_metadata": True,
             "read_email_content": False,
             "alias": clean_alias,
             "display_name": candidates[0]["display_name"],
             "candidates": candidates[:5],
             "scanned_count": mail_result.get("scanned_count"),
+            "metadata_privacy_note": "Used recent Mail sender metadata only; did not read email bodies.",
             "reply": f"I inferred that {clean_alias} probably means {candidates[0]['display_name']} and stored that locally.",
         }
     return {
@@ -11209,10 +11225,12 @@ def contact_data_infer_from_email(alias: str, *, scan_limit: int = 50) -> dict[s
         "executed": True,
         "status": "needs_confirmation",
         "read_private_content": True,
+        "read_private_metadata": True,
         "read_email_content": False,
         "alias": clean_alias,
         "candidates": candidates[:5],
         "scanned_count": mail_result.get("scanned_count"),
+        "metadata_privacy_note": "Used recent Mail sender metadata only; did not read email bodies.",
         "reply": (
             f"I do not know who {clean_alias} means yet. I found possible sender names, "
             "but none was confident enough to store without Leo confirming."

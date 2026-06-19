@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.467 makes contact-memory privacy explicit: alias lookup/status do not read private metadata, while email-based alias inference reports that it used Mail sender metadata only and did not read email bodies.",
     "Jarvis 0.1.466 fixes the permissions reply: optional Notifications can still appear as an optional tile, but they no longer show up in the required `Missing:` list.",
     "Jarvis 0.1.465 makes uncertain music playback visibly honest: the status line now says playback did not start or is not confirmed unless Music/LocalOS actually proves a playing state.",
     "Jarvis 0.1.464 refuses false Music bridge success and fixes the official gate timeout: if Music starts a different current track than requested, Jarvis marks playback as not started, and the eight-prompt gate now has enough whole-suite time while preserving per-case speed budgets.",
