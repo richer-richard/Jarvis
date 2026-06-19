@@ -50,6 +50,7 @@
 - [x] Hey Jarvis stop/restart proof added: `JarvisWakeListener.testStopCancelsPendingRestart()` schedules a delayed restart, calls Stop, waits past the delay, and asserts the listener remains Off. Focused Swift tests passed, `swift build --package-path swift-shell --product jarvis-menu-bar` passed, and `swift run --package-path swift-shell jarvis-menu-bar --self-test` passed.
 - [x] Model route guardrail added: if the first model completes as `conversation.fast_local` for an unmistakable RAM/Activity Monitor request, Jarvis falls back to `diagnostics.memory_usage` and records `model_route_fallback`. Full `tests.test_safety` passed `950/950`.
 - [x] Current-code release gate refreshed after commit `3a711b4`: `scripts/pre_build_gate.py --base-url http://127.0.0.1:8765` passed `5/5` at `runtime/pre_build_gate/20260620-030913/summary.json`.
+- [x] Expanded model-punt fallback coverage to Calendar and public price conversion; full `tests.test_safety` passed `952/952`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.

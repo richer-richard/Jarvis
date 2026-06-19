@@ -11128,6 +11128,47 @@ Pages occupied by compressor:             10.
         model_mock.assert_called_once()
         memory_mock.assert_called_once_with()
 
+    def test_model_chat_punt_on_clear_calendar_request_falls_back_to_safe_tool(self):
+        fake_chat = {
+            "tool": "conversation.fast_local",
+            "status": "completed",
+            "executed": True,
+            "reply": "You can check Calendar for your schedule.",
+        }
+        fake_result = {"tool": "calendar.today_schedule", "status": "checked", "executed": True, "reply": "Calendar checked."}
+        with patch("jarvis.planner.run_fast_local_chat", return_value=fake_chat) as model_mock, \
+             patch("jarvis.planner.calendar_today_schedule", return_value=fake_result) as calendar_mock, \
+             patch("jarvis.planner._local_today_iso", return_value="2026-06-20"):
+            result = Planner().handle("Check my calendar for my schedule today.")
+
+        self.assertEqual(result.tool, "calendar.today_schedule")
+        self.assertEqual(result.result["reply"], "Calendar checked.")
+        self.assertEqual(result.result["routing"]["source"], "model_tool_call")
+        self.assertTrue(result.result["model_route_fallback"]["used"])
+        self.assertEqual(result.result["model_route_fallback"]["reason"], "model_answered_instead_of_safe_tool")
+        model_mock.assert_called_once()
+        calendar_mock.assert_called_once_with("2026-06-20")
+
+    def test_model_chat_punt_on_clear_price_request_falls_back_to_safe_tool(self):
+        fake_chat = {
+            "tool": "conversation.fast_local",
+            "status": "completed",
+            "executed": True,
+            "reply": "The Magic Keyboard is an Apple accessory.",
+        }
+        fake_result = {"tool": "commerce.price_convert", "status": "checked", "executed": True, "reply": "Magic Keyboard price checked."}
+        with patch("jarvis.planner.run_fast_local_chat", return_value=fake_chat) as model_mock, \
+             patch("jarvis.planner.commerce_price_convert", return_value=fake_result) as price_mock:
+            result = Planner().handle("Search up the price of the Magic Keyboard and tell me its price converted to yuan.")
+
+        self.assertEqual(result.tool, "commerce.price_convert")
+        self.assertEqual(result.result["reply"], "Magic Keyboard price checked.")
+        self.assertEqual(result.result["routing"]["source"], "model_tool_call")
+        self.assertTrue(result.result["model_route_fallback"]["used"])
+        self.assertEqual(result.result["model_route_fallback"]["reason"], "model_answered_instead_of_safe_tool")
+        model_mock.assert_called_once()
+        price_mock.assert_called_once_with("Magic Keyboard", target_currency="CNY", source_country="US")
+
     def test_browser_session_strategy_refuses_cookie_migration(self):
         result = browser_session_strategy("use Teams without logging in again")
 
