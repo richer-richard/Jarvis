@@ -80,6 +80,7 @@
 - [x] Added native OCR geometry groundwork for future Teams navigation: bundled `jarvis-visible-screen-probe` now emits `ocr_lines` with normalized and pixel boxes; live proof `runtime/visible-screen-geometry-proof.json` captured 50 lines including an `Assignments` line with coordinates.
 - [x] Added a fail-closed OCR target selector: `select_ocr_line_target()` finds a visible line center without clicking; live proof found `Assignments` at center `(68.13, 577.17)` from `runtime/visible-screen-geometry-proof.json`.
 - [x] Threaded the OCR target selector into Teams full-loop proof: live Teams warning at `runtime/full_loop_regression/20260620-053453/summary.json` reports `assignments_target_found: true` and the same `Assignments` center point for the next safe navigation step.
+- [x] Added a fail-closed non-clicking Teams navigation plan: live Teams warning at `runtime/full_loop_regression/20260620-054031/summary.json` reports `assignments_navigation_plan_ready: true`, `will_click: false`, and point `(68.13, 577.17)`; full `tests.test_safety` passed `970/970`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.

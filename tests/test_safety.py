@@ -768,7 +768,13 @@ class VerifySafeScriptTests(unittest.TestCase):
                             "found": True,
                             "text": "Assignments",
                             "center": {"x": 68.13, "y": 577.17},
-                        }
+                        },
+                        "assignments_plan": {
+                            "planned": True,
+                            "will_click": False,
+                            "requires_explicit_live_navigation": True,
+                            "point": {"x": 68.13, "y": 577.17},
+                        },
                     },
                     "visible_reply_preview": (
                         "I read the visible Teams screen, but it does not look like the Music assignment. "
@@ -784,6 +790,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(proof["chrome_page_read_blocked"])
         self.assertTrue(proof["assignments_target_found"])
         self.assertEqual(proof["assignments_target"]["center"], {"x": 68.13, "y": 577.17})
+        self.assertTrue(proof["assignments_navigation_plan_ready"])
+        self.assertFalse(proof["assignments_navigation_plan"]["will_click"])
         self.assertTrue(proof["honest_wrong_subject"])
         self.assertIn("Geography of Greece", proof["visible_reply_preview"])
 
@@ -2686,6 +2694,22 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["status"], "assignment_subject_mismatch")
         self.assertTrue(result["visible_navigation_targets"]["assignments"]["found"])
         self.assertEqual(result["visible_navigation_targets"]["assignments"]["center"], {"x": 68.0, "y": 577.0})
+        plan = result["visible_navigation_targets"]["assignments_plan"]
+        self.assertTrue(plan["planned"])
+        self.assertFalse(plan["will_click"])
+        self.assertTrue(plan["requires_explicit_live_navigation"])
+        self.assertEqual(plan["point"], {"x": 68.0, "y": 577.0})
+
+    def test_voice_loop_qa_visible_navigation_plan_fails_closed(self):
+        plan = voice_loop_qa.visible_navigation_plan(
+            {"found": False, "reason": "no_label_match"},
+            action="click",
+            purpose="open Teams Assignments",
+        )
+
+        self.assertFalse(plan["planned"])
+        self.assertFalse(plan["will_click"])
+        self.assertEqual(plan["reason"], "no_label_match")
 
     def test_voice_loop_qa_browser_page_usefulness_rejects_generic_screen_tool_for_teams_assignment(self):
         response = {

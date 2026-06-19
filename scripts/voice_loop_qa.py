@@ -2126,7 +2126,13 @@ def run_native_visible_screen_follow_up_attempt(
     response_is_auditable = useful or status in {"login_gate_visible", "assignment_subject_mismatch"}
     navigation_targets: dict[str, Any] = {}
     if "teams" in str(command_text or "").casefold() and "assignment" in str(command_text or "").casefold():
-        navigation_targets["assignments"] = select_ocr_line_target(capture_payload, ["Assignments"])
+        assignments_target = select_ocr_line_target(capture_payload, ["Assignments"])
+        navigation_targets["assignments"] = assignments_target
+        navigation_targets["assignments_plan"] = visible_navigation_plan(
+            assignments_target,
+            action="click",
+            purpose="open the Teams Assignments view before reading the requested Music assignment",
+        )
     return {
         "used": useful,
         "status": status,
@@ -2196,6 +2202,42 @@ def select_ocr_line_target(
             "pixels": {"x": round(x, 2), "y": round(y, 2), "width": round(width, 2), "height": round(height, 2)},
         }
     return best if best and best.get("found") else {"found": False, "reason": "no_label_match"}
+
+
+def visible_navigation_plan(
+    target: dict[str, Any],
+    *,
+    action: str,
+    purpose: str,
+) -> dict[str, Any]:
+    """Describe a visible-screen navigation step without performing it."""
+    if not isinstance(target, dict) or not target.get("found"):
+        return {
+            "planned": False,
+            "reason": str(target.get("reason") or "target_missing") if isinstance(target, dict) else "target_missing",
+            "will_click": False,
+        }
+    center = target.get("center") if isinstance(target.get("center"), dict) else {}
+    try:
+        x = float(center.get("x"))
+        y = float(center.get("y"))
+    except (TypeError, ValueError):
+        return {
+            "planned": False,
+            "reason": "target_center_missing",
+            "will_click": False,
+            "target": target,
+        }
+    return {
+        "planned": True,
+        "action": action,
+        "purpose": purpose,
+        "will_click": False,
+        "requires_explicit_live_navigation": True,
+        "target_text": str(target.get("text") or ""),
+        "point": {"x": round(x, 2), "y": round(y, 2)},
+        "target": target,
+    }
 
 
 def open_visible_screen_follow_up_url(command_response: dict[str, Any], *, timeout: float) -> dict[str, Any]:
