@@ -782,6 +782,18 @@ class VerifySafeScriptTests(unittest.TestCase):
                             "point": {"x": 214.0, "y": 344.0},
                             "target_text": "Music Class",
                         },
+                        "all_teams": {
+                            "found": True,
+                            "text": "All teams",
+                            "center": {"x": 257.0, "y": 322.0},
+                        },
+                        "all_teams_plan": {
+                            "planned": True,
+                            "will_click": False,
+                            "requires_explicit_live_navigation": True,
+                            "point": {"x": 257.0, "y": 322.0},
+                            "target_text": "All teams",
+                        },
                         "assignments": {
                             "found": True,
                             "text": "Assignments",
@@ -810,6 +822,9 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(proof["requested_class_target"]["text"], "Music Class")
         self.assertTrue(proof["requested_class_navigation_plan_ready"])
         self.assertEqual(proof["requested_class_navigation_plan"]["point"], {"x": 214.0, "y": 344.0})
+        self.assertTrue(proof["all_teams_target_found"])
+        self.assertEqual(proof["all_teams_target"]["text"], "All teams")
+        self.assertTrue(proof["all_teams_navigation_plan_ready"])
         self.assertTrue(proof["assignments_target_found"])
         self.assertEqual(proof["assignments_target"]["center"], {"x": 68.13, "y": 577.17})
         self.assertTrue(proof["assignments_navigation_plan_ready"])
@@ -2778,9 +2793,10 @@ class VerifySafeScriptTests(unittest.TestCase):
     def test_voice_loop_qa_visible_screen_attempt_reports_assignments_target(self):
         capture_payload = {
             "status": "captured",
-            "text": "Microsoft Teams\nMusic Class\nAssignments\nLesson 2: The Geography of Greece Group Assignment",
-            "diagnostics": {"line_count": 4, "target_app_name": "Google Chrome"},
+            "text": "Microsoft Teams\nAll teams\nMusic Class\nAssignments\nLesson 2: The Geography of Greece Group Assignment",
+            "diagnostics": {"line_count": 5, "target_app_name": "Google Chrome"},
             "ocr_lines": [
+                {"text": "All teams", "pixels": {"x": 171, "y": 306, "width": 172, "height": 33}},
                 {"text": "Music Class", "pixels": {"x": 120, "y": 330, "width": 188, "height": 28}},
                 {"text": "Assignments", "pixels": {"x": 4, "y": 566, "width": 128, "height": 22}},
             ],
@@ -2818,6 +2834,10 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(class_plan["planned"])
         self.assertFalse(class_plan["will_click"])
         self.assertEqual(class_plan["point"], {"x": 214.0, "y": 344.0})
+        self.assertTrue(result["visible_navigation_targets"]["all_teams"]["found"])
+        all_teams_plan = result["visible_navigation_targets"]["all_teams_plan"]
+        self.assertTrue(all_teams_plan["planned"])
+        self.assertEqual(all_teams_plan["point"], {"x": 257.0, "y": 322.5})
         self.assertTrue(result["visible_navigation_targets"]["assignments"]["found"])
         self.assertEqual(result["visible_navigation_targets"]["assignments"]["center"], {"x": 68.0, "y": 577.0})
         plan = result["visible_navigation_targets"]["assignments_plan"]
@@ -2891,6 +2911,11 @@ class VerifySafeScriptTests(unittest.TestCase):
                     "will_click": False,
                     "point": {"x": 214.0, "y": 344.0},
                 },
+                "all_teams_plan": {
+                    "planned": True,
+                    "will_click": False,
+                    "point": {"x": 257.0, "y": 322.5},
+                },
                 "assignments_plan": {
                     "planned": True,
                     "will_click": False,
@@ -2922,6 +2947,50 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["status"], "assignment_subject_mismatch")
         self.assertEqual(result["visible_navigation_execution"]["status"], "live_navigation_not_unlocked")
         self.assertEqual(result["attempts"], 1)
+
+    def test_voice_loop_qa_visible_screen_followup_prefers_all_teams_before_assignments(self):
+        command_response = {"tool": "teams.assignment", "result": {}}
+        blocked_browser = {"status": "browser_permission_blocked", "tool": "browser.read_page"}
+        mismatch_attempt = {
+            "used": False,
+            "status": "assignment_subject_mismatch",
+            "tool": "screen.visible_text",
+            "visible_navigation_targets": {
+                "requested_class_plan": {"planned": False, "will_click": False},
+                "all_teams_plan": {
+                    "planned": True,
+                    "will_click": False,
+                    "point": {"x": 257.0, "y": 322.5},
+                },
+                "assignments_plan": {
+                    "planned": True,
+                    "will_click": False,
+                    "point": {"x": 68.0, "y": 577.0},
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.VISIBLE_SCREEN_PROBE", Path("/tmp/fake-probe")), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("scripts.voice_loop_qa.run_browser_page_follow_up", return_value=blocked_browser), \
+             patch("scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt", return_value=mismatch_attempt), \
+             patch("scripts.voice_loop_qa.execute_visible_navigation_plan", return_value={
+                 "attempted": False,
+                 "executed": False,
+                 "status": "live_navigation_not_unlocked",
+             }) as execute_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response=command_response,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+                exercise_visible_navigation=True,
+            )
+
+        execute_mock.assert_called_once()
+        self.assertEqual(execute_mock.call_args.args[0]["point"], {"x": 257.0, "y": 322.5})
+        self.assertEqual(result["visible_navigation_execution"]["status"], "live_navigation_not_unlocked")
 
     def test_full_loop_visible_navigation_flag_is_teams_only(self):
         source = (PROJECT_ROOT / "scripts" / "full_loop_regression.py").read_text(encoding="utf-8")
@@ -24435,6 +24504,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                         "target_text": "Music Class",
                                         "point": {"x": 214.0, "y": 344.0},
                                     },
+                                    "all_teams_navigation_plan_ready": True,
+                                    "all_teams_navigation_plan": {
+                                        "point": {"x": 257.0, "y": 322.5},
+                                    },
                                     "assignments_navigation_plan_ready": True,
                                     "assignments_navigation_plan": {
                                         "point": {"x": 68.13, "y": 577.17}
@@ -24462,6 +24535,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Teams assignment is wrong_subject", blocker)
         self.assertIn("Chrome page-read is blocked", blocker)
         self.assertIn("Music Class no-click navigation plan is ready at (214.0, 344.0)", blocker)
+        self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5)", blocker)
         self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17)", blocker)
 
     def test_render_overnight_status_latest_latency_smoke_accepts_checked_success(self):

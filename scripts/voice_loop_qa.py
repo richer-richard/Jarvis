@@ -1989,6 +1989,8 @@ def run_native_visible_screen_follow_up(
         if isinstance(targets, dict):
             plan = targets.get("requested_class_plan")
             if not (isinstance(plan, dict) and plan.get("planned")):
+                plan = targets.get("all_teams_plan")
+            if not (isinstance(plan, dict) and plan.get("planned")):
                 plan = targets.get("assignments_plan")
             if isinstance(plan, dict) and plan.get("planned"):
                 navigation_result = execute_visible_navigation_plan(
@@ -2184,6 +2186,13 @@ def run_native_visible_screen_follow_up_attempt(
                 action="click",
                 purpose="open the requested Teams class before reading its Assignments view",
             )
+        all_teams_target = select_ocr_line_target(capture_payload, ["All teams"])
+        navigation_targets["all_teams"] = all_teams_target
+        navigation_targets["all_teams_plan"] = visible_navigation_plan(
+            all_teams_target,
+            action="click",
+            purpose="return to the Teams list so the requested class can be selected",
+        )
         assignments_target = select_ocr_line_target(capture_payload, ["Assignments"])
         navigation_targets["assignments"] = assignments_target
         navigation_targets["assignments_plan"] = visible_navigation_plan(

@@ -1179,10 +1179,14 @@ def run_teams_assignment_case(
                 warnings.append("Chrome page-read was blocked before the visible-screen fallback.")
             if action_proof.get("requested_class_target_found"):
                 warnings.append("Visible requested-class navigation target was found for the next safe navigation step.")
+            if action_proof.get("all_teams_target_found"):
+                warnings.append("Visible All teams navigation target was found for the next safe navigation step.")
             if action_proof.get("assignments_target_found"):
                 warnings.append("Visible Assignments navigation target was found for the next safe navigation step.")
             if action_proof.get("requested_class_navigation_plan_ready"):
                 warnings.append("A non-clicking requested-class navigation plan is ready; live navigation still requires an explicit safe run.")
+            if action_proof.get("all_teams_navigation_plan_ready"):
+                warnings.append("A non-clicking All teams navigation plan is ready; live navigation still requires an explicit safe run.")
             if action_proof.get("assignments_navigation_plan_ready"):
                 warnings.append("A non-clicking Assignments navigation plan is ready; live navigation still requires an explicit safe run.")
         if not action_proof["passed"]:
@@ -1242,6 +1246,16 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         if isinstance(navigation_targets.get("requested_class_plan"), dict)
         else {}
     )
+    all_teams_target = (
+        navigation_targets.get("all_teams")
+        if isinstance(navigation_targets.get("all_teams"), dict)
+        else {}
+    )
+    all_teams_plan = (
+        navigation_targets.get("all_teams_plan")
+        if isinstance(navigation_targets.get("all_teams_plan"), dict)
+        else {}
+    )
     combined_reply = " ".join(part for part in [visible_reply, follow_up_reply] if part).strip()
     lower_reply = combined_reply.casefold()
     failures: list[str] = []
@@ -1297,6 +1311,10 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "requested_class_target": requested_class_target,
         "requested_class_navigation_plan_ready": bool(requested_class_plan.get("planned")),
         "requested_class_navigation_plan": requested_class_plan,
+        "all_teams_target_found": bool(all_teams_target.get("found")),
+        "all_teams_target": all_teams_target,
+        "all_teams_navigation_plan_ready": bool(all_teams_plan.get("planned")),
+        "all_teams_navigation_plan": all_teams_plan,
         "capability_complete": capability_complete,
         "completion_status": completion_status,
         "visible_reply_preview": combined_reply[:500],
