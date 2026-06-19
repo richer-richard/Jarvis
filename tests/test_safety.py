@@ -8735,6 +8735,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("readVisibleScreenText", probe_source)
         self.assertIn("targetAppName: arguments.targetAppName", probe_source)
         self.assertIn("targetBundleIdentifier: arguments.targetBundleIdentifier", probe_source)
+        self.assertIn('"ocr_lines": capture.lines.map(\\.jsonObject)', probe_source)
         self.assertIn('"--target-app-name"', probe_source)
         self.assertIn('"--target-bundle-id"', probe_source)
         permission_probe_source = (
@@ -8774,6 +8775,23 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("NSAppleScript", native_browser_reader_source)
         self.assertIn('application "Google Chrome"', native_browser_reader_source)
         self.assertIn("execute javascript", native_browser_reader_source)
+
+    def test_visible_screen_probe_preserves_ocr_line_geometry(self):
+        native_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMacNative"
+            / "JarvisNativeOutlookReader.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("public struct NativeOCRLine", native_source)
+        self.assertIn("public let boundingBox: CGRect", native_source)
+        self.assertIn('"normalized"', native_source)
+        self.assertIn('"pixels"', native_source)
+        self.assertIn("observation.boundingBox", native_source)
+        self.assertIn("recognizeTextLines(in: image)", native_source)
+        self.assertIn("lines.map(\\.text).joined", native_source)
 
     def test_status_helper_exits_when_parent_app_disappears(self):
         app_source = (

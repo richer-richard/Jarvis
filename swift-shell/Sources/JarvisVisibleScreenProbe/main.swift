@@ -17,6 +17,7 @@ struct JarvisVisibleScreenProbe {
             let payload: [String: Any] = [
                 "status": "captured",
                 "text": capture.text,
+                "ocr_lines": capture.lines.map(\.jsonObject),
                 "diagnostics": capture.diagnostics.jsonObject,
             ]
             writeJSON(payload, using: encoder)

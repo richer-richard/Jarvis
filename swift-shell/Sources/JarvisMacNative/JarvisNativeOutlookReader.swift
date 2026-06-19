@@ -7,10 +7,37 @@ import Vision
 public struct NativeOutlookOCRResult: Sendable {
     public let text: String
     public let diagnostics: VisibleOutlookTextDiagnostics
+    public let lines: [NativeOCRLine]
 
-    public init(text: String, diagnostics: VisibleOutlookTextDiagnostics) {
+    public init(text: String, diagnostics: VisibleOutlookTextDiagnostics, lines: [NativeOCRLine] = []) {
         self.text = text
         self.diagnostics = diagnostics
+        self.lines = lines
+    }
+}
+
+public struct NativeOCRLine: Sendable {
+    public let text: String
+    public let boundingBox: CGRect
+    public let imageWidth: Int
+    public let imageHeight: Int
+
+    public var jsonObject: [String: Any] {
+        [
+            "text": text,
+            "normalized": [
+                "x": boundingBox.origin.x,
+                "y": boundingBox.origin.y,
+                "width": boundingBox.width,
+                "height": boundingBox.height,
+            ],
+            "pixels": [
+                "x": boundingBox.origin.x * CGFloat(imageWidth),
+                "y": (1.0 - boundingBox.origin.y - boundingBox.height) * CGFloat(imageHeight),
+                "width": boundingBox.width * CGFloat(imageWidth),
+                "height": boundingBox.height * CGFloat(imageHeight),
+            ],
+        ]
     }
 }
 
@@ -31,8 +58,8 @@ public enum JarvisNativeOutlookReader {
             throw NativeOutlookReadError.captureFailed
         }
 
-        let lines = try recognizeText(in: image)
-        let text = String(lines.joined(separator: "\n").prefix(12_000))
+        let lines = try recognizeTextLines(in: image)
+        let text = String(lines.map(\.text).joined(separator: "\n").prefix(12_000))
         return NativeOutlookOCRResult(
             text: text,
             diagnostics: VisibleOutlookTextDiagnostics(
@@ -45,7 +72,8 @@ public enum JarvisNativeOutlookReader {
                 appBundlePath: Bundle.main.bundleURL.path,
                 appExecutablePath: Bundle.main.executableURL?.path ?? "",
                 bundleIdentifier: Bundle.main.bundleIdentifier ?? ""
-            )
+            ),
+            lines: lines
         )
     }
 
@@ -78,21 +106,21 @@ public enum JarvisNativeOutlookReader {
         }
 
         var image = initialImage
-        var lines = try recognizeText(in: image)
+        var lines = try recognizeTextLines(in: image)
         var source = "native_vision_ocr_screen"
-        let initialText = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialText = lines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         if (lines.isEmpty || lines.count <= 2 || initialText.count < 80),
            ownerNames != nil,
            let displayImage = CGDisplayCreateImage(CGMainDisplayID()) {
-            let displayLines = try recognizeText(in: displayImage)
-            let displayText = displayLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayLines = try recognizeTextLines(in: displayImage)
+            let displayText = displayLines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             if displayLines.count > lines.count || displayText.count > initialText.count + 80 {
                 image = displayImage
                 lines = displayLines
                 source = "native_vision_ocr_screen_display_fallback"
             }
         }
-        let text = String(lines.joined(separator: "\n").prefix(12_000))
+        let text = String(lines.map(\.text).joined(separator: "\n").prefix(12_000))
         return NativeOutlookOCRResult(
             text: text,
             diagnostics: VisibleOutlookTextDiagnostics(
@@ -107,7 +135,8 @@ public enum JarvisNativeOutlookReader {
                 appExecutablePath: Bundle.main.executableURL?.path ?? "",
                 bundleIdentifier: Bundle.main.bundleIdentifier ?? "",
                 targetAppName: cleanTargetName ?? ""
-            )
+            ),
+            lines: lines
         )
     }
 
@@ -147,6 +176,10 @@ public enum JarvisNativeOutlookReader {
     }
 
     private static func recognizeText(in image: CGImage) throws -> [String] {
+        try recognizeTextLines(in: image).map(\.text)
+    }
+
+    private static func recognizeTextLines(in image: CGImage) throws -> [NativeOCRLine] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
@@ -158,7 +191,15 @@ public enum JarvisNativeOutlookReader {
         let observations = request.results ?? []
         return observations.compactMap { observation in
             let line = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return line.isEmpty ? nil : line
+            if line.isEmpty {
+                return nil
+            }
+            return NativeOCRLine(
+                text: line,
+                boundingBox: observation.boundingBox,
+                imageWidth: image.width,
+                imageHeight: image.height
+            )
         }
     }
 
