@@ -1155,7 +1155,7 @@ def _speech_text_from_result(result: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             sanitized = _sanitize_spoken_text(value)
             if sanitized:
-                return value.strip()
+                return sanitized
     return ""
 
 

@@ -136,6 +136,10 @@ Status legend:
    - The model should know its reply may be spoken.
    - It should avoid URLs, backend details, long diagnostics, and non-English
      explanations unless needed.
+   - 2026-06-19 proof update: automatic speech now strips inline backend/model
+     timing fragments and leaked JSON/tool entities before TTS, and server
+     speech selection passes the sanitized payload rather than the original
+     reply text.
 
 5. Partially fixed/risky: cloud/local model routing is still a product risk.
    - Candidate lanes mentioned: Groq Llama 70B, GPT OSS 120B cloud, GPT OSS 20B,
@@ -471,6 +475,9 @@ Status legend:
 
 2. Partially fixed/risky: tool/model internals must stay out of user-visible and
    spoken output.
+   - 2026-06-19 proof update: TTS sanitizer covers mixed useful text plus
+     leaked `selected_tool`/`entities` JSON and inline `Tool time`/Groq model
+     diagnostics.
 
 3. Open/unknown: stronger browser/computer-control tools must avoid destructive
    actions unless confirmed.

@@ -16923,6 +16923,27 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("Worker", spoken)
         self.assertNotIn("Fast model", inline)
 
+    def test_auto_speech_sanitizer_drops_inline_backend_and_tool_json(self):
+        inline_tool_time = jarvis_tools._sanitize_spoken_text("Opened Microsoft Outlook. Tool time: 0.1s")
+        inline_model = jarvis_tools._sanitize_spoken_text(
+            "Hello. Groq llama-3.3-70b-versatile | Fast model time: 1.3s | First visible: 1.2s"
+        )
+        json_tool = jarvis_tools._sanitize_spoken_text(
+            'Yes sir. {"selected_tool":"outlook.visible_summary","entities":{"selection":"latest"}} Checking now.'
+        )
+        loose_tool = jarvis_tools._sanitize_spoken_text(
+            "Yes sir, checking. selected_tool: outlook.visible_summary entities: unread_first"
+        )
+
+        self.assertEqual(inline_tool_time, "Opened Microsoft Outlook.")
+        self.assertEqual(inline_model, "Hello.")
+        self.assertEqual(json_tool, "Yes sir. Checking now.")
+        self.assertEqual(loose_tool, "Yes sir, checking.")
+        self.assertNotIn("Tool time", inline_tool_time)
+        self.assertNotIn("Groq", inline_model)
+        self.assertNotIn("selected", json_tool + loose_tool)
+        self.assertNotIn("outlook", json_tool + loose_tool)
+
     def test_auto_speech_sanitizer_drops_future_tool_call_fragments(self):
         spoken = jarvis_tools._sanitize_spoken_text(
             "Yes sir, checking your calendar now.\\Calendar(1, today, false) Your schedule is clear."
@@ -20358,7 +20379,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertEqual(result["tool"], "outlook.visible_summary")
         self.assertEqual(result["speech"]["reason"], "final")
-        speak_mock.assert_called_once_with(clean_summary, reason="final")
+        speak_mock.assert_called_once_with(
+            "Young Pioneers gave a link to a feedback form about a charity sale that you may need to fill in.",
+            reason="final",
+        )
 
     def test_status_speech_endpoint_uses_status_reason(self):
         server = JarvisServer()
@@ -20823,7 +20847,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertEqual(result["tool"], "diagnostics.device")
         self.assertEqual(result["speech"]["reason"], "final")
-        speak_mock.assert_called_once_with("Device status: test Mac profile.", reason="final")
+        speak_mock.assert_called_once_with("Device status, test Mac profile.", reason="final")
 
     def test_tts_diagnostics_auto_speaks_concise_summary(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -20859,6 +20883,29 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["speech"]["reason"], "final")
         speak_mock.assert_called_once_with(safe_reply, reason="final")
 
+    def test_auto_speech_passes_sanitized_mixed_reply_to_tts(self):
+        leaky_reply = (
+            'Opened Microsoft Outlook. Tool time: 0.1s '
+            '{"selected_tool":"app.open","entities":{"app_name":"Microsoft Outlook"}}'
+        )
+        fake_plan = PlannedResult(
+            command="open outlook",
+            tool="app.open",
+            summary=leaky_reply,
+            assessment=classify_command("open outlook").to_dict(),
+            result={"reply": leaky_reply},
+            executed=True,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch.object(server.planner, "handle", return_value=fake_plan), \
+                 patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final"}) as speak_mock:
+                result = server.command("open outlook")
+
+        self.assertEqual(result["speech"]["reason"], "final")
+        speak_mock.assert_called_once_with("Opened Microsoft Outlook.", reason="final")
+
     def test_normal_tool_reply_auto_speaks_final_answer(self):
         fake_plan = PlannedResult(
             command="wake status",
@@ -20878,7 +20925,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertEqual(result["tool"], "diagnostics.wake")
         self.assertEqual(result["speech"]["reason"], "final")
-        speak_mock.assert_called_once_with("Wake status: microphone listener is available.", reason="final")
+        speak_mock.assert_called_once_with("Wake status, microphone listener is available.", reason="final")
 
     def test_stream_command_respects_pause_mode(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1562,6 +1562,7 @@ def _say_voice_available(voice: str, voice_output: str = "") -> bool:
 def _sanitize_spoken_text(text: str) -> str:
     spoken = str(text or "").replace("\x00", " ")
     spoken = _strip_fast_chat_hidden_call_fragments(spoken)
+    spoken = _strip_spoken_json_tool_fragments(spoken)
     spoken = re.sub(r"(?is)<think>.*?</think>", " ", spoken)
     spoken = _strip_spoken_diagnostic_fragments(spoken)
     spoken = _strip_spoken_internal_sections(spoken)
@@ -1571,6 +1572,7 @@ def _sanitize_spoken_text(text: str) -> str:
     spoken = _english_only_spoken_text(spoken)
     spoken = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", "", spoken)
     spoken = re.sub(r"(?im)^\s*(?:summary|answer|result|reply|action|actions|details?|link|subject|sender|from)\s*:\s*", "", spoken)
+    spoken = re.sub(r"(?i)\b(?:selected[_\s-]*tool|entities|tool)\s*[:=]\s*[^\s,.!?;]+(?:\.[^\s,.!?;]+)*", " ", spoken)
     spoken = re.sub(r"[*_`#>]+", "", spoken)
     spoken = re.sub(r"\s*\n+\s*", ", ", spoken)
     spoken = re.sub(r"\s*[:;]\s*", ", ", spoken)
@@ -1581,6 +1583,23 @@ def _sanitize_spoken_text(text: str) -> str:
     spoken = re.sub(r"\s+([,.!?])", r"\1", spoken)
     spoken = re.sub(r"\.{2,}", ".", spoken)
     return spoken.strip(" ,")[:TTS_MAX_CHARS]
+
+
+def _strip_spoken_json_tool_fragments(text: str) -> str:
+    """Remove leaked JSON-ish tool payloads before punctuation is flattened for TTS."""
+    value = str(text or "")
+    toolish_key = re.compile(r'"(?:selected_tool|tool|entities)"', flags=re.IGNORECASE)
+    output: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == "{":
+            parsed, end = _extract_json_object_at(value, index)
+            if parsed is not None and toolish_key.search(value[index:end]):
+                index = end
+                continue
+        output.append(value[index])
+        index += 1
+    return "".join(output)
 
 
 def _strip_spoken_diagnostic_fragments(text: str) -> str:
@@ -1609,6 +1628,21 @@ def _strip_spoken_diagnostic_fragments(text: str) -> str:
         " ",
         cleaned,
         flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"(?i)\s+\b(?:tool\s*time|fast\s*model\s*time|first\s*visible)\b\s*[:=,]?\s*\d+(?:\.\d+)?s?\b[^.\n]*(?:\.|$)?",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)\s+\b(?:backend|model)\b\s*[:=,]?\s*[^.\n]*(?:\.|$)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)\s+\b(?:groq|ollama)\b[^\n]*",
+        " ",
+        cleaned,
     )
     return cleaned
 
