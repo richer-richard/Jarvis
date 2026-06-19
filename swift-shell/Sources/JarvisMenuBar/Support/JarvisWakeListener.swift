@@ -308,10 +308,9 @@ final class JarvisWakeListener {
                 )
                 return
             }
-            scheduleRestart(
-                after: phase == .awaitingCommand ? Self.commandRestartDelaySeconds : Self.wakeRestartDelaySeconds,
-                generation: generation
-            )
+            let restartDelay = phase == .awaitingCommand ? Self.commandRestartDelaySeconds : Self.wakeRestartDelaySeconds
+            stopRecognitionSession()
+            scheduleRestart(after: restartDelay)
         }
     }
 

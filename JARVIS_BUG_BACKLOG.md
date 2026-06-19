@@ -264,6 +264,12 @@ Status legend:
     - Later build flickered badly in the menu bar.
     - It also said "Yes sir" after wake, then dictation/menu-bar flickered and
       stopped hearing him.
+    - 2026-06-19 proof update: final/error recognition callbacks now stop the
+      current audio engine and recognition task before waiting to restart, so
+      old Apple Speech sessions are not left active during the restart delay.
+      Focused source-contract tests and the Swift menu-bar self-test cover this
+      restart-churn guard. Remaining risk: live macOS Speech behavior still
+      needs longer real microphone soak testing.
 
 11. Partially fixed/proved: Hey Jarvis should always listen after Start Hey
     Jarvis until Leo stops it.

@@ -15243,6 +15243,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("nonisolated private static func makeRecognitionTask", listener_source)
         self.assertIn("recognitionGeneration", listener_source)
         self.assertIn("generation == recognitionGeneration", listener_source)
+        self.assertIn("let restartDelay = phase == .awaitingCommand ? Self.commandRestartDelaySeconds : Self.wakeRestartDelaySeconds", listener_source)
+        self.assertLess(
+            listener_source.index("let restartDelay = phase == .awaitingCommand ? Self.commandRestartDelaySeconds : Self.wakeRestartDelaySeconds"),
+            listener_source.index("stopRecognitionSession()\n            scheduleRestart(after: restartDelay)"),
+        )
         self.assertIn('status = "Wake detected; listening for your command"', listener_source)
         self.assertNotIn("scheduleRestart(after: 0.15)", listener_source)
         self.assertIn("static func testPermissionCallbackPath() async -> Bool", listener_source)
@@ -15383,6 +15388,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("minimumStableRecognitionSeconds", listener_source)
         self.assertIn("recoverAfterRecognitionIssue", listener_source)
         self.assertIn("Speech Recognition ended before hearing speech; restarting Hey Jarvis", listener_source)
+        self.assertIn("stopRecognitionSession()\n            scheduleRestart(after: restartDelay)", listener_source)
         self.assertIn("lastWakeRecoveryStatus", model_source)
         self.assertIn("listener_recovering", model_source)
         self.assertNotIn("Wake listener paused after repeated microphone restarts", listener_source)
