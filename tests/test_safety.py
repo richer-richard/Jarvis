@@ -17651,6 +17651,37 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["status_text"], "Checking your email now.")
         self.assertNotIn("skill", result["status_text"].lower())
 
+    def test_fast_chat_tool_request_replaces_skill_wording_status(self):
+        tool_specs = [{"tool": "outlook.visible_summary", "description": "Read email.", "entities": ["selection"]}]
+
+        visible_bad = jarvis_tools._parse_fast_chat_tool_request(
+            'Finding the email skill. \\tool({"tool":"outlook.visible_summary","entities":{"selection":"latest"}})',
+            tool_specs,
+        )
+        hidden_bad = jarvis_tools._parse_fast_chat_tool_request(
+            '\\tool({"tool":"outlook.visible_summary","status":"Let me identify the task and find the email skill.","entities":{"selection":"latest"}})',
+            tool_specs,
+        )
+
+        self.assertIsNotNone(visible_bad)
+        self.assertEqual(visible_bad["status_text"], "Checking your email now.")
+        self.assertNotIn("skill", visible_bad["status_text"].lower())
+        self.assertIsNotNone(hidden_bad)
+        self.assertEqual(hidden_bad["status_text"], "Checking your email now.")
+        self.assertNotIn("identify", hidden_bad["status_text"].lower())
+
+    def test_fast_chat_tool_request_replaces_generic_tool_call_status(self):
+        tool_specs = [{"tool": "calendar.today_schedule", "description": "Read today's calendar.", "entities": []}]
+
+        result = jarvis_tools._parse_fast_chat_tool_request(
+            'Choosing the tool call. \\tool({"tool":"calendar.today_schedule","entities":{}})',
+            tool_specs,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status_text"], "Checking your calendar now.")
+        self.assertNotIn("tool", result["status_text"].lower())
+
     def test_fast_chat_tool_call_can_be_embedded_inside_visible_words(self):
         tool_specs = [{"tool": "outlook.visible_summary", "description": "Read email.", "entities": ["selection"]}]
 

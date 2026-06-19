@@ -109,6 +109,10 @@ Status legend:
    return with the summary.
    - Good: "Sure. Let me check your email..."
    - Bad: "Let me identify the task", "finding email skill", or exposing "skill".
+   - 2026-06-19 proof update: fast-chat tool requests now naturalize
+     model-provided status text before it can be shown or spoken. Bad lines such
+     as "Finding the email skill" or "Let me identify the task" are replaced
+     with tool-specific natural lines like "Checking your email now."
 
 5. Fixed/proved at least once: no-result email replies should not say scan-count
    internals aloud.

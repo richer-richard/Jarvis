@@ -17189,12 +17189,47 @@ def _parse_fast_chat_tool_request(text: str, tool_specs: list[dict[str, Any]]) -
         status_text = visible_status
     if not status_text:
         status_text = f"Checking {selected_tool} now."
+    status_text = _naturalize_fast_chat_tool_status(selected_tool, status_text)
     return {
         "selected_tool": selected_tool,
         "status_text": status_text[:160],
         "entities": {str(key): value for key, value in entities.items()},
         "reply": "",
     }
+
+
+def _naturalize_fast_chat_tool_status(selected_tool: str, status_text: str) -> str:
+    """Keep model-provided tool status lines natural and speakable."""
+    text = re.sub(r"\s+", " ", str(status_text or "")).strip()
+    lower = text.casefold()
+    unnatural_patterns = (
+        "skill",
+        "identify the task",
+        "identify task",
+        "determine the tool",
+        "choose the tool",
+        "tool call",
+        "calling tool",
+        "selected_tool",
+        "\\tool",
+    )
+    if text and not any(pattern in lower for pattern in unnatural_patterns):
+        return text
+    labels = {
+        "outlook.visible_summary": "Checking your email now.",
+        "localos.music_play": "Starting that through Local OS now.",
+        "localos.music_stop": "Stopping that music now.",
+        "diagnostics.memory_usage": "Checking this Mac now.",
+        "calendar.today_schedule": "Checking your calendar now.",
+        "browser.open_url": "Preparing that browser action now.",
+        "browser.current_tab": "Checking the current Chrome tab now.",
+        "browser.read_page": "Reading the current Chrome page now.",
+        "app.open": "Opening that app now.",
+        "app.focus": "Focusing that app now.",
+        "codex.chat_plan": "Preparing that Codex plan now.",
+        "voice.loop_simulation": "Simulating the voice loop now.",
+    }
+    return labels.get(str(selected_tool or ""), "Checking that now.")
 
 
 def _fast_chat_malformed_tool_result(
