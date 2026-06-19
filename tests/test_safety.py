@@ -4977,6 +4977,7 @@ class PlannerTests(unittest.TestCase):
             result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
 
         self.assertEqual(result["status"], "not_queued")
+        self.assertEqual(result["played_by"], "none")
         self.assertEqual(result["control_lane"], "music_app_bridge")
         self.assertEqual(result["playback_confirmation"], "music_app_not_playing")
         self.assertIn("did not confirm playback", result["reply"])
@@ -11147,8 +11148,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.461}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-461}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.462}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-462}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('cleanup_numbered_app_bundles()', script)
         self.assertIn("find \"$OUTPUT_ROOT\" -maxdepth 1 -type d -name \"$APP_NAME-*.app\" -exec rm -rf {} +", script)

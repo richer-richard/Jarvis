@@ -3922,6 +3922,7 @@ def localos_music_play(
             **base,
             "status": "not_queued",
             "available": False,
+            "played_by": "none",
             "control_lane": "music_app_bridge",
             "playback_confirmation": "music_app_not_playing",
             "music_app_attempt": music_app_attempt,

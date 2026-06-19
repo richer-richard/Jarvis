@@ -28,7 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
-    "Jarvis 0.1.461 makes Music playback ownership stricter: if the native Music app bridge answers but cannot confirm playback, Jarvis stops there and says Music did not start instead of falling through to LocalOS/Chrome or another hidden player.",
+    "Jarvis 0.1.462 makes Music playback ownership stricter: if the native Music app bridge answers but cannot confirm playback, Jarvis records no playback owner and says Music did not start instead of falling through to LocalOS/Chrome or another hidden player.",
     "Jarvis 0.1.460 makes the menu-bar Stop Music action visible and honest: after the emergency control runs, the Jarvis chat now shows the actual backend result, such as stopped playback, queued LocalOS stop, or Chrome permission blocking.",
     "Jarvis 0.1.459 makes permission readiness less misleading: optional notification access no longer reduces the `App perms` ready count or appears as a required pending permission unless a future timer/background-alert feature actually needs it.",
     "Jarvis 0.1.458 makes explicit speech interruptions immediate: if you say `stop`, `wait`, or `shut up` while Jarvis is talking, that now beats the wake-listener grace window instead of being mistaken for harmless echo protection.",
