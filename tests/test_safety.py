@@ -770,6 +770,18 @@ class VerifySafeScriptTests(unittest.TestCase):
                         "tool": "browser.read_page",
                     },
                     "visible_navigation_targets": {
+                        "requested_class": {
+                            "found": True,
+                            "text": "Music Class",
+                            "center": {"x": 214.0, "y": 344.0},
+                        },
+                        "requested_class_plan": {
+                            "planned": True,
+                            "will_click": False,
+                            "requires_explicit_live_navigation": True,
+                            "point": {"x": 214.0, "y": 344.0},
+                            "target_text": "Music Class",
+                        },
                         "assignments": {
                             "found": True,
                             "text": "Assignments",
@@ -794,6 +806,10 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["capability_complete"])
         self.assertEqual(proof["completion_status"], "wrong_subject")
         self.assertTrue(proof["chrome_page_read_blocked"])
+        self.assertTrue(proof["requested_class_target_found"])
+        self.assertEqual(proof["requested_class_target"]["text"], "Music Class")
+        self.assertTrue(proof["requested_class_navigation_plan_ready"])
+        self.assertEqual(proof["requested_class_navigation_plan"]["point"], {"x": 214.0, "y": 344.0})
         self.assertTrue(proof["assignments_target_found"])
         self.assertEqual(proof["assignments_target"]["center"], {"x": 68.13, "y": 577.17})
         self.assertTrue(proof["assignments_navigation_plan_ready"])
@@ -2706,12 +2722,43 @@ class VerifySafeScriptTests(unittest.TestCase):
             {"found": False, "reason": "no_label_match"},
         )
 
+    def test_voice_loop_qa_ocr_line_target_does_not_match_music_inside_musical(self):
+        target = voice_loop_qa.select_ocr_line_target(
+            {
+                "ocr_lines": [
+                    {
+                        "text": "(293) Hamilton - Full Musical",
+                        "pixels": {"x": 795.56, "y": 26.0, "width": 325.26, "height": 27.0},
+                    }
+                ]
+            },
+            ["Music"],
+        )
+
+        self.assertEqual(target, {"found": False, "reason": "no_label_match"})
+
+    def test_voice_loop_qa_ocr_line_target_does_not_reverse_match_music_assignments(self):
+        target = voice_loop_qa.select_ocr_line_target(
+            {
+                "ocr_lines": [
+                    {
+                        "text": "Assignments",
+                        "pixels": {"x": 4.4, "y": 566.2, "width": 127.4, "height": 21.9},
+                    }
+                ]
+            },
+            ["Music Assignments"],
+        )
+
+        self.assertEqual(target, {"found": False, "reason": "no_label_match"})
+
     def test_voice_loop_qa_visible_screen_attempt_reports_assignments_target(self):
         capture_payload = {
             "status": "captured",
-            "text": "Microsoft Teams\nAssignments\nLesson 2: The Geography of Greece Group Assignment",
-            "diagnostics": {"line_count": 3, "target_app_name": "Google Chrome"},
+            "text": "Microsoft Teams\nMusic Class\nAssignments\nLesson 2: The Geography of Greece Group Assignment",
+            "diagnostics": {"line_count": 4, "target_app_name": "Google Chrome"},
             "ocr_lines": [
+                {"text": "Music Class", "pixels": {"x": 120, "y": 330, "width": 188, "height": 28}},
                 {"text": "Assignments", "pixels": {"x": 4, "y": 566, "width": 128, "height": 22}},
             ],
         }
@@ -2742,6 +2789,12 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "assignment_subject_mismatch")
+        self.assertTrue(result["visible_navigation_targets"]["requested_class"]["found"])
+        self.assertEqual(result["visible_navigation_targets"]["requested_class"]["text"], "Music Class")
+        class_plan = result["visible_navigation_targets"]["requested_class_plan"]
+        self.assertTrue(class_plan["planned"])
+        self.assertFalse(class_plan["will_click"])
+        self.assertEqual(class_plan["point"], {"x": 214.0, "y": 344.0})
         self.assertTrue(result["visible_navigation_targets"]["assignments"]["found"])
         self.assertEqual(result["visible_navigation_targets"]["assignments"]["center"], {"x": 68.0, "y": 577.0})
         plan = result["visible_navigation_targets"]["assignments_plan"]
@@ -2810,6 +2863,11 @@ class VerifySafeScriptTests(unittest.TestCase):
             "status": "assignment_subject_mismatch",
             "tool": "screen.visible_text",
             "visible_navigation_targets": {
+                "requested_class_plan": {
+                    "planned": True,
+                    "will_click": False,
+                    "point": {"x": 214.0, "y": 344.0},
+                },
                 "assignments_plan": {
                     "planned": True,
                     "will_click": False,
@@ -2837,6 +2895,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
 
         execute_mock.assert_called_once()
+        self.assertEqual(execute_mock.call_args.args[0]["point"], {"x": 214.0, "y": 344.0})
         self.assertEqual(result["status"], "assignment_subject_mismatch")
         self.assertEqual(result["visible_navigation_execution"]["status"], "live_navigation_not_unlocked")
         self.assertEqual(result["attempts"], 1)
@@ -24325,6 +24384,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                 "action_proof": {
                                     "completion_status": "wrong_subject",
                                     "chrome_page_read_blocked": True,
+                                    "requested_class_navigation_plan_ready": True,
+                                    "requested_class_navigation_plan": {
+                                        "target_text": "Music Class",
+                                        "point": {"x": 214.0, "y": 344.0},
+                                    },
                                     "assignments_navigation_plan_ready": True,
                                     "assignments_navigation_plan": {
                                         "point": {"x": 68.13, "y": 577.17}
@@ -24351,6 +24415,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn("Teams assignment is wrong_subject", blocker)
         self.assertIn("Chrome page-read is blocked", blocker)
+        self.assertIn("Music Class no-click navigation plan is ready at (214.0, 344.0)", blocker)
         self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17)", blocker)
 
     def test_render_overnight_status_latest_latency_smoke_accepts_checked_success(self):

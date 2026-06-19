@@ -315,6 +315,18 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
         parts = [f"Teams assignment is {completion}"]
         if proof.get("chrome_page_read_blocked"):
             parts.append("Chrome page-read is blocked")
+        if proof.get("requested_class_navigation_plan_ready"):
+            plan = (
+                proof.get("requested_class_navigation_plan")
+                if isinstance(proof.get("requested_class_navigation_plan"), dict)
+                else {}
+            )
+            point = plan.get("point") if isinstance(plan.get("point"), dict) else {}
+            target_text = str(plan.get("target_text") or "requested class").strip() or "requested class"
+            point_text = ""
+            if point:
+                point_text = f" at ({point.get('x')}, {point.get('y')})"
+            parts.append(f"{target_text} no-click navigation plan is ready{point_text}")
         if proof.get("assignments_navigation_plan_ready"):
             plan = proof.get("assignments_navigation_plan") if isinstance(proof.get("assignments_navigation_plan"), dict) else {}
             point = plan.get("point") if isinstance(plan.get("point"), dict) else {}

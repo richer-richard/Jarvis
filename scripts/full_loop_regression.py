@@ -1177,8 +1177,12 @@ def run_teams_assignment_case(
             )
             if action_proof.get("chrome_page_read_blocked"):
                 warnings.append("Chrome page-read was blocked before the visible-screen fallback.")
+            if action_proof.get("requested_class_target_found"):
+                warnings.append("Visible requested-class navigation target was found for the next safe navigation step.")
             if action_proof.get("assignments_target_found"):
                 warnings.append("Visible Assignments navigation target was found for the next safe navigation step.")
+            if action_proof.get("requested_class_navigation_plan_ready"):
+                warnings.append("A non-clicking requested-class navigation plan is ready; live navigation still requires an explicit safe run.")
             if action_proof.get("assignments_navigation_plan_ready"):
                 warnings.append("A non-clicking Assignments navigation plan is ready; live navigation still requires an explicit safe run.")
         if not action_proof["passed"]:
@@ -1226,6 +1230,16 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
     assignments_plan = (
         navigation_targets.get("assignments_plan")
         if isinstance(navigation_targets.get("assignments_plan"), dict)
+        else {}
+    )
+    requested_class_target = (
+        navigation_targets.get("requested_class")
+        if isinstance(navigation_targets.get("requested_class"), dict)
+        else {}
+    )
+    requested_class_plan = (
+        navigation_targets.get("requested_class_plan")
+        if isinstance(navigation_targets.get("requested_class_plan"), dict)
         else {}
     )
     combined_reply = " ".join(part for part in [visible_reply, follow_up_reply] if part).strip()
@@ -1279,6 +1293,10 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "assignments_target": assignments_target,
         "assignments_navigation_plan_ready": bool(assignments_plan.get("planned")),
         "assignments_navigation_plan": assignments_plan,
+        "requested_class_target_found": bool(requested_class_target.get("found")),
+        "requested_class_target": requested_class_target,
+        "requested_class_navigation_plan_ready": bool(requested_class_plan.get("planned")),
+        "requested_class_navigation_plan": requested_class_plan,
         "capability_complete": capability_complete,
         "completion_status": completion_status,
         "visible_reply_preview": combined_reply[:500],

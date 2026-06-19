@@ -1987,7 +1987,9 @@ def run_native_visible_screen_follow_up(
     if exercise_visible_navigation and isinstance(latest_failure, dict):
         targets = latest_failure.get("visible_navigation_targets")
         if isinstance(targets, dict):
-            plan = targets.get("assignments_plan")
+            plan = targets.get("requested_class_plan")
+            if not (isinstance(plan, dict) and plan.get("planned")):
+                plan = targets.get("assignments_plan")
             if isinstance(plan, dict) and plan.get("planned"):
                 navigation_result = execute_visible_navigation_plan(
                     plan,
@@ -2173,6 +2175,15 @@ def run_native_visible_screen_follow_up_attempt(
     response_is_auditable = useful or status in {"login_gate_visible", "assignment_subject_mismatch"}
     navigation_targets: dict[str, Any] = {}
     if "teams" in str(command_text or "").casefold() and "assignment" in str(command_text or "").casefold():
+        subject_labels = requested_assignment_subject_navigation_labels(command_text)
+        if subject_labels:
+            subject_target = select_ocr_line_target(capture_payload, subject_labels)
+            navigation_targets["requested_class"] = subject_target
+            navigation_targets["requested_class_plan"] = visible_navigation_plan(
+                subject_target,
+                action="click",
+                purpose="open the requested Teams class before reading its Assignments view",
+            )
         assignments_target = select_ocr_line_target(capture_payload, ["Assignments"])
         navigation_targets["assignments"] = assignments_target
         navigation_targets["assignments_plan"] = visible_navigation_plan(
@@ -2199,6 +2210,14 @@ def run_native_visible_screen_follow_up_attempt(
     }
 
 
+def requested_assignment_subject_navigation_labels(command_text: str) -> list[str]:
+    """Return likely visible class labels for a requested Teams assignment subject."""
+    lower_command = str(command_text or "").casefold()
+    if re.search(r"\b(?:music|musical|song|songs|instrument|instruments|choir|band)\b", lower_command):
+        return ["Music", "Music Class", "Music Assignments"]
+    return []
+
+
 def select_ocr_line_target(
     capture_payload: dict[str, Any],
     labels: list[str] | tuple[str, ...],
@@ -2223,10 +2242,8 @@ def select_ocr_line_target(
         for label in normalized_labels:
             if text_key == label:
                 score = max(score, 100)
-            elif label in text_key:
+            elif _ocr_label_matches_text(label, text_key):
                 score = max(score, 80)
-            elif text_key in label:
-                score = max(score, 60)
         if score <= best_score:
             continue
         pixels = raw_line.get("pixels") if isinstance(raw_line.get("pixels"), dict) else {}
@@ -2249,6 +2266,12 @@ def select_ocr_line_target(
             "pixels": {"x": round(x, 2), "y": round(y, 2), "width": round(width, 2), "height": round(height, 2)},
         }
     return best if best and best.get("found") else {"found": False, "reason": "no_label_match"}
+
+
+def _ocr_label_matches_text(label: str, text_key: str) -> bool:
+    if " " in label:
+        return label in text_key
+    return bool(re.search(rf"\b{re.escape(label)}\b", text_key))
 
 
 def visible_navigation_plan(
