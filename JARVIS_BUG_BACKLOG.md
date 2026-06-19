@@ -634,6 +634,9 @@ Status legend:
 1. Partially fixed/risky: repo root confusion.
    - Leo intended the whole Jarvis folder to be the Git repo, not a small
      subfolder.
+   - 2026-06-20 proof update: `git rev-parse --show-toplevel` reports the full
+     `developer/Jarvis` directory, and `find . -path '*/.git' -maxdepth 4`
+     found only `./.git`.
 
 2. Partially fixed/risky: GitHub Desktop push/fetch loop.
    - GitHub Desktop claimed newer commits on remote; Fetch did not resolve it.

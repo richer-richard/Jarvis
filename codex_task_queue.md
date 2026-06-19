@@ -27,6 +27,7 @@
 - [x] Route `speech status` / mute-status requests to the real `voice.speech_mute` backend state instead of fast-model guessing.
 - [x] Bump the canonical Jarvis app bundle and product-report headline to `0.1.470` after the speech-status/tool-catalog/copied-chat hardening work.
 - [x] Strengthen `scripts/verify_safe.py` so the official speech mute check also proves quiet `speech status` routes to `voice.speech_mute`.
+- [x] Verify and record that the full `developer/Jarvis` directory is the only Git repo root.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -78,3 +79,4 @@
 - [x] Registered `voice.speech_mute` in the backend catalog; live `tool catalog status` returned `consistent` with no missing registry entries.
 - [x] Rebuilt/relaunched Jarvis `0.1.470` build `470`; live checks confirmed speech status, tool catalog consistency, and morning status version display.
 - [x] Updated the safe verifier to check quiet `speech status`; focused verifier tests passed and live `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-014658.json`.
+- [x] Repo-root proof recorded: `git rev-parse --show-toplevel` reports the full Jarvis folder and the only `.git` found under the project is `./.git`.
