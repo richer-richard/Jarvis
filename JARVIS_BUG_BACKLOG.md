@@ -600,6 +600,8 @@ Status legend:
    - 2026-06-19 proof update: master-report proof copy now calls the user-facing
      artifact an eight-prompt behavior check, while keeping the internal file
      path stable for scripts and artifacts.
+   - 2026-06-19 follow-up: the workboard intro now says reusable eight-prompt
+     behavior check instead of reusable behavior matrix.
 
 3. Partially fixed/risky: tests can be too synthetic.
    - Leo repeatedly asked for real spoken input, real app output, and real action

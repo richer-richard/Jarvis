@@ -1654,7 +1654,7 @@ def render_workboard(context: dict[str, Any]) -> str:
   <main>
     <section>
       <h2>Current Focus</h2>
-      <p>{e(focus_bundle_sentence)} The current live bundle includes native Music app bridge playback proof, legacy LocalOS/Chrome fallback honesty, and the morning cleanup helper; source-side Swift compile proof is green.{e(voice_proof_sentence)} Jarvis already has hardened command payload handling, native visible-screen OCR, automatic read-only Teams follow-up after Chrome handoff, assignment-line OCR extraction, targeted follow-up questions, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and a reusable behavior matrix. The remaining product gap is real-device voice, music, browser, Teams, and app-control QA when Leo is present.</p>
+      <p>{e(focus_bundle_sentence)} The current live bundle includes native Music app bridge playback proof, legacy LocalOS/Chrome fallback honesty, and the morning cleanup helper; source-side Swift compile proof is green.{e(voice_proof_sentence)} Jarvis already has hardened command payload handling, native visible-screen OCR, automatic read-only Teams follow-up after Chrome handoff, assignment-line OCR extraction, targeted follow-up questions, cleaner Teams read failures, preserved contact aliases, quieter wake acknowledgement, and a reusable eight-prompt behavior check. The remaining product gap is real-device voice, music, browser, Teams, and app-control QA when Leo is present.</p>
       <div class="meter"><div style="width: 98%"></div></div>
     </section>
     {workboard_operator_checkpoint(context)}

@@ -3335,6 +3335,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         })
 
         self.assertIn("real-device voice, music, browser, Teams, and app-control QA", workboard)
+        self.assertIn("reusable eight-prompt behavior check", workboard)
+        self.assertNotIn("reusable behavior matrix", workboard)
         self.assertNotIn("remaining product gap is proving this on Leo's real Teams page", workboard)
 
     def test_workboard_focus_mentions_live_playback_voice_proof(self):
