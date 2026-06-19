@@ -233,6 +233,10 @@ Status legend:
      no longer fall back to text glyphs when the icon image is missing; the
      helper self-test now fails if a text fallback returns, focused Python
      source checks pass, and `jarvis-status-helper --self-test` builds/runs.
+   - 2026-06-19 proof update: Swift speech-activity tracking now treats
+     backend `suppressed_by_request` and `deferred_to_follow_up` speech payloads
+     as non-speaking states, so muted/suppressed/deferred responses cannot
+     falsely extend Jarvis's active speech window.
 
 10. Partially fixed/risky: Hey Jarvis crashed or flickered.
     - Leo reported crashes after Start Hey Jarvis.

@@ -13989,6 +13989,16 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('"speech_barge_in"', model_source)
         self.assertIn("client.stopSpeaking()", model_source)
         self.assertIn("clearSpeechPlaybackWindow()", model_source)
+        self.assertIn('"suppressed_by_request"', model_source)
+        self.assertIn('"deferred_to_follow_up"', model_source)
+        self.assertLess(
+            model_source.index('"suppressed_by_request"'),
+            model_source.index("guard !blockedStatuses.contains(status)"),
+        )
+        self.assertLess(
+            model_source.index('"deferred_to_follow_up"'),
+            model_source.index("guard !blockedStatuses.contains(status)"),
+        )
         self.assertNotIn("notePotentialSpeech(text: statusText)", model_source)
         self.assertNotIn("toggleSpeechMuted()", model_source[model_source.index("handleSpeechBargeInIfNeeded"):])
 

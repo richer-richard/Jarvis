@@ -630,7 +630,7 @@ final class JarvisShellModel: ObservableObject {
         if preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             preview = fallbackText
         }
-        let blockedStatuses = ["missing", "muted", "suppressed", "suppressed_for_stop_speaking", "empty", "empty_after_sanitization", "disabled", "failed"]
+        let blockedStatuses = ["missing", "muted", "suppressed", "suppressed_by_request", "suppressed_for_stop_speaking", "deferred_to_follow_up", "empty", "empty_after_sanitization", "disabled", "failed"]
         guard !blockedStatuses.contains(status), !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
