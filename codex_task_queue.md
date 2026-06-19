@@ -76,6 +76,7 @@
 - [x] Refreshed current-code safe verification after the Codex alias proof; `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-050505.json`.
 - [x] Tightened Teams proof honesty: wrong-subject Teams assignment evidence is now `warning`/`incomplete`, not a full pass; live Teams proof at `runtime/full_loop_regression/20260620-051209/summary.json` reports `completion_status: wrong_subject`; focused tests passed `568/568`.
 - [x] Current pre-build gate now fails honestly `2/3` at `runtime/pre_build_gate/20260620-051456/summary.json`: Python safety suite passed, Chrome cleanup passed, and full-loop regression failed only because `teams_music_assignment_honesty` is warning/incomplete.
+- [x] Made the Teams blocker proof more actionable: live Teams proof at `runtime/full_loop_regression/20260620-052023/summary.json` reports both `completion_status: wrong_subject` and `chrome_page_read_blocked: true`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.

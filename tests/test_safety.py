@@ -759,6 +759,10 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "visible_screen_follow_up": {
                     "status": "assignment_subject_mismatch",
                     "tool": "screen.visible_text",
+                    "browser_page_follow_up_initial": {
+                        "status": "browser_permission_blocked",
+                        "tool": "browser.read_page",
+                    },
                     "visible_reply_preview": (
                         "I read the visible Teams screen, but it does not look like the Music assignment. "
                         "I can see assignment-related text: Lesson 2: The Geography of Greece Group Assignment."
@@ -770,6 +774,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(proof["passed"])
         self.assertFalse(proof["capability_complete"])
         self.assertEqual(proof["completion_status"], "wrong_subject")
+        self.assertTrue(proof["chrome_page_read_blocked"])
         self.assertTrue(proof["honest_wrong_subject"])
         self.assertIn("Geography of Greece", proof["visible_reply_preview"])
 
