@@ -107,6 +107,7 @@ def main() -> int:
     print_latest_pre_build_gate()
     print_latest_context_smoke()
     print_latest_wake_threshold()
+    print_physical_capture_contract()
     print_requirement_audit()
     print_latest_latency_smoke()
     print_current_bundle()
@@ -319,6 +320,10 @@ def print_latest_wake_threshold() -> None:
         f"Latest wake threshold: {state} {summary['passed']}/{summary['total']}"
         f"{reject} ({latest.relative_to(PROJECT_ROOT)}, age {age})"
     )
+
+
+def print_physical_capture_contract() -> None:
+    print("Physical audio loop: not implemented; strict speaker/microphone capture proof fails closed by design")
 
 
 def print_requirement_audit() -> None:

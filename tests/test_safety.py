@@ -186,6 +186,7 @@ from scripts.morning_status import (
     pre_build_gate_summary,
     print_report_surfaces,
     print_latest_context_smoke,
+    print_physical_capture_contract,
     print_latest_wake_threshold,
     print_process_status,
     report_surfaces,
@@ -23829,6 +23830,14 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Latest wake threshold: passed 10/10", printed)
         self.assertIn("closest reject below-threshold charvis 0.857", printed)
         self.assertIn("runtime/wake_threshold/latest.json", printed)
+
+    def test_morning_status_prints_physical_capture_contract(self):
+        with patch("builtins.print") as print_mock:
+            print_physical_capture_contract()
+
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Physical audio loop: not implemented", printed)
+        self.assertIn("fails closed", printed)
 
     def test_morning_status_requirement_audit_summary(self):
         summary = requirement_audit_summary(
