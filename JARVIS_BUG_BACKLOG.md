@@ -77,6 +77,9 @@ Status legend:
      keyword-only routing and requires intent/history/tool-description based
      selection; direct named music playback previews label themselves as the
      user-approved `direct_music_play` primitive exception.
+   - 2026-06-19 proof update: executed direct music playback results now carry
+     a visible `routing.source: user_approved_primitive_exception` audit block,
+     while model-selected music playback is labeled `model_tool_call`.
 
 ## Email And Summarization Bugs
 

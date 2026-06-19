@@ -958,6 +958,7 @@ class Planner:
         if _looks_like_your_pick_choice(text):
             if _looks_like_music_play_request(text):
                 play_result = localos_music_play(user_request=text, from_your_pick=True, limit=None)
+                play_result = _with_direct_music_primitive(play_result)
                 return self._result(
                     text,
                     "localos.music_play",
@@ -978,6 +979,7 @@ class Planner:
         if music_query is not None:
             if _looks_like_music_play_request(text):
                 play_result = localos_music_play(query=music_query, user_request=text, from_your_pick=False, limit=None)
+                play_result = _with_direct_music_primitive(play_result)
                 return self._result(
                     text,
                     "localos.music_play",
@@ -1539,6 +1541,7 @@ class Planner:
                     plan={"intent": intent, "query": query, "from_your_pick": from_your_pick, "limit": limit},
                 )
             play_result = localos_music_play(query=query, user_request=text, from_your_pick=from_your_pick, limit=limit)
+            play_result = _with_route_source(play_result, "model_tool_call", intent)
             return self._result(
                 text,
                 "localos.music_play",
@@ -2358,6 +2361,19 @@ def _with_route_source(
         routing["model_reason"] = str(intent.get("reason") or "")
         routing["confidence"] = intent.get("confidence")
     routed["routing"] = routing
+    return routed
+
+
+def _with_direct_music_primitive(result: dict[str, Any]) -> dict[str, Any]:
+    routed = dict(result)
+    routed["routing"] = {
+        "source": "user_approved_primitive_exception",
+        "primitive_exception": "direct_music_play",
+        "note": (
+            "Leo explicitly allowed this narrow direct play-song route; it must stay visible "
+            "in Copy Chat JSON instead of pretending to be general model intelligence."
+        ),
+    }
     return routed
 
 

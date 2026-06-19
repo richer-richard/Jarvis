@@ -5044,6 +5044,9 @@ class PlannerTests(unittest.TestCase):
         final = events[-1]["data"]
         self.assertEqual(final["tool"], "localos.music_play")
         self.assertEqual(final["result"]["reply"], fake_result["reply"])
+        self.assertEqual(final["result"]["routing"]["source"], "user_approved_primitive_exception")
+        self.assertEqual(final["result"]["routing"]["primitive_exception"], "direct_music_play")
+        self.assertIn("Leo explicitly allowed", final["result"]["routing"]["note"])
         play_mock.assert_called_once_with(
             query="Waving Through a Window",
             user_request="play Waving Through a Window",
@@ -5051,6 +5054,30 @@ class PlannerTests(unittest.TestCase):
             limit=None,
         )
         fast_chat_mock.assert_not_called()
+
+    def test_model_selected_music_play_is_labeled_as_model_tool_call(self):
+        fake_result = {
+            "tool": "localos.music_play",
+            "status": "playing",
+            "executed": True,
+            "reply": "Playing Waving Through A Window in Local OS.",
+        }
+        with patch("jarvis.planner.localos_music_play", return_value=fake_result) as play_mock:
+            result = Planner().handle_selected_tool(
+                "Please play Waving Through a Window.",
+                "localos.music_play",
+                {"query": "Waving Through a Window"},
+            )
+
+        self.assertEqual(result.tool, "localos.music_play")
+        self.assertEqual(result.result["routing"]["source"], "model_tool_call")
+        self.assertNotIn("primitive_exception", result.result["routing"])
+        play_mock.assert_called_once_with(
+            query="Waving Through a Window",
+            user_request="Please play Waving Through a Window.",
+            from_your_pick=False,
+            limit=None,
+        )
 
     def test_localos_music_play_queues_control_command(self):
         with tempfile.TemporaryDirectory() as tmpdir:
