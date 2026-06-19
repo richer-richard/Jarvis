@@ -28,6 +28,9 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.470 makes speech status truthful: `speech status` and `are you muted` now read the real `voice.speech_mute` backend state instead of asking the fast model to guess.",
+    "Jarvis 0.1.470 keeps the tool catalog consistent: the new speech mute/status tool is visible to the first model and registered in the backend catalog, so diagnostics no longer report it as missing.",
+    "Jarvis 0.1.470 adds safer copied-chat speech diagnostics: Copy Chat JSON redacts final speech debug strings, flags hidden tool-call leaks with `speech_output_safe_for_user`, and keeps useful trace evidence for bug reports.",
     "Jarvis 0.1.469 now has fresh full-loop proof for Leo's target prompt set: Music playback, RAM/Activity Monitor, Calendar, Magic Keyboard yuan conversion, Gemma model planning, Codex Default routing, Teams assignment honesty, and Ms. Sharpay email summary all passed in one run with zero warnings.",
     "Jarvis 0.1.469 makes the quality gate more visible and harder to fake: morning status now shows safe verification, pre-build gate, context smoke, wake threshold, latency, bundle identity, and speech emergency state in one snapshot.",
     "Jarvis 0.1.469 keeps the pre-build speech contract explicit: quiet overnight runs are labeled `suppressed_for_probe`, opt-in live playback runs are labeled `live_playback_exercised`, and `--require-live-speech` fails closed if a caller asks for live speech proof without enabling it.",
