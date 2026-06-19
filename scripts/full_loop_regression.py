@@ -518,6 +518,13 @@ def run_ram_activity_case(
     memory_proof = memory_usage_status()
     write_json(run_dir / "memory-proof.json", memory_proof)
     action_proof = verify_memory_usage(memory_proof)
+    route_proof = verify_voice_route_source(
+        voice_report,
+        expected_tool="diagnostics.memory_usage",
+        expected_sources={"model_tool_call"},
+    )
+    action_proof["route_source"] = route_proof.get("route_source")
+    action_proof["route_source_passed"] = route_proof["passed"]
     status = "passed"
     warnings: list[str] = []
     voice_status = str(voice_report.get("result", {}).get("status") or "failed")
@@ -530,6 +537,9 @@ def run_ram_activity_case(
     if not action_proof["passed"]:
         status = "failed"
         warnings.extend(action_proof["failures"])
+    if not route_proof["passed"]:
+        status = "failed"
+        warnings.extend(route_proof["failures"])
     return {
         "case_id": case["id"],
         "status": status,
@@ -606,6 +616,13 @@ def run_calendar_today_case(
     calendar_proof = calendar_today_schedule()
     write_json(run_dir / "calendar-proof.json", calendar_proof)
     action_proof = verify_calendar_today(calendar_proof)
+    route_proof = verify_voice_route_source(
+        voice_report,
+        expected_tool="calendar.today_schedule",
+        expected_sources={"model_tool_call"},
+    )
+    action_proof["route_source"] = route_proof.get("route_source")
+    action_proof["route_source_passed"] = route_proof["passed"]
     status = "passed"
     warnings: list[str] = []
     voice_status = str(voice_report.get("result", {}).get("status") or "failed")
@@ -618,6 +635,9 @@ def run_calendar_today_case(
     if not action_proof["passed"]:
         status = "failed"
         warnings.extend(action_proof["failures"])
+    if not route_proof["passed"]:
+        status = "failed"
+        warnings.extend(route_proof["failures"])
     return {
         "case_id": case["id"],
         "status": status,
@@ -689,6 +709,13 @@ def run_magic_keyboard_case(
         commerce_proof = commerce_price_convert("Magic Keyboard", target_currency="CNY", source_country="US")
     write_json(run_dir / "commerce-proof.json", commerce_proof)
     action_proof = verify_magic_keyboard_yuan(commerce_proof)
+    route_proof = verify_voice_route_source(
+        voice_report,
+        expected_tool="commerce.price_convert",
+        expected_sources={"model_tool_call"},
+    )
+    action_proof["route_source"] = route_proof.get("route_source")
+    action_proof["route_source_passed"] = route_proof["passed"]
     status = "passed"
     warnings: list[str] = []
     voice_status = str(voice_report.get("result", {}).get("status") or "failed")
@@ -701,6 +728,9 @@ def run_magic_keyboard_case(
     if not action_proof["passed"]:
         status = "failed"
         warnings.extend(action_proof["failures"])
+    if not route_proof["passed"]:
+        status = "failed"
+        warnings.extend(route_proof["failures"])
     return {
         "case_id": case["id"],
         "status": status,
@@ -734,6 +764,32 @@ def commerce_proof_from_voice_report(voice_report: dict[str, Any]) -> dict[str, 
         "changed_browser_state": bool(summary.get("changed_browser_state")),
         "reply": summary.get("reply"),
         "proof_source": "voice_loop_command_response",
+        "route_source": summary.get("route_source"),
+    }
+
+
+def verify_voice_route_source(
+    voice_report: dict[str, Any],
+    *,
+    expected_tool: str,
+    expected_sources: set[str],
+) -> dict[str, Any]:
+    result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
+    summary = result.get("command_response_result") if isinstance(result.get("command_response_result"), dict) else {}
+    actual_tool = str(result.get("command_response_tool") or summary.get("tool") or "")
+    route_source = str(summary.get("route_source") or "")
+    failures: list[str] = []
+    if actual_tool != expected_tool:
+        failures.append(f"Voice-loop command used {actual_tool or 'no tool'}, expected {expected_tool}.")
+    if route_source not in expected_sources:
+        allowed = ", ".join(sorted(expected_sources))
+        failures.append(f"Voice-loop route source was {route_source or 'missing'}, expected one of: {allowed}.")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "tool": actual_tool,
+        "route_source": route_source,
+        "expected_sources": sorted(expected_sources),
     }
 
 

@@ -2111,6 +2111,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "converted": {"currency": "CNY", "amount": 671.0, "formatted": "671 yuan"},
                 "opened_browser": False,
                 "changed_browser_state": False,
+                "routing": {"source": "model_tool_call", "confidence": 0.91},
                 "reply": "Magic Keyboard is $99.00, which is about 671 yuan.",
             },
         }
@@ -2124,8 +2125,52 @@ class VerifySafeScriptTests(unittest.TestCase):
         })
 
         self.assertEqual(summary["tool"], "commerce.price_convert")
+        self.assertEqual(summary["route_source"], "model_tool_call")
+        self.assertEqual(summary["routing"]["confidence"], 0.91)
         self.assertEqual(proof["proof_source"], "voice_loop_command_response")
+        self.assertEqual(proof["route_source"], "model_tool_call")
         self.assertTrue(full_loop_regression.verify_magic_keyboard_yuan(proof)["passed"])
+
+    def test_full_loop_route_source_proof_rejects_missing_model_call(self):
+        voice_report = {
+            "result": {
+                "command_response_tool": "diagnostics.memory_usage",
+                "command_response_result": {
+                    "tool": "diagnostics.memory_usage",
+                    "route_source": "deterministic_shortcut",
+                },
+            }
+        }
+
+        proof = full_loop_regression.verify_voice_route_source(
+            voice_report,
+            expected_tool="diagnostics.memory_usage",
+            expected_sources={"model_tool_call"},
+        )
+
+        self.assertFalse(proof["passed"])
+        self.assertEqual(proof["route_source"], "deterministic_shortcut")
+        self.assertIn("expected one of: model_tool_call", proof["failures"][0])
+
+    def test_full_loop_route_source_proof_accepts_model_call(self):
+        voice_report = {
+            "result": {
+                "command_response_tool": "calendar.today_schedule",
+                "command_response_result": {
+                    "tool": "calendar.today_schedule",
+                    "route_source": "model_tool_call",
+                },
+            }
+        }
+
+        proof = full_loop_regression.verify_voice_route_source(
+            voice_report,
+            expected_tool="calendar.today_schedule",
+            expected_sources={"model_tool_call"},
+        )
+
+        self.assertTrue(proof["passed"])
+        self.assertEqual(proof["route_source"], "model_tool_call")
 
     def test_voice_loop_qa_tracks_live_speech_runtime_when_exercised(self):
         events = [

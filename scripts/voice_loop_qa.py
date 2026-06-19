@@ -1238,6 +1238,14 @@ def command_response_result_summary(command_response: dict[str, Any]) -> dict[st
         "primary_status": result.get("primary_status"),
         "tool_catalog_compacted": bool(result.get("tool_catalog_compacted")),
     }
+    routing = result.get("routing") if isinstance(result.get("routing"), dict) else {}
+    if routing:
+        summary["routing"] = {
+            "source": routing.get("source"),
+            "primitive_exception": routing.get("primitive_exception"),
+            "confidence": routing.get("confidence"),
+        }
+        summary["route_source"] = routing.get("source")
     tool = str(command_response.get("tool") or result.get("tool") or "")
     if tool == "outlook.visible_summary":
         contact_lookup = result.get("contact_alias_lookup") if isinstance(result.get("contact_alias_lookup"), dict) else {}
