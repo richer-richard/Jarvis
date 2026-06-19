@@ -11800,6 +11800,29 @@ Pages occupied by compressor:             10.
         model_mock.assert_called_once()
         price_mock.assert_called_once_with("Magic Keyboard", target_currency="CNY", source_country="US")
 
+    def test_model_chat_failure_on_clear_price_request_falls_back_to_safe_tool(self):
+        fake_chat = {
+            "tool": "conversation.fast_local",
+            "status": "empty_response",
+            "executed": True,
+            "backend": "ollama",
+            "primary_status": "http_error",
+            "reply": "My fast local",
+        }
+        fake_result = {"tool": "commerce.price_convert", "status": "checked", "executed": True, "reply": "Magic Keyboard price checked."}
+        with patch("jarvis.planner.run_fast_local_chat", return_value=fake_chat) as model_mock, \
+             patch("jarvis.planner.commerce_price_convert", return_value=fake_result) as price_mock:
+            result = Planner().handle("Search up the price of the Magic Keyboard and tell me its price converted to yuan.")
+
+        self.assertEqual(result.tool, "commerce.price_convert")
+        self.assertEqual(result.result["reply"], "Magic Keyboard price checked.")
+        self.assertEqual(result.result["routing"]["source"], "model_tool_call")
+        self.assertTrue(result.result["model_route_fallback"]["used"])
+        self.assertEqual(result.result["model_route_fallback"]["reason"], "model_failed_before_safe_tool")
+        self.assertEqual(result.result["model_route_fallback"]["primary_status"], "empty_response")
+        model_mock.assert_called_once()
+        price_mock.assert_called_once_with("Magic Keyboard", target_currency="CNY", source_country="US")
+
     def test_browser_session_strategy_refuses_cookie_migration(self):
         result = browser_session_strategy("use Teams without logging in again")
 
