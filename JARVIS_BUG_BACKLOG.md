@@ -71,6 +71,8 @@ Status legend:
      requires the `voice.stop_speaking` tool, requires the visible summary to
      match the tool reply, and fails if any speech payload or audio-start flag
      appears.
+   - 2026-06-20 proof update: Jarvis 0.1.475 makes the muted state more visible
+     in the app by changing the status chip from `Muted` to `Speech Muted`.
 
 4. Open/unknown: full speech-in/action-out/speech-back loop is not yet proved
    across Leo's real target prompts.

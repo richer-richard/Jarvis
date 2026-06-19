@@ -422,7 +422,7 @@ final class JarvisShellModel: ObservableObject {
         ttsAvailable: Bool? = nil
     ) -> String {
         if muted {
-            return "Muted"
+            return "Speech Muted"
         }
         if automaticTtsEnabled == false {
             return "Speech Off"

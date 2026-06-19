@@ -53,6 +53,7 @@
 - [x] Current-code release gate refreshed after commit `3a711b4`: `scripts/pre_build_gate.py --base-url http://127.0.0.1:8765` passed `5/5` at `runtime/pre_build_gate/20260620-030913/summary.json`.
 - [x] Expanded model-punt fallback coverage to Calendar and public price conversion; full `tests.test_safety` passed `952/952`.
 - [x] Jarvis `0.1.474` build `474` is live from the canonical `output/Jarvis.app`; health reports `worker_launch_matches_bundle: true`; full `tests.test_safety` passed `952/952`; `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-031851.json`; release gate passed `5/5` at `runtime/pre_build_gate/20260620-031902/summary.json`.
+- [x] Jarvis `0.1.475` build `475` is live with clearer muted-state UI: the status chip says `Speech Muted` instead of `Muted`; full `tests.test_safety` passed `952/952`; `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-032750.json`; release gate passed `5/5` at `runtime/pre_build_gate/20260620-032802/summary.json`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.

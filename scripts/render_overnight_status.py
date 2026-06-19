@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.475 makes mute state harder to miss: when speech is muted, the app chip says `Speech Muted` instead of the vague `Muted` label.",
     "Jarvis 0.1.474 syncs the live bundled worker with the latest model-route guardrails, so RAM, Calendar, and Magic Keyboard price requests still use the safe tool if the first model tries to answer as plain chat.",
     "Jarvis 0.1.473 makes more tool routing honest: live RAM, Calendar, and Magic Keyboard price-conversion commands now ask the first model to choose the tool before executing, while explicit fallback routes are labeled as deterministic shortcuts.",
     "Jarvis 0.1.472 makes the Shut Up menu-head harder to lose: app bundles now fail if the colored menu-bar head image is missing, and the bundled status-helper self-test verifies the image loads instead of silently creating an invisible status item.",
