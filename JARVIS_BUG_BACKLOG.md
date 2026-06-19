@@ -96,6 +96,9 @@ Status legend:
      summarizing them correctly.
    - Desired behavior: check unread emails; if none unread, summarize the newest
      email. Usually latest 5 is enough.
+   - 2026-06-19 proof update: normal structured email checks now default to
+     scanning the latest 5 messages, while explicit sender/date requests use a
+     wider but bounded 25-message scan and explicit overrides remain bounded.
 
 4. Partially fixed/risky: Jarvis must first say a natural working line, then
    return with the summary.

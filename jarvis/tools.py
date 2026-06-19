@@ -43,6 +43,7 @@ from .config import (
     CODEX_TIMEOUT_SECONDS,
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_REASONING_EFFORT,
+    EMAIL_DEFAULT_SCAN_MESSAGES,
     EMAIL_SUMMARY_BACKEND,
     EMAIL_SUMMARY_MAX_INPUT_CHARS,
     EMAIL_SUMMARY_MAX_TOKENS,
@@ -13714,6 +13715,7 @@ def email_backend_status() -> dict[str, Any]:
             "apple_mail_use_applescript": True,
             "outlook_use_applescript": OUTLOOK_USE_APPLESCRIPT,
             "outlook_use_legacy_sqlite": OUTLOOK_USE_LEGACY_SQLITE,
+            "default_email_scan_messages": EMAIL_DEFAULT_SCAN_MESSAGES,
             "outlook_max_scan_messages": OUTLOOK_MAX_SCAN_MESSAGES,
         },
         "apps": {
@@ -14262,11 +14264,15 @@ def outlook_read_only_check(
     safe_limit = max(1, min(int(limit), 25))
     clean_sender_query = _clean_email_filter_query(sender_query)
     clean_selection = _clean_email_filter_query(selection)
+    clean_date_range = _clean_email_date_range(date_range)
+    default_scan_limit = max(safe_limit, min(EMAIL_DEFAULT_SCAN_MESSAGES, OUTLOOK_MAX_SCAN_MESSAGES))
     if scan_limit_override is None:
         if clean_sender_query and clean_selection == "all_matching":
             configured_scan_limit = min(75, OUTLOOK_MAX_SCAN_MESSAGES)
+        elif clean_sender_query or clean_date_range:
+            configured_scan_limit = min(max(default_scan_limit, 25), OUTLOOK_MAX_SCAN_MESSAGES)
         else:
-            configured_scan_limit = OUTLOOK_MAX_SCAN_MESSAGES
+            configured_scan_limit = default_scan_limit
     else:
         try:
             configured_scan_limit = int(scan_limit_override)
@@ -14274,7 +14280,6 @@ def outlook_read_only_check(
             configured_scan_limit = OUTLOOK_MAX_SCAN_MESSAGES
         configured_scan_limit = max(safe_limit, min(configured_scan_limit, OUTLOOK_MAX_SCAN_MESSAGES))
     scan_limit = max(safe_limit, configured_scan_limit)
-    clean_date_range = _clean_email_date_range(date_range)
     selection_request = _email_selection_request(clean_selection)
     mail_limit = _email_fetch_limit_for_selection(safe_limit, selection_request)
     mail_selection = _email_source_selection_hint(clean_selection, selection_request)

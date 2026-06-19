@@ -148,6 +148,7 @@ TTS_AFPLAY = os.environ.get("JARVIS_TTS_AFPLAY", "/usr/bin/afplay").strip() or "
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_BASE_URL = os.environ.get("JARVIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 GROQ_FAST_MODEL = os.environ.get("JARVIS_GROQ_MODEL", "llama-3.3-70b-versatile")
+EMAIL_DEFAULT_SCAN_MESSAGES = env_int("JARVIS_EMAIL_DEFAULT_SCAN_MESSAGES", 5, minimum=1, maximum=25)
 OUTLOOK_MAX_SCAN_MESSAGES = env_int("JARVIS_OUTLOOK_MAX_SCAN_MESSAGES", 250, minimum=10, maximum=2000)
 OUTLOOK_APPLESCRIPT_TIMEOUT_SECONDS = env_int("JARVIS_OUTLOOK_APPLESCRIPT_TIMEOUT_SECONDS", 20, minimum=5, maximum=90)
 OUTLOOK_OCR_TIMEOUT_SECONDS = env_int("JARVIS_OUTLOOK_OCR_TIMEOUT_SECONDS", 30, minimum=5, maximum=90)

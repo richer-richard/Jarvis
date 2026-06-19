@@ -19462,6 +19462,34 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(mail_mock.call_args.kwargs["sender_query"], "Sharpay")
         self.assertEqual(mail_mock.call_args.kwargs["date_range"], "past_month")
 
+    def test_email_read_only_check_defaults_to_latest_five_for_normal_inbox(self):
+        with patch("jarvis.tools.app_availability", side_effect=[
+            {"available": True, "matches": ["/Applications/Microsoft Outlook.app"], "app": "Microsoft Outlook"},
+            {"available": True, "matches": ["/System/Applications/Mail.app"], "app": "Mail"},
+        ]), \
+             patch("jarvis.tools.shutil.which", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools.EMAIL_DEFAULT_SCAN_MESSAGES", 5), \
+             patch("jarvis.tools._apple_mail_messages", return_value={"status": "empty", "messages": [], "filter_applied": False}) as mail_mock, \
+             patch("jarvis.tools._outlook_sqlite_messages", return_value={"status": "disabled", "messages": [], "inbox_count": 0, "scanned_count": 0}):
+            result = outlook_read_only_check(limit=1)
+
+        self.assertEqual(result["scan_limit"], 5)
+        self.assertEqual(mail_mock.call_args.args[1], 5)
+
+    def test_email_read_only_check_uses_wider_scan_for_sender_or_date_requests(self):
+        with patch("jarvis.tools.app_availability", side_effect=[
+            {"available": True, "matches": ["/Applications/Microsoft Outlook.app"], "app": "Microsoft Outlook"},
+            {"available": True, "matches": ["/System/Applications/Mail.app"], "app": "Mail"},
+        ]), \
+             patch("jarvis.tools.shutil.which", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools.EMAIL_DEFAULT_SCAN_MESSAGES", 5), \
+             patch("jarvis.tools._apple_mail_messages", return_value={"status": "empty", "messages": [], "filter_applied": True}) as mail_mock, \
+             patch("jarvis.tools._outlook_sqlite_messages", return_value={"status": "disabled", "messages": [], "inbox_count": 0, "scanned_count": 0}):
+            result = outlook_read_only_check(limit=1, sender_query="Sharpay", date_range="past_month")
+
+        self.assertEqual(result["scan_limit"], 25)
+        self.assertEqual(mail_mock.call_args.args[1], 25)
+
     def test_email_read_only_check_ignores_invalid_scan_limit_override(self):
         with patch("jarvis.tools.app_availability", side_effect=[
             {"available": True, "matches": ["/Applications/Microsoft Outlook.app"], "app": "Microsoft Outlook"},
