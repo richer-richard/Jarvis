@@ -539,6 +539,10 @@ Status legend:
      them to the app or passing them to TTS. Regressions cover debug-only
      replies and mixed useful text plus backend/model diagnostics in both normal
      and streaming command paths.
+   - 2026-06-19 proof update: the same firewall now sanitizes top-level
+     user-visible `summary` text before audit/display/speech attachment, and
+     debug-only sanitized-away replies still leave an explicit zero-length
+     speech status instead of disappearing from copied JSON.
 
 3. Open/unknown: stronger browser/computer-control tools must avoid destructive
    actions unless confirmed.

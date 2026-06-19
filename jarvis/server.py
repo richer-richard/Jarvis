@@ -1077,18 +1077,28 @@ def _preview_app_name(preview: dict[str, Any]) -> str:
 
 
 def _attach_auto_speech(data: dict[str, Any], *, reason: str, suppress: bool = False) -> None:
+    had_raw_speech_candidate = bool(data.pop("_had_raw_speech_candidate_before_sanitize", False)) or _has_raw_speech_candidate(data)
     _sanitize_user_visible_result_fields(data)
     result = data.get("result")
     if not isinstance(result, dict):
         return
-    if not _should_auto_speak(data):
+    if not _should_auto_speak(data) and not had_raw_speech_candidate:
         return
     if result.get("action") == "speech.say":
         return
     text = _speech_text_from_result(result) or str(data.get("summary") or "").strip()
     if suppress:
-        if text.strip():
-            data["speech"] = _suppressed_speech_result(reason=reason, text=text)
+        data["speech"] = _suppressed_speech_result(reason=reason, text=text)
+        return
+    if not text.strip():
+        data["speech"] = {
+            "spoken": False,
+            "status": "empty_after_sanitization",
+            "reason": reason,
+            "text_preview": "",
+            "spoken_text": "",
+            "text_length": 0,
+        }
         return
     speech = speak_text_async(text, reason=reason)
     if speech.get("spoken") or speech.get("status") not in {"disabled", "empty"}:
@@ -1113,26 +1123,22 @@ def _stream_should_defer_final_speech(data: dict[str, Any]) -> bool:
 def _attach_stream_final_speech(data: dict[str, Any], *, suppress: bool = False) -> None:
     _sanitize_user_visible_result_fields(data)
     if _stream_should_defer_final_speech(data):
+        data.pop("_had_raw_speech_candidate_before_sanitize", None)
         data["speech"] = _deferred_follow_up_speech_result(reason="final")
         return
     _attach_auto_speech(data, reason="final", suppress=suppress)
 
 
 def _suppressed_speech_result(*, reason: str, text: str = "") -> dict[str, Any]:
+    sanitized = _sanitize_spoken_text(text)
     result = {
         "spoken": False,
         "status": "suppressed_by_request",
         "reason": reason,
+        "text_preview": sanitized,
+        "spoken_text": sanitized,
+        "text_length": len(sanitized),
     }
-    if text.strip():
-        sanitized = _sanitize_spoken_text(text)
-        result.update(
-            {
-                "text_preview": sanitized,
-                "spoken_text": sanitized,
-                "text_length": len(sanitized),
-            }
-        )
     return result
 
 
@@ -1154,6 +1160,28 @@ def _should_auto_speak(data: dict[str, Any]) -> bool:
     return bool(_speech_text_from_result(result) or str(data.get("summary") or "").strip())
 
 
+def _has_raw_speech_candidate(data: dict[str, Any]) -> bool:
+    tool = str(data.get("tool") or "")
+    if tool in {
+        "voice.status_speech",
+        "voice.stop_speaking",
+        "diagnostics.model_context",
+        "diagnostics.tool_catalog",
+        "tools.deep_catalog",
+    }:
+        return False
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return False
+    if result.get("action") == "speech.say":
+        return False
+    for key in ("spoken_summary", "email_summary", "reply"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return bool(str(data.get("summary") or "").strip())
+
+
 def _speech_text_from_result(result: dict[str, Any]) -> str:
     for key in ("spoken_summary", "email_summary", "reply"):
         value = result.get(key)
@@ -1165,6 +1193,11 @@ def _speech_text_from_result(result: dict[str, Any]) -> str:
 
 
 def _sanitize_user_visible_result_fields(data: dict[str, Any]) -> None:
+    if _has_raw_speech_candidate(data):
+        data["_had_raw_speech_candidate_before_sanitize"] = True
+    summary = data.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        data["summary"] = _sanitize_user_visible_text(summary)
     result = data.get("result")
     if not isinstance(result, dict):
         return

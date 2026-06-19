@@ -20530,6 +20530,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 result = server.command("hello")
 
         self.assertEqual(result["speech"]["status"], "empty_after_sanitization")
+        self.assertEqual(result["summary"], "")
         self.assertEqual(result["result"]["reply"], "")
         self.assertEqual(result["speech"]["text_preview"], "")
         self.assertEqual(result["speech"]["spoken_text"], "")
@@ -20569,8 +20570,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 result = server.command("open outlook")
 
         self.assertEqual(result["result"]["reply"], "Opened Microsoft Outlook.")
+        self.assertEqual(result["summary"], "Opened Microsoft Outlook.")
         self.assertNotIn("Tool time", result["result"]["reply"])
+        self.assertNotIn("Tool time", result["summary"])
         self.assertNotIn("gpt-oss", result["result"]["reply"])
+        self.assertNotIn("gpt-oss", result["summary"])
         speak_mock.assert_called_once_with("Opened Microsoft Outlook.", reason="final")
 
     def test_stream_command_visible_reply_keeps_answer_but_strips_internal_diagnostics(self):
@@ -20603,7 +20607,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         final = events[-1]["data"]
         self.assertEqual(final["result"]["reply"], "Hello, sir. What would you like done?")
+        self.assertEqual(final["summary"], "Handled quick local command.")
         self.assertNotIn("Fast model time", final["result"]["reply"])
+        self.assertNotIn("Fast model time", final["summary"])
         self.assertNotIn("Backend", final["result"]["reply"])
         speak_mock.assert_called_once_with("Hello, sir. What would you like done?", reason="final")
 
@@ -20628,6 +20634,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 result = server.command("hello", suppress_speech=True)
 
         self.assertEqual(result["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(result["summary"], "")
         self.assertEqual(result["result"]["reply"], "")
         self.assertEqual(result["speech"]["text_preview"], "")
         self.assertEqual(result["speech"]["text_length"], 0)
