@@ -21624,6 +21624,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
             subprocess.run([git_path, "commit", "-m", "remote"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             remote_hash = subprocess.check_output([git_path, "rev-parse", "HEAD"], cwd=root, text=True).strip()
             subprocess.run([git_path, "checkout", "codex/jarvis-reliability-hardening"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run([git_path, "reset", "--hard"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run([git_path, "clean", "-fd"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             subprocess.run([git_path, "update-ref", "refs/remotes/origin/codex/jarvis-reliability-hardening", remote_hash], cwd=root, check=True)
 
             with patch("jarvis.tools.PROJECT_ROOT", root), patch("jarvis.tools._find_executable", return_value=git_path):
@@ -21633,6 +21635,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["relationship"], "unrelated_history")
         self.assertEqual(result["github_desktop_blocker"], "same_named_remote_unrelated_history")
         self.assertTrue(result["repo_scope"]["project_root_is_git_toplevel"])
+        self.assertTrue(result["worktree"]["status_available"])
+        self.assertTrue(result["worktree"]["clean"])
+        self.assertEqual(result["worktree"]["dirty_count"], 0)
         self.assertFalse(result["ran_fetch"])
         self.assertFalse(result["ran_push"])
         self.assertFalse(result["ran_merge_or_rebase"])
@@ -21646,6 +21651,35 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("GitHub Desktop", result["reply"])
         self.assertIn("new remote branch named codex/jarvis-reliability-hardening-full-root", result["reply"])
         self.assertIn("explicit approval and --force-with-lease", result["reply"])
+
+    def test_git_remote_status_reports_dirty_and_untracked_paths(self):
+        git_path = shutil.which("git")
+        if not git_path:
+            self.skipTest("git not available")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            subprocess.run([git_path, "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run([git_path, "config", "user.email", "jarvis@example.test"], cwd=root, check=True)
+            subprocess.run([git_path, "config", "user.name", "Jarvis Test"], cwd=root, check=True)
+            subprocess.run([git_path, "remote", "add", "origin", "https://github.com/example/Jarvis.git"], cwd=root, check=True)
+            tracked = root / "tracked.txt"
+            tracked.write_text("original\n", encoding="utf-8")
+            subprocess.run([git_path, "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run([git_path, "commit", "-m", "initial"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            tracked.write_text("changed\n", encoding="utf-8")
+            (root / "new.txt").write_text("new\n", encoding="utf-8")
+
+            with patch("jarvis.tools.PROJECT_ROOT", root), patch("jarvis.tools._find_executable", return_value=git_path):
+                result = git_remote_status()
+
+        self.assertTrue(result["worktree"]["status_available"])
+        self.assertFalse(result["worktree"]["clean"])
+        self.assertEqual(result["worktree"]["dirty_count"], 2)
+        self.assertEqual(result["worktree"]["modified_count"], 1)
+        self.assertEqual(result["worktree"]["untracked_count"], 1)
+        self.assertTrue(any("tracked.txt" in item for item in result["worktree"]["status_preview"]))
+        self.assertIn("?? new.txt", result["worktree"]["status_preview"])
+        self.assertIn("worktree has 2 changed path", result["reply"])
 
     def test_codex_continue_job_does_not_persist_sensitive_followup(self):
         session_id = "019eaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

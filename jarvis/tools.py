@@ -11572,6 +11572,20 @@ def git_remote_status() -> dict[str, Any]:
     branch = (_git_read_only_command([git_path, "branch", "--show-current"])["stdout"] or "").strip()
     local_head = (_git_read_only_command([git_path, "rev-parse", "--short", "HEAD"])["stdout"] or "").strip()
     origin_url = (_git_read_only_command([git_path, "remote", "get-url", "origin"])["stdout"] or "").strip()
+    status_result = _git_read_only_command([git_path, "status", "--short"])
+    status_lines = [
+        line
+        for line in (status_result.get("stdout") or "").splitlines()
+        if line.strip()
+    ]
+    worktree_status_available = status_result.get("returncode") == 0
+    dirty_count = len(status_lines) if worktree_status_available else None
+    untracked_count = sum(1 for line in status_lines if line.startswith("?? ")) if worktree_status_available else None
+    modified_count = (
+        sum(1 for line in status_lines if line[:2] != "??")
+        if worktree_status_available
+        else None
+    )
     upstream = ""
     if branch:
         upstream = (_git_read_only_command([git_path, "for-each-ref", "--format=%(upstream:short)", f"refs/heads/{branch}"])["stdout"] or "").strip()
@@ -11612,6 +11626,15 @@ def git_remote_status() -> dict[str, Any]:
         "project_root_is_git_toplevel": project_root_resolved == git_toplevel_resolved,
         "root_git_dir_exists": (PROJECT_ROOT / ".git").exists(),
         "nested_jarvis_git_dir_exists": (PROJECT_ROOT / "jarvis" / ".git").exists(),
+    }
+    worktree = {
+        "status_available": worktree_status_available,
+        "clean": bool(worktree_status_available and dirty_count == 0),
+        "dirty_count": dirty_count,
+        "modified_count": modified_count,
+        "untracked_count": untracked_count,
+        "status_preview": status_lines[:12],
+        "status_truncated": bool(len(status_lines) > 12),
     }
     desktop_blocker = (
         relationship == "unrelated_history"
@@ -11662,6 +11685,13 @@ def git_remote_status() -> dict[str, Any]:
         reply += f" Remote tracking ref {tracking_ref} is at {remote_head or 'unknown'}; relationship is {relationship}."
     else:
         reply += " I do not see a remote tracking ref for this branch."
+    if worktree_status_available:
+        if worktree["clean"]:
+            reply += " The worktree is clean."
+        else:
+            reply += f" The worktree has {dirty_count} changed path(s), including {untracked_count} untracked."
+    else:
+        reply += " I could not read the worktree status."
     if desktop_blocker:
         reply += " GitHub Desktop's Fetch button cannot reconcile this because the local branch is unpublished locally but a same-named remote branch exists with unrelated older history."
         reply += (
@@ -11672,6 +11702,7 @@ def git_remote_status() -> dict[str, Any]:
     return {
         **base,
         "repo_scope": repo_scope,
+        "worktree": worktree,
         "repo_root": repo_root,
         "branch": branch,
         "local_head": local_head,

@@ -495,8 +495,15 @@ Status legend:
 2. Partially fixed/risky: GitHub Desktop push/fetch loop.
    - GitHub Desktop claimed newer commits on remote; Fetch did not resolve it.
 
-3. Open/unknown: many dirty/untracked files remain; commits should be scoped and
-   safe, and unrelated user changes must not be reverted.
+3. Fixed/proved at least once: dirty/untracked files are now visible to Jarvis
+   before release or GitHub troubleshooting.
+   - Commits should still be scoped and safe, and unrelated user changes must
+     not be reverted.
+   - 2026-06-19 proof update: `diagnostics.git` now includes a read-only
+     `worktree` section with `clean`, dirty/modified/untracked counts, a
+     bounded `git status --short` preview, and reply text that says whether the
+     worktree is clean. Regression tests cover both clean unrelated-remote
+     diagnostics and a dirty worktree with one modified plus one untracked file.
 
 4. Fixed/proved at least once: app version must be visible in the app, e.g.
    "Jarvis 0.1.xxx".
