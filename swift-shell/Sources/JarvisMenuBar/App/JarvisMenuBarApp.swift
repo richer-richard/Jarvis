@@ -665,6 +665,7 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .appendingPathComponent("MacOS")
             .appendingPathComponent("jarvis-status-helper")
         guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+            ensureFallbackStatusItem()
             return
         }
         let process = Process()
@@ -694,10 +695,30 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         do {
             try process.run()
+            removeFallbackStatusItemIfNeeded()
             statusHelperProcess = process
         } catch {
             statusHelperProcess = nil
+            ensureFallbackStatusItem()
         }
+    }
+
+    private func ensureFallbackStatusItem() {
+        guard statusItem == nil else {
+            return
+        }
+        configureStatusItem()
+    }
+
+    private func removeFallbackStatusItemIfNeeded() {
+        guard !Self.menuBarItemEnabled, let statusItem else {
+            return
+        }
+        NSStatusBar.system.removeStatusItem(statusItem)
+        self.statusItem = nil
+        statusMenu = nil
+        speechMuteItem = nil
+        wakeListenerItem = nil
     }
 
     private func terminateStaleJarvisProcesses() {

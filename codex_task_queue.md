@@ -16,6 +16,7 @@
 - [x] Mark Gemma/Qwen-style audio-native models as `research_only` in `models.test_plan` until bounded probes and full-loop STT proof exist.
 - [x] Inspect current GitHub branch state without pushing; current branch is ahead-only and dry-run fetch reports no incoming updates.
 - [x] Replace native Outlook/screen and early streaming "Working" status rows with the final answer row instead of leaving stale visible progress behind.
+- [x] Add a main-app emergency status-item fallback when the always-visible status helper cannot launch, and remove that fallback after helper recovery to avoid duplicate heads.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -38,3 +39,5 @@
 - [x] Git CLI proof: `codex/jarvis-overnight-20260608` is `ahead 126, behind 0`; dry-run fetch reported no incoming updates and no push was attempted.
 - [x] Focused Swift progress/status tests passed for replacing native Outlook/screen and early streaming status placeholders with the final answer.
 - [x] Full `tests.test_safety` passed `931/931` and canonical `scripts/verify_safe.py` passed `105/105` for the stale Working status row cleanup.
+- [x] Focused status-helper emergency tests passed, `swift build --product jarvis-menu-bar` passed, `jarvis-menu-bar --self-test` passed, and `jarvis-status-helper --self-test` passed for the emergency fallback.
+- [x] Full `tests.test_safety` passed `931/931` and canonical `scripts/verify_safe.py` passed `105/105` for the status-helper emergency fallback.

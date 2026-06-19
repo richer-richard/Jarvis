@@ -57,6 +57,10 @@ Status legend:
      internal/debug/model text aloud, or stopping speech after a few seconds.
    - Rule: if Jarvis can make sound, the menu-bar Shut Up control must be visible
      and working.
+   - 2026-06-19 proof update: the status helper remains the normal single menu
+     head, but the main app now creates a fallback emergency status item if the
+     helper executable is missing or fails to launch; the fallback is removed
+     again when the helper starts successfully to avoid duplicate heads.
 
 4. Open/unknown: full speech-in/action-out/speech-back loop is not yet proved
    across Leo's real target prompts.
