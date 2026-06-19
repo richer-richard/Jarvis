@@ -21,6 +21,7 @@
 - [x] Force app-launched Jarvis workers onto macOS `say`/plain system defaults so inherited Piper settings cannot return in the app.
 - [x] Rebuild canonical ignored `output/Jarvis.app` after the Swift fixes and verify bundle plist, codesign, menu-bar self-test, and status-helper self-test.
 - [x] Fix the live `output/Jarvis.app` launch hang so stale-process cleanup cannot block before worker monitoring starts, and verify the app launches with one helper and one bundled worker.
+- [x] Harden stale Jarvis process cleanup with targeted `pgrep` so relaunches can remove duplicate app/helper processes without scanning the whole process table.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -51,3 +52,5 @@
 - [x] Fixed the live app launch path: stale-process cleanup now fails fast instead of hanging in `ps`, launch-time panel open no longer forces a parallel refresh, and worker monitoring performs the initial refresh after readiness.
 - [x] Live `build_and_launch_app.sh` succeeded after the fix; health reported `Jarvis 0.1.468 build 468 is online and ready`, with bundled worker source and `worker_launch_matches_bundle: true`.
 - [x] Full `tests.test_safety` passed `934/934`, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-001017.json`.
+- [x] Targeted stale cleanup now uses `pgrep -fl jarvis-menu-bar|jarvis-status-helper`; live relaunch again produced exactly one app, one status helper, and one bundled worker.
+- [x] Full `tests.test_safety` passed `934/934`, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-001717.json`.

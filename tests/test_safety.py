@@ -15300,6 +15300,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Thread.sleep(forTimeInterval: 0.02)", app_source)
         self.assertIn("process.terminate()", app_source)
         self.assertNotIn("process.waitUntilExit()", app_source)
+        self.assertIn('process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")', app_source)
+        self.assertIn('process.arguments = ["-fl", "jarvis-menu-bar|jarvis-status-helper"]', app_source)
+        self.assertIn("pid != currentPID", app_source)
+        self.assertNotIn("if command.contains(currentBundleMarker) {\n                    return nil", app_source)
 
     def test_swift_wake_permission_callbacks_are_not_main_actor_isolated(self):
         listener_source = (

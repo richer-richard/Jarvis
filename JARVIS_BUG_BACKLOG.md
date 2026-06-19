@@ -809,3 +809,10 @@ Status legend:
    - Product rule: launch-time cleanup must fail fast, worker monitoring owns the
      initial refresh after readiness, and a live launch must show one app, one
      helper, and one bundled worker before the build is called usable.
+
+5. Fixed/proved: stale Jarvis cleanup could miss duplicate processes from the
+   same app bundle path, which is exactly the confusing "two Jarvises" case.
+   - Test: `test_swift_launch_lets_worker_monitor_own_initial_refresh`.
+   - Product rule: cleanup targets only Jarvis app/helper processes with
+     `pgrep`, protects the current app PID/current helper parent, and never
+     skips a stale duplicate merely because it launched from `output/Jarvis.app`.

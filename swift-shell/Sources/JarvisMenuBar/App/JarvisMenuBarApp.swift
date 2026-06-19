@@ -735,8 +735,8 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private static func processSnapshot() -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "pid=,ppid=,command="]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        process.arguments = ["-fl", "jarvis-menu-bar|jarvis-status-helper"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
@@ -768,20 +768,25 @@ final class JarvisAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .compactMap { rawLine -> pid_t? in
                 let line = rawLine.trimmingCharacters(in: .whitespaces)
                 let fields = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
-                guard fields.count == 3,
+                guard fields.count >= 2,
                       let pid = pid_t(String(fields[0])),
-                      let parentPID = pid_t(String(fields[1])),
                       pid != currentPID else {
                     return nil
                 }
-                let command = String(fields[2])
-                if command.contains(currentBundleMarker) {
-                    return nil
+                let parentPID: pid_t?
+                let command: String
+                if fields.count == 3, let parsedParentPID = pid_t(String(fields[1])) {
+                    parentPID = parsedParentPID
+                    command = String(fields[2])
+                } else {
+                    parentPID = nil
+                    command = fields.dropFirst().map(String.init).joined(separator: " ")
                 }
                 if command.contains(".app/Contents/MacOS/jarvis-menu-bar") {
                     return pid
                 }
-                if command.contains(".app/Contents/MacOS/jarvis-status-helper"), parentPID != currentPID {
+                if command.contains(".app/Contents/MacOS/jarvis-status-helper"),
+                   parentPID != currentPID || !command.contains(currentBundleMarker) {
                     return pid
                 }
                 return nil
