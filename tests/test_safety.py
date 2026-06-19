@@ -5161,6 +5161,47 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["music_app_bridge"]["startup"]["status"], "live")
         self.assertIn("in Music", result["reply"])
 
+    def test_music_app_bridge_play_opens_music_app_when_control_token_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app_path = Path(tmpdir) / "Music.app"
+            app_path.mkdir()
+            completed = subprocess.CompletedProcess(["/usr/bin/open", str(app_path)], 0, "", "")
+            bridge_responses = iter([
+                {"ok": True, "app": "Music"},
+                {"ok": False, "error": {"code": "missing_music_bridge_token"}},
+                {"ok": True, "app": "Music"},
+                {"ok": True, "song": {"id": "song-1", "title": "Dear Evan Hansen | 2017 Tony Awards"}},
+                {
+                    "ok": True,
+                    "playing": True,
+                    "nowPlaying": {
+                        "id": "song-1",
+                        "title": "Dear Evan Hansen | 2017 Tony Awards",
+                        "artist": "Matt Hagmeier Curtis",
+                        "fileName": "Dear Evan Hansen.mp3",
+                    },
+                },
+            ])
+            with patch.object(jarvis_tools, "MUSIC_APP_BUNDLE_PATH", app_path), \
+                 patch("jarvis.tools._find_executable", return_value="/usr/bin/open"), \
+                 patch("jarvis.tools.subprocess.run", return_value=completed) as open_mock, \
+                 patch("jarvis.tools._music_app_bridge_request", side_effect=lambda *_args, **_kwargs: next(bridge_responses)), \
+                 patch("jarvis.tools.time.sleep"):
+                result = jarvis_tools._music_app_bridge_play(
+                    query="Waving Through A Window",
+                    user_request="play Waving Through A Window",
+                    from_your_pick=False,
+                    started_at=time.monotonic(),
+                )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["status"], "playing")
+        self.assertEqual(result["played_by"], "music_app")
+        self.assertEqual(result["music_app_bridge"]["startup"]["status"], "live")
+        self.assertIn("in Music", result["reply"])
+        open_mock.assert_called_once()
+
     def test_music_app_bridge_play_rejects_wrong_current_track(self):
         bridge_responses = iter([
             {"ok": True, "app": "Music"},

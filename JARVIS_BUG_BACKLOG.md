@@ -276,9 +276,17 @@ Status legend:
    confusingly to a broader Dear Evan Hansen/Tony Awards file.
    - Jarvis must be honest about closest matches.
 
-4. Partially fixed/risky: Jarvis said LocalOS was not connected instead of
-   automatically opening/connecting LocalOS.
+4. Fixed/proved for the preferred native Music path: Jarvis said LocalOS was not
+   connected instead of automatically opening/connecting LocalOS.
    - Leo expects Jarvis to recover automatically when safe.
+   - 2026-06-19 proof update: normal music playback now prefers the native Music
+     app bridge. If the bridge is down, Jarvis opens `Music.app`, waits for
+     `/health`, retries the play request, and confirms playback before claiming
+     success. A second regression covers the case where the bridge is alive but
+     the control token is missing until Music.app opens.
+   - Remaining risk: older LocalOS/Chrome fallback lanes can still require a
+     real click or Chrome Automation permission; those stay tracked in rows 5
+     and 6.
 
 5. Partially fixed/risky: LocalOS opened and selected a song but did not play.
    - Browser autoplay/user-gesture rule caused "play() failed because the user
