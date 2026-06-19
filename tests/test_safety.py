@@ -2614,6 +2614,31 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
         )
 
+    def test_voice_loop_qa_selects_ocr_line_target_center(self):
+        target = voice_loop_qa.select_ocr_line_target(
+            {
+                "ocr_lines": [
+                    {"text": "Activity", "pixels": {"x": 10, "y": 20, "width": 70, "height": 20}},
+                    {"text": "Assignments", "pixels": {"x": 4.4, "y": 566.2, "width": 127.4, "height": 21.9}},
+                ]
+            },
+            ["Assignments"],
+        )
+
+        self.assertTrue(target["found"])
+        self.assertEqual(target["text"], "Assignments")
+        self.assertEqual(target["center"], {"x": 68.1, "y": 577.15})
+
+    def test_voice_loop_qa_ocr_line_target_fails_closed_without_geometry(self):
+        self.assertEqual(
+            voice_loop_qa.select_ocr_line_target({"text": "Assignments"}, ["Assignments"]),
+            {"found": False, "reason": "ocr_lines_missing"},
+        )
+        self.assertEqual(
+            voice_loop_qa.select_ocr_line_target({"ocr_lines": []}, ["Assignments"]),
+            {"found": False, "reason": "no_label_match"},
+        )
+
     def test_voice_loop_qa_browser_page_usefulness_rejects_generic_screen_tool_for_teams_assignment(self):
         response = {
             "tool": "screen.visible_text",

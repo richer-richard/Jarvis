@@ -2142,6 +2142,58 @@ def run_native_visible_screen_follow_up_attempt(
     }
 
 
+def select_ocr_line_target(
+    capture_payload: dict[str, Any],
+    labels: list[str] | tuple[str, ...],
+) -> dict[str, Any]:
+    """Return the best visible OCR line target without clicking it."""
+    lines = capture_payload.get("ocr_lines")
+    if not isinstance(lines, list):
+        return {"found": False, "reason": "ocr_lines_missing"}
+    normalized_labels = [str(label or "").strip().casefold() for label in labels if str(label or "").strip()]
+    if not normalized_labels:
+        return {"found": False, "reason": "labels_missing"}
+    best: dict[str, Any] | None = None
+    best_score = -1
+    for index, raw_line in enumerate(lines):
+        if not isinstance(raw_line, dict):
+            continue
+        text = str(raw_line.get("text") or "").strip()
+        text_key = text.casefold()
+        if not text_key:
+            continue
+        score = 0
+        for label in normalized_labels:
+            if text_key == label:
+                score = max(score, 100)
+            elif label in text_key:
+                score = max(score, 80)
+            elif text_key in label:
+                score = max(score, 60)
+        if score <= best_score:
+            continue
+        pixels = raw_line.get("pixels") if isinstance(raw_line.get("pixels"), dict) else {}
+        try:
+            x = float(pixels.get("x"))
+            y = float(pixels.get("y"))
+            width = float(pixels.get("width"))
+            height = float(pixels.get("height"))
+        except (TypeError, ValueError):
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        best_score = score
+        best = {
+            "found": score > 0,
+            "index": index,
+            "text": text,
+            "score": score,
+            "center": {"x": round(x + width / 2, 2), "y": round(y + height / 2, 2)},
+            "pixels": {"x": round(x, 2), "y": round(y, 2), "width": round(width, 2), "height": round(height, 2)},
+        }
+    return best if best and best.get("found") else {"found": False, "reason": "no_label_match"}
+
+
 def open_visible_screen_follow_up_url(command_response: dict[str, Any], *, timeout: float) -> dict[str, Any]:
     result = command_response.get("result") if isinstance(command_response.get("result"), dict) else {}
     url = str(result.get("url") or "").strip()

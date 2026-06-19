@@ -78,6 +78,7 @@
 - [x] Current pre-build gate now fails honestly `2/3` at `runtime/pre_build_gate/20260620-051456/summary.json`: Python safety suite passed, Chrome cleanup passed, and full-loop regression failed only because `teams_music_assignment_honesty` is warning/incomplete.
 - [x] Made the Teams blocker proof more actionable: live Teams proof at `runtime/full_loop_regression/20260620-052023/summary.json` reports both `completion_status: wrong_subject` and `chrome_page_read_blocked: true`.
 - [x] Added native OCR geometry groundwork for future Teams navigation: bundled `jarvis-visible-screen-probe` now emits `ocr_lines` with normalized and pixel boxes; live proof `runtime/visible-screen-geometry-proof.json` captured 50 lines including an `Assignments` line with coordinates.
+- [x] Added a fail-closed OCR target selector: `select_ocr_line_target()` finds a visible line center without clicking; live proof found `Assignments` at center `(68.13, 577.17)` from `runtime/visible-screen-geometry-proof.json`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.
