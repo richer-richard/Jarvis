@@ -11,13 +11,26 @@ from typing import Any
 
 LOCALOS_MUSIC_HTTP_URL = "http://127.0.0.1:8787/localFiles/HTMLfiles/!musicPlayer.html"
 LOCALOS_MUSIC_FILE_MARKER = "/developer/localOSroot/localOS/localFiles/HTMLfiles/!musicPlayer.html"
+JARVIS_LOOPBACK_PREFIXES = (
+    "http://127.0.0.1:8765/overnight-report",
+    "http://127.0.0.1:8765/overnight-workboard",
+    "http://127.0.0.1:8765/wake-audition",
+)
+JARVIS_FILE_MARKERS = (
+    "/developer/Jarvis/runtime/overnight_status/report.html",
+    "/developer/Jarvis/runtime/overnight_status/index.html",
+)
 
 
 def is_cleanup_target(url: str) -> bool:
     value = str(url or "")
-    return value == LOCALOS_MUSIC_HTTP_URL or (
-        value.startswith("file:///Users/leoxu/") and LOCALOS_MUSIC_FILE_MARKER in value
-    )
+    if value == LOCALOS_MUSIC_HTTP_URL:
+        return True
+    if any(value.startswith(prefix) for prefix in JARVIS_LOOPBACK_PREFIXES):
+        return True
+    if value.startswith("file:///Users/leoxu/"):
+        return LOCALOS_MUSIC_FILE_MARKER in value or any(marker in value for marker in JARVIS_FILE_MARKERS)
+    return False
 
 
 def _cleanup_applescript(*, close_targets: bool) -> str:
@@ -31,7 +44,12 @@ tell application "Google Chrome"
       set tabUrl to URL of t
       set shouldClose to false
       if tabUrl is "{LOCALOS_MUSIC_HTTP_URL}" then set shouldClose to true
+      if tabUrl starts with "http://127.0.0.1:8765/overnight-report" then set shouldClose to true
+      if tabUrl starts with "http://127.0.0.1:8765/overnight-workboard" then set shouldClose to true
+      if tabUrl starts with "http://127.0.0.1:8765/wake-audition" then set shouldClose to true
       if tabUrl starts with "file:///Users/leoxu/" and tabUrl contains "{LOCALOS_MUSIC_FILE_MARKER}" then set shouldClose to true
+      if tabUrl starts with "file:///Users/leoxu/" and tabUrl contains "/developer/Jarvis/runtime/overnight_status/report.html" then set shouldClose to true
+      if tabUrl starts with "file:///Users/leoxu/" and tabUrl contains "/developer/Jarvis/runtime/overnight_status/index.html" then set shouldClose to true
       if shouldClose then
         set output to output & tabTitle & tab & tabUrl & linefeed
         {close_line}

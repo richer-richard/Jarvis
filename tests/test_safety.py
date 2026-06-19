@@ -873,9 +873,15 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(cleanup_chrome_test_tabs.is_cleanup_target(
             "file:///Users/leoxu/Library/CloudStorage/OneDrive-YKPaoSchool%E4%B8%8A%E6%B5%B7%E6%B0%91%E5%8A%9E%E5%8C%85%E7%8E%89%E5%88%9A%E5%AE%9E%E9%AA%8C%E5%AD%A6%E6%A0%A1/developer/localOSroot/localOS/localFiles/HTMLfiles/!musicPlayer.html"
         ))
+        self.assertTrue(cleanup_chrome_test_tabs.is_cleanup_target("http://127.0.0.1:8765/overnight-report/"))
+        self.assertTrue(cleanup_chrome_test_tabs.is_cleanup_target("http://127.0.0.1:8765/overnight-workboard/"))
+        self.assertTrue(cleanup_chrome_test_tabs.is_cleanup_target("http://127.0.0.1:8765/wake-audition/"))
+        self.assertTrue(cleanup_chrome_test_tabs.is_cleanup_target(
+            "file:///Users/leoxu/project/developer/Jarvis/runtime/overnight_status/report.html"
+        ))
         self.assertFalse(cleanup_chrome_test_tabs.is_cleanup_target("https://www.youtube.com/watch?v=test"))
         self.assertFalse(cleanup_chrome_test_tabs.is_cleanup_target("chrome://newtab/"))
-        self.assertFalse(cleanup_chrome_test_tabs.is_cleanup_target("http://127.0.0.1:8765/overnight-report/"))
+        self.assertFalse(cleanup_chrome_test_tabs.is_cleanup_target("http://127.0.0.1:3000/my-app"))
 
     def test_cleanup_chrome_test_tabs_dry_run_does_not_close_matches(self):
         completed = subprocess.CompletedProcess(
@@ -884,6 +890,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             stdout=(
                 "Music Player\thttp://127.0.0.1:8787/localFiles/HTMLfiles/!musicPlayer.html\n"
                 "Local File\tfile:///Users/leoxu/project/developer/localOSroot/localOS/localFiles/HTMLfiles/!musicPlayer.html\n"
+                "Jarvis Report\thttp://127.0.0.1:8765/overnight-report/\n"
+                "Wake Lab\thttp://127.0.0.1:8765/wake-audition/\n"
             ),
             stderr="",
         )
@@ -892,10 +900,13 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertFalse(result["executed"])
-        self.assertEqual(result["target_count"], 2)
+        self.assertEqual(result["target_count"], 4)
         self.assertEqual(result["closed_count"], 0)
         self.assertIn("-- dry run", run_mock.call_args.args[0][2])
         self.assertNotIn("close t\n", run_mock.call_args.args[0][2])
+        script = run_mock.call_args.args[0][2]
+        self.assertIn('starts with "http://127.0.0.1:8765/overnight-report"', script)
+        self.assertIn('starts with "http://127.0.0.1:8765/wake-audition"', script)
 
     def test_cleanup_chrome_test_tabs_execute_closes_matches(self):
         completed = subprocess.CompletedProcess(

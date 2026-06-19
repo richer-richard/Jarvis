@@ -471,6 +471,10 @@ Status legend:
 6. Partially fixed/risky: Jarvis should not open random extra Chrome tabs during
    tests and leave them for Leo.
    - Future overnight runs must close Codex/Jarvis-created tabs before morning.
+   - 2026-06-19 proof update: Chrome cleanup now targets Jarvis/Codex-created
+     local report, workboard, wake-audition, and old LocalOS music-player tabs,
+     while preserving personal YouTube/new-tab/other-localhost pages. Focused
+     tests cover target selection and dry-run/execute AppleScript behavior.
 
 7. Open/unknown: in full-screen apps, the overlay/browser behavior can take too
    much visible space.
