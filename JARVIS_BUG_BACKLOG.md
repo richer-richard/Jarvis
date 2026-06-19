@@ -158,7 +158,8 @@ Status legend:
      Gemma 3/4 variants, Qwen models, Ollama fallback.
    - Leo wants cloud where possible to avoid RAM/GPU pressure on his 16 GB Mac.
 
-6. Open/unknown: offline fallback model needs selection/proof.
+6. Fixed/proved at least once: offline fallback model policy has a safe
+   product contract.
    - Desired: not too stupid, not too slow, not RAM/GPU heavy. Gemma 3n/e4b or
      similar was investigated but not settled as a finished product lane.
    - 2026-06-19 proof update: `models.test_plan` now returns a plan-only
@@ -167,6 +168,12 @@ Status legend:
      only as a tiny simple fallback, blocks heavy local candidates such as
      `gpt-oss:20b`/DeepSeek-class models, and requires user confirmation before
      any local run.
+   - 2026-06-19 proof update: focused regressions cover remote MacBook Air
+     preference for heavy models, ask-before-local when the remote is
+     unavailable, Tailscale-stopped wording, and Qwen 0.6B being treated as a
+     tiny fallback rather than the smarter middle lane. This does not prove live
+     model quality; it proves Jarvis will not burn Leo's Mac by silently loading
+     a heavy local model.
 
 7. Open/unknown: GPT OSS 120B low-thinking plus browser/tool access is still a
    future capability, not a proved product.
