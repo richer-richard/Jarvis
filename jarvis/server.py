@@ -53,6 +53,7 @@ from .tools import (
     wake_audition_score,
     wake_audition_status,
     _sanitize_spoken_text,
+    _sanitize_user_visible_text,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -126,6 +127,7 @@ class JarvisServer:
 
             planned = self.planner.handle(command, history=history, use_model_router=True)
             data = planned.to_dict()
+            _sanitize_user_visible_result_fields(data)
             event = self.audit.record(
                 command=command,
                 risk_level=int(data["assessment"]["risk_level"]),
@@ -334,6 +336,7 @@ class JarvisServer:
         yield {"event": "final", "data": data}
 
     def _record_command_result(self, data: dict[str, Any]):
+        _sanitize_user_visible_result_fields(data)
         return self.audit.record(
             command=str(data.get("command") or ""),
             risk_level=int(data["assessment"]["risk_level"]),
@@ -1074,6 +1077,7 @@ def _preview_app_name(preview: dict[str, Any]) -> str:
 
 
 def _attach_auto_speech(data: dict[str, Any], *, reason: str, suppress: bool = False) -> None:
+    _sanitize_user_visible_result_fields(data)
     result = data.get("result")
     if not isinstance(result, dict):
         return
@@ -1107,6 +1111,7 @@ def _stream_should_defer_final_speech(data: dict[str, Any]) -> bool:
 
 
 def _attach_stream_final_speech(data: dict[str, Any], *, suppress: bool = False) -> None:
+    _sanitize_user_visible_result_fields(data)
     if _stream_should_defer_final_speech(data):
         data["speech"] = _deferred_follow_up_speech_result(reason="final")
         return
@@ -1157,6 +1162,16 @@ def _speech_text_from_result(result: dict[str, Any]) -> str:
             if sanitized:
                 return sanitized
     return ""
+
+
+def _sanitize_user_visible_result_fields(data: dict[str, Any]) -> None:
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return
+    for key in ("reply", "email_summary", "spoken_summary"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            result[key] = _sanitize_user_visible_text(value)
 
 
 class RequestHandler(BaseHTTPRequestHandler):

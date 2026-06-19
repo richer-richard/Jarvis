@@ -1597,6 +1597,23 @@ def _sanitize_spoken_text(text: str) -> str:
     return spoken.strip(" ,")[:TTS_MAX_CHARS]
 
 
+def _sanitize_user_visible_text(text: str, *, max_chars: int = 4000) -> str:
+    """Strip internal/tool diagnostics while preserving visible-language content."""
+    visible = str(text or "").replace("\x00", " ")
+    visible = _strip_fast_chat_hidden_call_fragments(visible)
+    visible = _strip_spoken_json_tool_fragments(visible)
+    visible = re.sub(r"(?is)<think>.*?</think>", " ", visible)
+    visible = _strip_spoken_diagnostic_fragments(visible)
+    visible = _strip_spoken_internal_sections(visible)
+    visible = re.sub(r"(?im)^\s*(?:selected[_\s-]*tool|entities)\s*[:=].*$", " ", visible)
+    visible = re.sub(r"(?i)\b(?:selected[_\s-]*tool|entities)\s*[:=]\s*[^\n,.!?;]+", " ", visible)
+    visible = re.sub(r"[ \t\f\v]+", " ", visible)
+    visible = re.sub(r"\s+\n", "\n", visible)
+    visible = re.sub(r"\n{3,}", "\n\n", visible)
+    visible = re.sub(r"\s+([,.!?])", r"\1", visible)
+    return visible.strip(" \t\n,")[: max(1, int(max_chars))]
+
+
 def _strip_spoken_json_tool_fragments(text: str) -> str:
     """Remove leaked JSON-ish tool payloads before punctuation is flattened for TTS."""
     value = str(text or "")

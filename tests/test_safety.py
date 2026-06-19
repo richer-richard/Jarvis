@@ -20530,12 +20530,82 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 result = server.command("hello")
 
         self.assertEqual(result["speech"]["status"], "empty_after_sanitization")
+        self.assertEqual(result["result"]["reply"], "")
         self.assertEqual(result["speech"]["text_preview"], "")
         self.assertEqual(result["speech"]["spoken_text"], "")
+        serialized_result = json.dumps(result["result"])
+        self.assertNotIn("Groq", serialized_result)
+        self.assertNotIn("Tool time", serialized_result)
+        self.assertNotIn("gpt-oss", serialized_result)
         serialized_speech = json.dumps(result["speech"])
         self.assertNotIn("Groq", serialized_speech)
         self.assertNotIn("Tool time", serialized_speech)
         self.assertNotIn("gpt-oss", serialized_speech)
+
+    def test_command_visible_reply_keeps_answer_but_strips_internal_diagnostics(self):
+        mixed_reply = (
+            "Opened Microsoft Outlook.\n"
+            "Tool time: 0.2s\n"
+            "Model gpt-oss-120b-cloud\n"
+            "Backend groq\n"
+            'selected_tool: outlook.visible_summary entities: {"selection":"latest"}'
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch.object(
+                server.planner,
+                "handle",
+                return_value=PlannedResult(
+                    command="open outlook",
+                    tool="app.open",
+                    summary=mixed_reply,
+                    assessment={"category": "safe", "risk_level": 0, "risk_label": "safe", "decision": "allow"},
+                    result={"reply": mixed_reply},
+                    executed=True,
+                ),
+            ), patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final", "text_preview": "Opened Microsoft Outlook."}) as speak_mock:
+                result = server.command("open outlook")
+
+        self.assertEqual(result["result"]["reply"], "Opened Microsoft Outlook.")
+        self.assertNotIn("Tool time", result["result"]["reply"])
+        self.assertNotIn("gpt-oss", result["result"]["reply"])
+        speak_mock.assert_called_once_with("Opened Microsoft Outlook.", reason="final")
+
+    def test_stream_command_visible_reply_keeps_answer_but_strips_internal_diagnostics(self):
+        mixed_reply = (
+            "Hello, sir. What would you like done?\n"
+            "Fast model time: 1.3s\n"
+            "First visible: 1.2s\n"
+            "Backend groq"
+        )
+        fake_events = [
+            {
+                "event": "final_result",
+                "data": {
+                    "tool": "conversation.fast_local",
+                    "status": "completed",
+                    "executed": True,
+                    "reply": mixed_reply,
+                    "duration_human": "1.3s",
+                    "first_visible_token_seconds": 1.2,
+                },
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch("jarvis.server.stream_fast_local_chat_events", return_value=fake_events), \
+                 patch("jarvis.server.speak_text_async", return_value={"spoken": True, "status": "queued", "reason": "final", "text_preview": "Hello, sir. What would you like done?"}) as speak_mock:
+                events = list(server.stream_command("hello"))
+
+        final = events[-1]["data"]
+        self.assertEqual(final["result"]["reply"], "Hello, sir. What would you like done?")
+        self.assertNotIn("Fast model time", final["result"]["reply"])
+        self.assertNotIn("Backend", final["result"]["reply"])
+        speak_mock.assert_called_once_with("Hello, sir. What would you like done?", reason="final")
 
     def test_suppressed_debug_only_speech_preview_stays_sanitized(self):
         debug_reply = "Groq llama-3.3-70b-versatile | Tool time 0.2s | Model gpt-oss-120b-cloud | Backend groq"
@@ -20558,6 +20628,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 result = server.command("hello", suppress_speech=True)
 
         self.assertEqual(result["speech"]["status"], "suppressed_by_request")
+        self.assertEqual(result["result"]["reply"], "")
         self.assertEqual(result["speech"]["text_preview"], "")
         self.assertEqual(result["speech"]["text_length"], 0)
         serialized_speech = json.dumps(result["speech"])

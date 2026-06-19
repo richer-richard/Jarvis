@@ -534,6 +534,11 @@ Status legend:
    - 2026-06-19 proof update: TTS sanitizer covers mixed useful text plus
      leaked `selected_tool`/`entities` JSON and inline `Tool time`/Groq model
      diagnostics.
+   - 2026-06-19 proof update: server final results now sanitize user-visible
+     `reply`, `email_summary`, and `spoken_summary` fields before returning
+     them to the app or passing them to TTS. Regressions cover debug-only
+     replies and mixed useful text plus backend/model diagnostics in both normal
+     and streaming command paths.
 
 3. Open/unknown: stronger browser/computer-control tools must avoid destructive
    actions unless confirmed.
