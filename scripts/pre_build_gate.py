@@ -218,6 +218,7 @@ def cleanup_chrome_step() -> dict[str, Any]:
         "label": "Clean up Jarvis Chrome test tabs",
         "command": [sys.executable, "scripts/cleanup_chrome_test_tabs.py", "--execute", "--json"],
         "always_run_next": True,
+        "fatal": False,
     }
 
 
@@ -281,6 +282,7 @@ def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> 
             "stdout_tail": tail_text(completed.stdout),
             "stderr_tail": tail_text(completed.stderr),
             "proof_contract": step.get("proof_contract"),
+            "fatal": bool(step.get("fatal", True)),
         }
     except subprocess.TimeoutExpired as error:
         return {
@@ -294,6 +296,7 @@ def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> 
             "stdout_tail": tail_text(error.stdout or ""),
             "stderr_tail": tail_text(error.stderr or f"Timed out after {step_timeout}s"),
             "proof_contract": step.get("proof_contract"),
+            "fatal": bool(step.get("fatal", True)),
         }
 
 
@@ -309,8 +312,12 @@ def make_summary(
     complete: bool,
 ) -> dict[str, Any]:
     passed = sum(1 for item in results if item.get("ok"))
-    failed = sum(1 for item in results if not item.get("ok"))
-    status = "passed" if complete and failed == 0 and results else "failed" if failed else "running"
+    failed = sum(1 for item in results if not item.get("ok") and item.get("fatal", True))
+    warnings = sum(1 for item in results if not item.get("ok") and not item.get("fatal", True))
+    if complete and failed == 0 and results:
+        status = "passed_with_warnings" if warnings else "passed"
+    else:
+        status = "failed" if failed else "running"
     return {
         "schema": "jarvis.pre_build_gate.v1",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -319,9 +326,10 @@ def make_summary(
         "report_path": str(run_dir / "summary.json"),
         "latest_path": str(run_dir.parent / "latest.json"),
         "status": status,
-        "ok": status == "passed",
+        "ok": status in {"passed", "passed_with_warnings"},
         "passed": passed,
         "failed": failed,
+        "warnings": warnings,
         "total": len(results),
         "complete": complete,
         "duration_seconds": round(time.monotonic() - started, 3),
@@ -360,7 +368,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
     for result in summary.get("results", []):
         if not isinstance(result, dict):
             continue
-        icon = "PASS" if result.get("ok") else "FAIL"
+        icon = "PASS" if result.get("ok") else "WARN" if not result.get("fatal", True) else "FAIL"
         lines.extend(
             [
                 "",

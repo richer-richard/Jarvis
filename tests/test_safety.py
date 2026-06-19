@@ -902,6 +902,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("scripts/probe_stop_speaking.py", steps[2]["command"])
         self.assertEqual(steps[2]["proof_contract"]["speech_mode"], "suppressed_for_stop_speaking")
         self.assertFalse(steps[2]["proof_contract"]["starts_audio"])
+        self.assertFalse(steps[3]["fatal"])
 
     def test_pre_build_gate_can_exercise_live_speech_explicitly(self):
         steps = pre_build_gate.build_steps(
@@ -995,6 +996,32 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["timeout_seconds"], 42.0)
         self.assertEqual(calls[0][1], 42.0)
+
+    def test_pre_build_gate_cleanup_warning_does_not_fail_gate_by_itself(self):
+        calls = []
+
+        def fake_runner(command, timeout):
+            calls.append(command)
+            if any("cleanup_chrome_test_tabs.py" in str(part) for part in command):
+                return subprocess.CompletedProcess(command, 1, stdout='{"ok": false}', stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary = pre_build_gate.run_gate(
+                base_url="http://127.0.0.1:8765",
+                output_dir=Path(tmpdir),
+                skip_python_tests=True,
+                skip_full_loop=True,
+                runner=fake_runner,
+            )
+
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["status"], "passed_with_warnings")
+        self.assertEqual(summary["failed"], 0)
+        self.assertEqual(summary["warnings"], 1)
+        cleanup = next(item for item in summary["results"] if item["id"] == "cleanup_chrome_test_tabs")
+        self.assertFalse(cleanup["ok"])
+        self.assertFalse(cleanup["fatal"])
 
     def test_pre_build_gate_rejects_non_loopback_base_url(self):
         with self.assertRaises(ValueError):
@@ -1207,12 +1234,12 @@ class VerifySafeScriptTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             args=["osascript"],
             returncode=0,
-            stdout=(
-                "Music Player\thttp://127.0.0.1:8787/localFiles/HTMLfiles/!musicPlayer.html\n"
-                "Local File\tfile:///Users/leoxu/project/developer/localOSroot/localOS/localFiles/HTMLfiles/!musicPlayer.html\n"
-                "Jarvis Report\thttp://127.0.0.1:8765/overnight-report/\n"
-                "Wake Lab\thttp://127.0.0.1:8765/wake-audition/\n"
-            ),
+            stdout=json.dumps([
+                {"title": "Music Player", "url": "http://127.0.0.1:8787/localFiles/HTMLfiles/!musicPlayer.html"},
+                {"title": "Local File", "url": "file:///Users/leoxu/project/developer/localOSroot/localOS/localFiles/HTMLfiles/!musicPlayer.html"},
+                {"title": "Jarvis Report", "url": "http://127.0.0.1:8765/overnight-report/"},
+                {"title": "Wake Lab", "url": "http://127.0.0.1:8765/wake-audition/"},
+            ]),
             stderr="",
         )
         with patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
@@ -1222,17 +1249,20 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(result["executed"])
         self.assertEqual(result["target_count"], 4)
         self.assertEqual(result["closed_count"], 0)
-        self.assertIn("-- dry run", run_mock.call_args.args[0][2])
-        self.assertNotIn("close t\n", run_mock.call_args.args[0][2])
-        script = run_mock.call_args.args[0][2]
-        self.assertIn('starts with "http://127.0.0.1:8765/overnight-report"', script)
-        self.assertIn('starts with "http://127.0.0.1:8765/wake-audition"', script)
+        self.assertEqual(run_mock.call_args.args[0][:3], ["osascript", "-l", "JavaScript"])
+        script = run_mock.call_args.args[0][-1]
+        self.assertIn('"http://127.0.0.1:8765/overnight-report"', script)
+        self.assertIn('"http://127.0.0.1:8765/wake-audition"', script)
+        self.assertIn("if (closeTargets) tab.close();", script)
+        self.assertIn("const closeTargets = false", script)
 
     def test_cleanup_chrome_test_tabs_execute_closes_matches(self):
         completed = subprocess.CompletedProcess(
             args=["osascript"],
             returncode=0,
-            stdout="Music Player\thttp://127.0.0.1:8787/localFiles/HTMLfiles/!musicPlayer.html\n",
+            stdout=json.dumps([
+                {"title": "Music Player", "url": "http://127.0.0.1:8787/localFiles/HTMLfiles/!musicPlayer.html"}
+            ]),
             stderr="",
         )
         with patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
@@ -1242,7 +1272,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(result["executed"])
         self.assertEqual(result["target_count"], 1)
         self.assertEqual(result["closed_count"], 1)
-        self.assertIn("close t", run_mock.call_args.args[0][2])
+        self.assertIn("const closeTargets = true", run_mock.call_args.args[0][-1])
 
     def test_cleanup_chrome_test_tabs_timeout_is_reported_cleanly(self):
         with patch(

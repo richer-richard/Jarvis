@@ -33,43 +33,51 @@ def is_cleanup_target(url: str) -> bool:
     return False
 
 
-def _cleanup_applescript(*, close_targets: bool) -> str:
-    close_line = "close t" if close_targets else "-- dry run"
+def _cleanup_jxa(*, close_targets: bool) -> str:
+    close_targets_js = "true" if close_targets else "false"
     return f'''
-set output to ""
-tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      set tabTitle to title of t
-      set tabUrl to URL of t
-      set shouldClose to false
-      if tabUrl is "{LOCALOS_MUSIC_HTTP_URL}" then set shouldClose to true
-      if tabUrl starts with "http://127.0.0.1:8765/overnight-report" then set shouldClose to true
-      if tabUrl starts with "http://127.0.0.1:8765/overnight-workboard" then set shouldClose to true
-      if tabUrl starts with "http://127.0.0.1:8765/wake-audition" then set shouldClose to true
-      if tabUrl starts with "file:///Users/leoxu/" and tabUrl contains "{LOCALOS_MUSIC_FILE_MARKER}" then set shouldClose to true
-      if tabUrl starts with "file:///Users/leoxu/" and tabUrl contains "/developer/Jarvis/runtime/overnight_status/report.html" then set shouldClose to true
-      if tabUrl starts with "file:///Users/leoxu/" and tabUrl contains "/developer/Jarvis/runtime/overnight_status/index.html" then set shouldClose to true
-      if shouldClose then
-        set output to output & tabTitle & tab & tabUrl & linefeed
-        {close_line}
-      end if
-    end repeat
-  end repeat
-end tell
-return output
+const chrome = Application("Google Chrome");
+const closeTargets = {close_targets_js};
+const localosMusicHttpUrl = {json.dumps(LOCALOS_MUSIC_HTTP_URL)};
+const localosMusicFileMarker = {json.dumps(LOCALOS_MUSIC_FILE_MARKER)};
+const jarvisLoopbackPrefixes = {json.dumps(list(JARVIS_LOOPBACK_PREFIXES))};
+const jarvisFileMarkers = {json.dumps(list(JARVIS_FILE_MARKERS))};
+
+function isCleanupTarget(url) {{
+  const value = String(url || "");
+  if (value === localosMusicHttpUrl) return true;
+  if (jarvisLoopbackPrefixes.some((prefix) => value.startsWith(prefix))) return true;
+  if (value.startsWith("file:///Users/leoxu/")) {{
+    return value.includes(localosMusicFileMarker) || jarvisFileMarkers.some((marker) => value.includes(marker));
+  }}
+  return false;
+}}
+
+const targets = [];
+for (const win of chrome.windows()) {{
+  const tabs = win.tabs();
+  for (let index = tabs.length - 1; index >= 0; index -= 1) {{
+    const tab = tabs[index];
+    const url = String(tab.url() || "");
+    if (!isCleanupTarget(url)) continue;
+    const title = String(tab.title() || "");
+    targets.push({{ title, url }});
+    if (closeTargets) tab.close();
+  }}
+}}
+JSON.stringify(targets);
 '''
 
 
 def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
-    script = _cleanup_applescript(close_targets=execute)
+    script = _cleanup_jxa(close_targets=execute)
     try:
         completed = subprocess.run(
-            ["osascript", "-e", script],
+            ["osascript", "-l", "JavaScript", "-e", script],
             check=False,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=15,
         )
     except subprocess.TimeoutExpired as error:
         return {
@@ -89,12 +97,22 @@ def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
             "targets": [],
             "error": completed.stderr.strip() or completed.stdout.strip(),
         }
-    targets = []
-    for line in completed.stdout.splitlines():
-        if not line.strip() or "\t" not in line:
-            continue
-        title, url = line.split("\t", 1)
-        targets.append({"title": title, "url": url})
+    try:
+        loaded = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as error:
+        return {
+            "ok": False,
+            "executed": execute,
+            "closed_count": 0,
+            "target_count": 0,
+            "targets": [],
+            "error": f"Chrome cleanup returned invalid JSON: {error}",
+        }
+    targets = [
+        {"title": str(item.get("title") or ""), "url": str(item.get("url") or "")}
+        for item in loaded
+        if isinstance(item, dict)
+    ]
     return {
         "ok": True,
         "executed": execute,
