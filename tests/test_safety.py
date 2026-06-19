@@ -11447,6 +11447,7 @@ Pages occupied by compressor:             10.
         ).read_text(encoding="utf-8")
 
         self.assertIn('environment["JARVIS_TTS_PROVIDER"] = "macos"', source)
+        self.assertNotIn('if environment["JARVIS_TTS_PROVIDER"] == nil', source)
         self.assertIn('environment["JARVIS_TTS_PLAIN_SAY"] = "1"', source)
         self.assertIn('environment["JARVIS_TTS_VOICE"] = ""', source)
         self.assertIn('environment["JARVIS_TTS_RATE"] = ""', source)

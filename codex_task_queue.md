@@ -18,6 +18,7 @@
 - [x] Replace native Outlook/screen and early streaming "Working" status rows with the final answer row instead of leaving stale visible progress behind.
 - [x] Add a main-app emergency status-item fallback when the always-visible status helper cannot launch, and remove that fallback after helper recovery to avoid duplicate heads.
 - [x] Strip markdown/raw URLs and email addresses from app-visible reply fields, not only from TTS payloads.
+- [x] Force app-launched Jarvis workers onto macOS `say`/plain system defaults so inherited Piper settings cannot return in the app.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -43,3 +44,4 @@
 - [x] Focused status-helper emergency tests passed, `swift build --product jarvis-menu-bar` passed, `jarvis-menu-bar --self-test` passed, and `jarvis-status-helper --self-test` passed for the emergency fallback.
 - [x] Full `tests.test_safety` passed `931/931` and canonical `scripts/verify_safe.py` passed `105/105` for the status-helper emergency fallback.
 - [x] Focused visible/speech sanitizer tests passed for removing raw links from displayed command replies and spoken payloads.
+- [x] Focused worker voice-default tests passed, `swift build --product jarvis-menu-bar` passed, and `jarvis-menu-bar --self-test` passed for the macOS `say` provider patch.

@@ -228,6 +228,10 @@ Status legend:
    - Piper Ryan high American male was chosen temporarily but had quality issues.
    - macOS `say` sounded better to Leo than the app's speech path for the same
      sentence.
+   - 2026-06-19 proof update: app-launched workers now force
+     `JARVIS_TTS_PROVIDER=macos` and plain `say` defaults instead of allowing an
+     inherited `piper` environment variable to bring the disliked Piper path
+     back into the live app.
 
 2. Partially fixed/risky: Piper playback had huge pauses, skipped phrases,
    repeated phrases, and sometimes stopped after 3-5 seconds.

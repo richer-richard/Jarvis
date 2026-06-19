@@ -247,9 +247,7 @@ final class JarvisWorkerSupervisor {
         if environment["JARVIS_TTS_SPEAK_STATUS"] == nil {
             environment["JARVIS_TTS_SPEAK_STATUS"] = "1"
         }
-        if environment["JARVIS_TTS_PROVIDER"] == nil {
-            environment["JARVIS_TTS_PROVIDER"] = "macos"
-        }
+        environment["JARVIS_TTS_PROVIDER"] = "macos"
         environment["JARVIS_TTS_PLAIN_SAY"] = "1"
         environment["JARVIS_TTS_VOICE"] = ""
         environment["JARVIS_TTS_RATE"] = ""
