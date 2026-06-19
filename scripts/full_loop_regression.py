@@ -1162,6 +1162,11 @@ def run_teams_assignment_case(
             if not action_proof.get("honest_permission_blocked"):
                 status = "warning"
                 warnings.append(f"Voice loop returned {voice_status}.")
+        if action_proof.get("passed") and not action_proof.get("capability_complete"):
+            status = "warning"
+            warnings.append(
+                "Teams workflow was honest but incomplete: Jarvis did not inspect the requested Music assignment."
+            )
         if not action_proof["passed"]:
             status = "failed"
             warnings.extend(action_proof["failures"])
@@ -1202,6 +1207,18 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "chrome is blocking jarvis from controlling the current page" in lower_reply
         or "chrome control permission" in lower_reply
     )
+    capability_complete = bool(inspected_music)
+    completion_status = (
+        "complete"
+        if inspected_music
+        else "permission_blocked"
+        if honest_permission_blocked
+        else "wrong_subject"
+        if honest_wrong_subject
+        else "not_inspected"
+        if honest_not_inspected
+        else "unknown"
+    )
     if not (inspected_music or honest_not_inspected or honest_wrong_subject or honest_permission_blocked):
         failures.append("Teams proof neither inspected the Music assignment nor failed honestly.")
     if "what is not random" in lower_reply or "veritasium" in lower_reply:
@@ -1217,6 +1234,8 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "honest_not_inspected": honest_not_inspected,
         "honest_wrong_subject": honest_wrong_subject,
         "honest_permission_blocked": honest_permission_blocked,
+        "capability_complete": capability_complete,
+        "completion_status": completion_status,
         "visible_reply_preview": combined_reply[:500],
         "follow_up_status": str(follow_up.get("status") or ""),
     }

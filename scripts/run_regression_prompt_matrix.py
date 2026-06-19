@@ -446,6 +446,7 @@ def run_case(
         "passed": completed.returncode == 0 and result.get("status") == "passed" and speech_gate["passed"] and follow_up_gate["passed"],
         "environment_blocked": bool(follow_up_gate.get("environment_blocked")),
         "user_action_required": bool(follow_up_gate.get("user_action_required")),
+        "honest_incomplete": bool(follow_up_gate.get("honest_incomplete")),
         "blocking_reason": follow_up_gate.get("blocking_reason"),
         "returncode": completed.returncode,
         "duration_seconds": duration,
@@ -528,7 +529,13 @@ def enrich_case_summary(item: dict[str, object]) -> dict[str, object]:
         enriched.setdefault("visible_screen_follow_up_status", visible_screen_follow_up.get("status"))
         enriched.setdefault("visible_screen_follow_up_tool", visible_screen_follow_up.get("tool"))
         enriched.setdefault("visible_screen_follow_up_used", bool(visible_screen_follow_up.get("used")))
-    enriched.setdefault("user_action_required", bool(enriched.get("blocking_reason")) and not bool(enriched.get("environment_blocked")))
+    enriched.setdefault("honest_incomplete", str(enriched.get("blocking_reason") or "") == "assignment_subject_mismatch")
+    enriched.setdefault(
+        "user_action_required",
+        bool(enriched.get("blocking_reason"))
+        and not bool(enriched.get("environment_blocked"))
+        and not bool(enriched.get("honest_incomplete")),
+    )
     return enriched
 
 
@@ -551,7 +558,14 @@ def visible_screen_follow_up_gate(
     expect_tool: str | None,
 ) -> dict[str, object]:
     if not required:
-        return {"passed": True, "failures": [], "environment_blocked": False, "blocking_reason": ""}
+        return {
+            "passed": True,
+            "failures": [],
+            "environment_blocked": False,
+            "user_action_required": False,
+            "honest_incomplete": False,
+            "blocking_reason": "",
+        }
     failures: list[str] = []
     environment_blocked = False
     user_action_required = False
@@ -568,9 +582,17 @@ def visible_screen_follow_up_gate(
                 ],
                 "environment_blocked": False,
                 "user_action_required": False,
+                "honest_incomplete": False,
                 "blocking_reason": "",
             }
-        return {"passed": True, "failures": [], "environment_blocked": False, "user_action_required": False, "blocking_reason": ""}
+        return {
+            "passed": False,
+            "failures": ["Visible screen follow-up found an assignment, but it was not the requested Music assignment."],
+            "environment_blocked": False,
+            "user_action_required": False,
+            "honest_incomplete": True,
+            "blocking_reason": "assignment_subject_mismatch",
+        }
     if status != "completed":
         failures.append(f"Visible screen follow-up status was {status or 'missing'}.")
     if not visible_screen_follow_up.get("used"):
@@ -594,6 +616,7 @@ def visible_screen_follow_up_gate(
         "failures": failures,
         "environment_blocked": environment_blocked,
         "user_action_required": user_action_required,
+        "honest_incomplete": False,
         "blocking_reason": blocking_reason,
     }
 
@@ -647,6 +670,8 @@ def render_markdown(summary: dict[str, object]) -> str:
             if item.get("environment_blocked")
             else "needs action"
             if item.get("user_action_required")
+            else "incomplete"
+            if item.get("honest_incomplete")
             else "pass"
             if item.get("passed")
             else "fail"

@@ -768,6 +768,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         })
 
         self.assertTrue(proof["passed"])
+        self.assertFalse(proof["capability_complete"])
+        self.assertEqual(proof["completion_status"], "wrong_subject")
         self.assertTrue(proof["honest_wrong_subject"])
         self.assertIn("Geography of Greece", proof["visible_reply_preview"])
 
@@ -15272,7 +15274,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(gate["blocking_reason"], "chrome_automation")
         self.assertIn("Chrome Automation blocked Jarvis from reading the signed-in browser page.", gate["failures"])
 
-    def test_regression_prompt_matrix_accepts_assignment_subject_mismatch_as_honest_followup(self):
+    def test_regression_prompt_matrix_marks_assignment_subject_mismatch_incomplete(self):
         gate = run_regression_prompt_matrix.visible_screen_follow_up_gate(
             {
                 "status": "assignment_subject_mismatch",
@@ -15283,10 +15285,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
             expect_tool="screen.visible_text",
         )
 
-        self.assertTrue(gate["passed"])
+        self.assertFalse(gate["passed"])
         self.assertFalse(gate["environment_blocked"])
         self.assertFalse(gate["user_action_required"])
-        self.assertEqual(gate["failures"], [])
+        self.assertTrue(gate["honest_incomplete"])
+        self.assertEqual(gate["blocking_reason"], "assignment_subject_mismatch")
+        self.assertIn("not the requested Music assignment", gate["failures"][0])
 
     def test_regression_prompt_matrix_rejects_assignment_subject_mismatch_from_wrong_tool(self):
         gate = run_regression_prompt_matrix.visible_screen_follow_up_gate(
@@ -15579,6 +15583,71 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Status: passed", latest_md)
         self.assertIn("Blocked: 1", latest_md)
         self.assertIn("| teams_assignment | blocked | `teams.assignment`", latest_md)
+
+    def test_regression_prompt_matrix_honest_incomplete_does_not_pass(self):
+        fake_result = {
+            "name": "teams_assignment",
+            "passed": False,
+            "environment_blocked": False,
+            "user_action_required": False,
+            "honest_incomplete": True,
+            "blocking_reason": "assignment_subject_mismatch",
+            "returncode": 0,
+            "duration_seconds": 0.2,
+            "report": "runtime/regression_prompt_matrix/test/teams/report.json",
+            "tool": "teams.assignment",
+            "backend": None,
+            "model": None,
+            "fallback_used": False,
+            "primary_fallback_used": False,
+            "fallback_trigger": None,
+            "primary_status": None,
+            "tool_catalog_compacted": False,
+            "first_visible_seconds": 0.01,
+            "first_status_seconds": 0.01,
+            "first_final_seconds": 0.1,
+            "first_speech_payload_seconds": 0.01,
+            "model_reported_first_visible_seconds": None,
+            "model_reported_total_seconds": None,
+            "visible_reply": "I can see a Geography assignment, but it does not look like the Music assignment.",
+            "speech_audit_status": "passed",
+            "speech_payload_count": 2,
+            "speech_leak_count": 0,
+            "speech_audit_gate_passed": True,
+            "speech_audit_failures": [],
+            "stdout_tail": "",
+            "stderr_tail": "",
+        }
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "runtime") as temp_dir, \
+             patch("scripts.run_regression_prompt_matrix.run_case", return_value=fake_result), \
+             patch("scripts.run_regression_prompt_matrix.refresh_report_surfaces_quietly") as refresh_mock, \
+             patch("sys.argv", [
+                 "run_regression_prompt_matrix.py",
+                 "--output-root",
+                 temp_dir,
+                 "--only",
+                 "teams_assignment",
+                 "--no-permission-prompts",
+                 "--no-refresh-report",
+             ]), \
+             patch("sys.stdout", stdout):
+            code = run_regression_prompt_matrix.main()
+            run_summary = next(Path(temp_dir).glob("*/summary.json"))
+            latest = json.loads((run_summary.parent / "latest.json").read_text(encoding="utf-8"))
+            latest_md = (run_summary.parent / "latest.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 1)
+        refresh_mock.assert_not_called()
+        self.assertFalse(latest["ok"])
+        self.assertEqual(latest["passed"], 0)
+        self.assertEqual(latest["environment_blocked_count"], 0)
+        self.assertEqual(latest["user_action_required_count"], 0)
+        self.assertEqual(latest["unresolved_failure_count"], 1)
+        self.assertIn("Environment blocked: 0", stdout.getvalue())
+        self.assertIn("Needs action: 0", stdout.getvalue())
+        self.assertIn("Status: failed", latest_md)
+        self.assertIn("| teams_assignment | incomplete | `teams.assignment`", latest_md)
 
     def test_regression_prompt_matrix_all_run_updates_master_latest(self):
         def fake_run_case(case, **_kwargs):

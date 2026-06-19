@@ -117,6 +117,11 @@ Status legend:
      `--require-physical-capture`. This prevents any release gate from passing
      while claiming physical speaker/microphone loopback proof before that
      capture path exists. Full `tests.test_safety` passed `954/954`.
+   - 2026-06-20 proof update: the Teams target prompt no longer counts an
+     honest wrong-subject result as a full pass. If Jarvis reads Teams but sees
+     a non-Music assignment such as Geography, full-loop proof reports
+     `warning` with `completion_status: wrong_subject`, and the prompt matrix
+     renders the row as `incomplete`.
 
 5. Partially fixed/risky: Jarvis must use model/tool choice, not fake keyword
    hacks, except where Leo explicitly allows a primitive tool.
