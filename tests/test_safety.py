@@ -1295,7 +1295,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         with patch(
             "scripts.cleanup_chrome_test_tabs.subprocess.run",
             side_effect=subprocess.TimeoutExpired(["osascript"], timeout=30),
-        ):
+        ) as run_mock:
             result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=True)
 
         self.assertFalse(result["ok"])
@@ -1303,7 +1303,30 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["closed_count"], 0)
         self.assertEqual(result["target_count"], 0)
         self.assertIn("timed out", result["error"])
-        self.assertEqual(result["timeout_seconds"], 30)
+        self.assertEqual(result["timeout_seconds"], cleanup_chrome_test_tabs.CHROME_CLEANUP_TIMEOUT_SECONDS)
+        self.assertEqual(run_mock.call_count, cleanup_chrome_test_tabs.CHROME_CLEANUP_ATTEMPTS)
+        self.assertEqual(len(result["attempts"]), cleanup_chrome_test_tabs.CHROME_CLEANUP_ATTEMPTS)
+        self.assertTrue(all(attempt["status"] == "timeout" for attempt in result["attempts"]))
+
+    def test_cleanup_chrome_test_tabs_retries_after_timeout(self):
+        completed = subprocess.CompletedProcess(
+            args=["osascript"],
+            returncode=0,
+            stdout=json.dumps([
+                {"title": "Jarvis Report", "url": "http://127.0.0.1:8765/overnight-report/"}
+            ]),
+            stderr="",
+        )
+        with patch(
+            "scripts.cleanup_chrome_test_tabs.subprocess.run",
+            side_effect=[subprocess.TimeoutExpired(["osascript"], timeout=5), completed],
+        ) as run_mock:
+            result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["closed_count"], 1)
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertEqual([attempt["status"] for attempt in result["attempts"]], ["timeout", "completed"])
 
     def test_cleanup_chrome_test_tabs_cli_accepts_explicit_dry_run(self):
         with patch("scripts.cleanup_chrome_test_tabs.cleanup_chrome_test_tabs", return_value={
