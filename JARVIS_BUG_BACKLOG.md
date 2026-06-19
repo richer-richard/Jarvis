@@ -71,6 +71,11 @@ Status legend:
      `suppressed_for_probe`; opt-in live playback runs are labeled
      `live_playback_exercised`; `--require-live-speech` fails closed if live
      playback proof is required but not enabled.
+   - 2026-06-19 proof update: `scripts/full_loop_regression.py --case all`
+     passed `8/8` in 130.873s with zero warnings and every latency budget
+     passing. Covered Music playback, RAM/Activity Monitor, Calendar, Magic
+     Keyboard yuan conversion, Gemma model plan, Codex Default routing, Teams
+     assignment honesty, and Ms. Sharpay email summary.
 
 5. Partially fixed/risky: Jarvis must use model/tool choice, not fake keyword
    hacks, except where Leo explicitly allows a primitive tool.
