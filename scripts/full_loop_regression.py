@@ -1055,9 +1055,11 @@ def run_codex_default_plan_case(
         allow_audio_actions=False,
     )
     write_json(run_dir / "voice-loop-report.json", voice_report)
-    codex_proof = codex_chat_plan("open cortex and send a prompt called test in the default chat")
+    voice_result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
+    routed_command = str(voice_result.get("routed_command") or case["command"])
+    codex_proof = codex_chat_plan(routed_command)
     write_json(run_dir / "codex-proof.json", codex_proof)
-    action_proof = verify_codex_default_plan(codex_proof)
+    action_proof = verify_codex_default_plan(codex_proof, voice_report=voice_report)
     status = "passed"
     warnings: list[str] = []
     voice_status = str(voice_report.get("result", {}).get("status") or "failed")
@@ -1084,12 +1086,22 @@ def run_codex_default_plan_case(
     }
 
 
-def verify_codex_default_plan(codex_proof: dict[str, Any]) -> dict[str, Any]:
+def verify_codex_default_plan(codex_proof: dict[str, Any], *, voice_report: dict[str, Any] | None = None) -> dict[str, Any]:
     failures: list[str] = []
+    voice_result = voice_report.get("result") if isinstance(voice_report, dict) and isinstance(voice_report.get("result"), dict) else {}
+    routed_command = str(voice_result.get("routed_command") or "")
+    command_transcript = str(voice_result.get("command_transcript") or "")
+    voice_tool = str(voice_result.get("command_response_tool") or "")
+    alias_text = f"{routed_command} {command_transcript}".casefold()
+    alias_detected = any(alias in alias_text for alias in ("codex", "cortex", "kodak"))
     if codex_proof.get("tool") != "codex.chat_plan":
         failures.append("Codex proof did not come from codex.chat_plan.")
     if codex_proof.get("status") != "planned":
         failures.append("Codex proof did not report planned status.")
+    if voice_report is not None and voice_tool != "codex.chat_plan":
+        failures.append(f"Voice-loop command used {voice_tool or 'no tool'}, expected codex.chat_plan.")
+    if voice_report is not None and not alias_detected:
+        failures.append("Voice-loop Codex proof did not preserve a Codex/Cortex/Kodak routed command.")
     if codex_proof.get("called_codex") or codex_proof.get("started_codex_job") or codex_proof.get("sent_prompt_to_codex"):
         failures.append("Codex proof unexpectedly sent or started Codex.")
     if str(codex_proof.get("selected_chat_name") or "") != "Default":
@@ -1104,6 +1116,10 @@ def verify_codex_default_plan(codex_proof: dict[str, Any]) -> dict[str, Any]:
         "selected_chat": str(codex_proof.get("selected_chat_name") or ""),
         "sent_prompt_to_codex": bool(codex_proof.get("sent_prompt_to_codex")),
         "session_ids_hidden": bool(codex_proof.get("session_ids_hidden")),
+        "voice_tool": voice_tool,
+        "routed_command": routed_command,
+        "command_transcript": command_transcript,
+        "alias_detected": alias_detected,
     }
 
 

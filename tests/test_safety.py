@@ -471,6 +471,67 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(full_loop_regression.new_media_surfaces_since(before, after), ["Music"])
 
+    def test_full_loop_codex_default_uses_voice_routed_alias_command(self):
+        fake_voice_report = {
+            "result": {
+                "status": "passed",
+                "command_response_tool": "codex.chat_plan",
+                "routed_command": "open kodak and send a prompt called test in the default chat",
+                "command_transcript": "Hey Jarvis, open Kodak and send a prompt called test in the default chat.",
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop", return_value=fake_voice_report), \
+             patch("scripts.full_loop_regression.codex_chat_plan") as plan_mock:
+            plan_mock.return_value = {
+                "tool": "codex.chat_plan",
+                "status": "planned",
+                "selected_chat_name": "Default",
+                "called_codex": False,
+                "started_codex_job": False,
+                "sent_prompt_to_codex": False,
+                "session_ids_hidden": True,
+                "would_resume_configured_session": True,
+            }
+            result = full_loop_regression.run_codex_default_plan_case(
+                full_loop_regression.CODEX_DEFAULT_PLAN_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "codex",
+                timeout=1.0,
+                exercise_live_speech=False,
+            )
+
+        plan_mock.assert_called_once_with("open kodak and send a prompt called test in the default chat")
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["action_proof"]["alias_detected"])
+        self.assertEqual(result["action_proof"]["voice_tool"], "codex.chat_plan")
+
+    def test_full_loop_codex_default_fails_when_voice_route_is_not_codex(self):
+        proof = full_loop_regression.verify_codex_default_plan(
+            {
+                "tool": "codex.chat_plan",
+                "status": "planned",
+                "selected_chat_name": "Default",
+                "called_codex": False,
+                "started_codex_job": False,
+                "sent_prompt_to_codex": False,
+                "session_ids_hidden": True,
+                "would_resume_configured_session": True,
+            },
+            voice_report={
+                "result": {
+                    "command_response_tool": "conversation.fast_local",
+                    "routed_command": "open notes and send a prompt called test",
+                    "command_transcript": "open notes and send a prompt called test",
+                }
+            },
+        )
+
+        self.assertFalse(proof["passed"])
+        self.assertIn("Voice-loop command used conversation.fast_local, expected codex.chat_plan.", proof["failures"])
+        self.assertIn("Voice-loop Codex proof did not preserve a Codex/Cortex/Kodak routed command.", proof["failures"])
+
     def test_full_loop_afplay_snapshot_ignores_piper_worker_afplay_argument(self):
         self.assertFalse(full_loop_regression.is_afplay_process_command(
             "python jarvis/piper_warm_worker.py --afplay /usr/bin/afplay --length-scale 0.85"
@@ -10240,6 +10301,18 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Original request from Leo to Jarvis:", result.result["jarvis_generated_prompt_preview"])
         self.assertTrue(result.result["jarvis_generated_prompt_preview"].rstrip().endswith("test"))
         self.assertIn("need confirmation", result.result["reply"])
+
+    def test_codex_default_chat_send_request_accepts_kodak_dictation_mishear(self):
+        prompt = "Open Kodak and send a prompt called test in the Default chat."
+        result = Planner().handle(prompt)
+
+        self.assertEqual(result.tool, "codex.chat_plan")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.confirmation["kind"], "typed")
+        self.assertEqual(result.result["selected_chat_name"], "Default")
+        self.assertEqual(result.result["prepared_prompt_text"], "test")
+        self.assertFalse(result.result["sent_prompt_to_codex"])
+        self.assertTrue(result.result["session_ids_hidden"])
 
     def test_codex_default_chat_send_preview_chooses_chat_without_generic_wall(self):
         prompt = "Ask Codex to send a prompt called test in the Default chat."
