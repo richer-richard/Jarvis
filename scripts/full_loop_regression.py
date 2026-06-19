@@ -315,7 +315,9 @@ def run_music_waving_case(
     cleanup: dict[str, Any] = {}
     result: dict[str, Any] | None = None
     before_afplay = afplay_process_snapshot()
+    before_media_surfaces = media_playback_surface_snapshot()
     write_json(run_dir / "afplay-before.json", {"processes": before_afplay})
+    write_json(run_dir / "media-surfaces-before.json", before_media_surfaces)
     try:
         preflight = music_bridge_request(music_bridge_url, "GET", "/health", timeout=3.5, auth=False)
 
@@ -379,8 +381,11 @@ def run_music_waving_case(
         )
         if result is not None:
             after_afplay = afplay_process_snapshot()
+            after_media_surfaces = media_playback_surface_snapshot()
             cleanup["afplay_processes_after"] = after_afplay
             cleanup["new_afplay_processes_after"] = new_processes_since(before_afplay, after_afplay)
+            cleanup["media_surfaces_after"] = after_media_surfaces
+            cleanup["new_media_surfaces_after"] = new_media_surfaces_since(before_media_surfaces, after_media_surfaces)
             result["cleanup"] = cleanup
             result["total_seconds"] = round(time.monotonic() - started, 3)
             if not cleanup["verified_stopped"]:
@@ -397,6 +402,13 @@ def run_music_waving_case(
                     warnings = []
                     result["warnings"] = warnings
                 warnings.append("Music cleanup left a new hidden afplay process running.")
+            if cleanup["new_media_surfaces_after"]:
+                result["status"] = "failed"
+                warnings = result.get("warnings")
+                if not isinstance(warnings, list):
+                    warnings = []
+                    result["warnings"] = warnings
+                warnings.append("Music cleanup left a new media playback surface running.")
         write_json(run_dir / "cleanup.json", cleanup)
 
 
@@ -441,6 +453,110 @@ def is_afplay_process_command(command: str) -> bool:
 def new_processes_since(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
     before_pids = {int(item.get("pid")) for item in before if isinstance(item.get("pid"), int)}
     return [item for item in after if isinstance(item.get("pid"), int) and int(item["pid"]) not in before_pids]
+
+
+def media_playback_surface_snapshot() -> dict[str, Any]:
+    """Inspect app-level playback surfaces without reading page text or pausing audio."""
+    chrome_js = "Array.from(document.querySelectorAll('audio,video')).filter(function(el){ return !el.paused && !el.ended; }).length.toString();"
+    attempts = {
+        "music": _media_surface_osascript(
+            '''
+if application "Music" is running then
+    try
+        tell application "Music"
+            if player state is playing then return "Music"
+        end tell
+    end try
+end if
+return "none"
+'''.strip(),
+            timeout=0.8,
+        ),
+        "quicktime": _media_surface_osascript(
+            '''
+if application "QuickTime Player" is running then
+    try
+        tell application "QuickTime Player"
+            repeat with quickTimeDocument in documents
+                if playing of quickTimeDocument is true then return "QuickTime Player"
+            end repeat
+        end tell
+    end try
+end if
+return "none"
+'''.strip(),
+            timeout=0.8,
+        ),
+        "chrome": _media_surface_osascript(
+            f'''
+set lf to ASCII character 10
+set outputLines to {{}}
+if application "Google Chrome" is running then
+    try
+        tell application "Google Chrome"
+            repeat with chromeWindow in windows
+                repeat with chromeTab in tabs of chromeWindow
+                    try
+                        set playingCount to execute javascript "{escape_applescript_string(chrome_js)}" in chromeTab
+                        if playingCount is not "0" then set end of outputLines to "Google Chrome"
+                    end try
+                end repeat
+            end repeat
+        end tell
+    end try
+end if
+if (count of outputLines) is 0 then return "none"
+set AppleScript's text item delimiters to lf
+set joinedOutput to outputLines as text
+set AppleScript's text item delimiters to ""
+return joinedOutput
+'''.strip(),
+            timeout=2.5,
+        ),
+    }
+    surfaces: set[str] = set()
+    blocked: list[str] = []
+    for name, attempt in attempts.items():
+        stdout = str(attempt.get("stdout") or "").strip()
+        if attempt.get("ok") and stdout and stdout != "none":
+            surfaces.update(line.strip() for line in stdout.splitlines() if line.strip() and line.strip() != "none")
+        stderr = str(attempt.get("stderr") or "")
+        if name == "chrome" and not attempt.get("ok") and ("Access not allowed" in stderr or "-1723" in stderr):
+            blocked.append("Google Chrome")
+    return {
+        "surfaces": sorted(surfaces),
+        "blocked": sorted(blocked),
+        "attempts": attempts,
+    }
+
+
+def _media_surface_osascript(script: str, *, timeout: float) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "executed": True, "stdout": "", "stderr": "timeout", "returncode": None}
+    except OSError as error:
+        return {"ok": False, "executed": False, "stdout": "", "stderr": str(error), "returncode": None}
+    return {
+        "ok": completed.returncode == 0,
+        "executed": True,
+        "stdout": (completed.stdout or "").strip(),
+        "stderr": (completed.stderr or "").strip(),
+        "returncode": completed.returncode,
+    }
+
+
+def new_media_surfaces_since(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    before_surfaces = {str(item) for item in before.get("surfaces", [])}
+    after_surfaces = {str(item) for item in after.get("surfaces", [])}
+    return sorted(after_surfaces - before_surfaces)
 
 
 def wait_for_music_playback(music_bridge_url: str, *, timeout: float) -> dict[str, Any]:

@@ -64,6 +64,7 @@
 - [x] Added a test-suite integrity guard that fails on duplicate `test_*` method names inside a test class, preventing silently overwritten regression tests from returning; full `tests.test_safety` passed `956/956`.
 - [x] Added an explicit speech-payload reason assertion so voice-loop QA proves status speech and final-answer speech remain distinguishable; full `tests.test_safety` passed `956/956`.
 - [x] Added a regression guard for Leo's Chinese-character TTS bug: unknown Chinese is removed without swallowing the English words after it; full `tests.test_safety` passed `957/957`.
+- [x] Strengthened the live Music full-loop proof with no-side-effect media surface snapshots; latest live Music case passed at `runtime/full_loop_regression/20260620-042907/summary.json` with no new media surfaces and no new `afplay`, and full `tests.test_safety` passed `959/959`.
 - [x] Rebuilt the canonical `output/Jarvis.app` bundle at version `0.1.468`.
 - [x] Reran `scripts/verify_safe.py`; safe verification passed `105/105`.
 - [x] Refreshed report/workboard surfaces and reran `scripts/smoke_fast_latency.py`; fast latency passed `3/3`.
