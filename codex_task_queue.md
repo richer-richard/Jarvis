@@ -30,6 +30,7 @@
 - [x] Verify and record that the full `developer/Jarvis` directory is the only Git repo root.
 - [x] Re-check and record current GitHub branch state without pushing: upstream exists and branch is ahead-only.
 - [x] Make `scripts/morning_status.py` print absolute master-report and workboard file paths plus their loopback URLs so Leo can immediately find the proof surfaces.
+- [x] Rebuild Jarvis `0.1.471` so backend `system.status` includes report/workboard surfaces in JSON while the spoken reply stays short.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -84,3 +85,4 @@
 - [x] Repo-root proof recorded: `git rev-parse --show-toplevel` reports the full Jarvis folder and the only `.git` found under the project is `./.git`.
 - [x] GitHub state recorded: `git status -sb` reports `codex/jarvis-overnight-20260608...origin/codex/jarvis-overnight-20260608 [ahead 147]`; no push attempted.
 - [x] Morning status now prints the master report/workboard absolute file paths and loopback URLs; focused regression tests passed and live status output shows the new breadcrumbs.
+- [x] Jarvis `0.1.471` build `471` is live; `status` returns `report_surfaces` in the backend payload without putting file paths in the spoken reply, and `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-020440.json`.

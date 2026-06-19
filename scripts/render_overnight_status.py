@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.471 makes report discovery harder to lose: morning status now prints absolute master-report/workboard file paths plus loopback URLs, and the backend status payload carries those surfaces without reading the paths aloud.",
     "Jarvis 0.1.470 makes speech status truthful: `speech status` and `are you muted` now read the real `voice.speech_mute` backend state instead of asking the fast model to guess.",
     "Jarvis 0.1.470 keeps the tool catalog consistent: the new speech mute/status tool is visible to the first model and registered in the backend catalog, so diagnostics no longer report it as missing.",
     "Jarvis 0.1.470 adds safer copied-chat speech diagnostics: Copy Chat JSON redacts final speech debug strings, flags hidden tool-call leaks with `speech_output_safe_for_user`, and keeps useful trace evidence for bug reports.",

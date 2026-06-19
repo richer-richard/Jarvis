@@ -738,6 +738,10 @@ Status legend:
      master-report and workboard file paths plus loopback URLs near the top of
      the status output, with focused regression coverage for both the data
      contract and printed wording.
+   - 2026-06-20 follow-up: Jarvis `0.1.471` also carries those report/workboard
+     surfaces in the backend `system.status` payload while keeping the spoken
+     reply short, so Copy Chat JSON/debug surfaces can expose paths without
+     making Jarvis read them aloud. Live verifier passed `105/105`.
 
 2. Partially fixed/risky: live regression matrix terminology was unclear to Leo.
    - Future reports should explain testing terms in product language.

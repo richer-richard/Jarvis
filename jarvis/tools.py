@@ -1286,6 +1286,7 @@ def system_status() -> dict[str, Any]:
     app_build = app_identity.get("build") or "unknown build"
     worker_kind = app_identity.get("worker_source_kind") or "unknown worker source"
     launch_mode = app_identity.get("launch_mode") or "unknown launch mode"
+    report_surfaces = _report_surface_status()
     reply = _system_status_reply(
         app_version=app_version,
         app_build=app_build,
@@ -1311,6 +1312,7 @@ def system_status() -> dict[str, Any]:
         "timers": {
             "active_count": active_timer_count,
         },
+        "report_surfaces": report_surfaces,
         "codex_jobs": codex_jobs,
         "codex": {
             "path": codex_path,
@@ -1345,6 +1347,23 @@ def system_status() -> dict[str, Any]:
             "xcrun": _find_executable("xcrun"),
         },
         "reply": reply,
+    }
+
+
+def _report_surface_status() -> dict[str, Any]:
+    report_path = PROJECT_ROOT / "runtime" / "overnight_status" / "report.html"
+    workboard_path = PROJECT_ROOT / "runtime" / "overnight_status" / "index.html"
+    return {
+        "master_report": {
+            "path": str(report_path),
+            "exists": report_path.exists(),
+            "url": "http://127.0.0.1:8765/overnight-report/",
+        },
+        "workboard": {
+            "path": str(workboard_path),
+            "exists": workboard_path.exists(),
+            "url": "http://127.0.0.1:8765/overnight-workboard/",
+        },
     }
 
 
