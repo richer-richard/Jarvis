@@ -15589,6 +15589,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("testRestartStormDecision", listener_source)
         self.assertIn("testActivationRestartLimit", listener_source)
         self.assertIn("shouldKeepRunning", listener_source)
+        self.assertIn("guard !shouldKeepRunning else {\n            publish()\n            return\n        }", listener_source)
         self.assertIn("if shouldKeepRunning {\n            phase = .waitingForWake\n            scheduleRestart(after: Self.postCommandRestartDelaySeconds, countsTowardStability: false)\n        }", listener_source)
         self.assertIn("guard let self, self.shouldKeepRunning else", listener_source)
         self.assertIn("scheduleRestart(after: delay ?? Self.recoveryRestartDelaySeconds, countsTowardStability: false)", listener_source)

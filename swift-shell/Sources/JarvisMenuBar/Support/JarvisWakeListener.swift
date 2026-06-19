@@ -107,6 +107,10 @@ final class JarvisWakeListener {
 
     func start() {
         #if canImport(Speech)
+        guard !shouldKeepRunning else {
+            publish()
+            return
+        }
         guard recognizer != nil else {
             status = "Speech recognizer unavailable"
             phase = .stopped

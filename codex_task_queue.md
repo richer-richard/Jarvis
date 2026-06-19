@@ -62,3 +62,5 @@
 - [x] Full `tests.test_safety` passed `938/938` for the morning-status gate summary.
 - [x] `scripts/morning_status.py` now surfaces latest conversation-context and wake-threshold smoke proof, making context memory and wake-word boundary evidence visible in one quick status command.
 - [x] Full `tests.test_safety` passed `940/940` for the context/wake status summary.
+- [x] Made `JarvisWakeListener.start()` idempotent so repeated Start Hey Jarvis triggers do not stack a second permission/session cycle on top of an already-running listener.
+- [x] Swift build passed, `jarvis-menu-bar --self-test` passed, full `tests.test_safety` passed `940/940`, rebuilt live `output/Jarvis.app` launched, and `scripts/verify_safe.py` passed `105/105` with report `runtime/verification/verify-safe-20260620-005458.json`.
