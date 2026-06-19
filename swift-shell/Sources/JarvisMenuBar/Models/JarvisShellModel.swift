@@ -3237,7 +3237,7 @@ final class JarvisShellModel: ObservableObject {
         for permission in permissions {
             lines.append("- \(permission.label): \(permission.state). \(permission.detail)")
         }
-        let missing = permissions.filter { !$0.isReady }
+        let missing = permissions.filter { !$0.isReady && $0.isBlocking }
         if !missing.isEmpty {
             lines.append("Missing: \(missing.map(\.label).joined(separator: ", ")).")
             lines.append("Use System Settings > Privacy & Security to grant missing permissions to the current Jarvis app.")

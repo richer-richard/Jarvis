@@ -11318,8 +11318,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.465}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-465}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.466}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-466}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('cleanup_numbered_app_bundles()', script)
         self.assertIn("find \"$OUTPUT_ROOT\" -maxdepth 1 -type d -name \"$APP_NAME-*.app\" -exec rm -rf {} +", script)
@@ -15183,6 +15183,17 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('$0.id == "notifications"', self_test_source)
         self.assertIn("Notifications should be visible but optional in app readiness.", self_test_source)
         self.assertIn("Permission summary did not include all blocking readiness rows", self_test_source)
+
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn("let missing = permissions.filter { !$0.isReady && $0.isBlocking }", model_source)
+        self.assertNotIn("let missing = permissions.filter { !$0.isReady }", model_source)
 
         panel_source = (
             PROJECT_ROOT

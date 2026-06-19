@@ -335,9 +335,13 @@ Status legend:
 5. Partially fixed/risky: Accessibility permission is required for computer
    control, but Jarvis must explain exactly why and what it enables.
 
-6. Open/unknown: Notifications permission has not been requested by the app but
+6. Fixed/proved: Notifications permission has not been requested by the app but
    is mentioned in readiness. It should be optional unless timers/background
    alerts need it.
+   - 2026-06-19 proof update: the native permission summary already counted only
+     blocking rows, and now the detailed `Missing:` line also filters to
+     `!isReady && isBlocking`, so optional Notifications stay visible without
+     being listed as a required missing permission.
 
 ## Codex Integration Bugs
 
