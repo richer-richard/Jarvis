@@ -34,6 +34,7 @@
 - [x] Strengthen the Music full-loop verifier so `playing: true` only passes after playback time advances; live Music proof passed at about 4.0s and cleanup verified stopped.
 - [x] Refresh the current release gate after the 0.1.471/report-surface/music-progress commits; latest pre-build gate passed `5/5`.
 - [x] Rebuild Jarvis `0.1.472` with a fail-closed colored menu-head guard: bundle creation requires `JarvisMenuHead.png`, and bundled status-helper self-test verifies the image loads.
+- [x] Refresh the release gate again after the `0.1.472` menu-head commit; latest pre-build gate passed `5/5`.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
@@ -92,3 +93,4 @@
 - [x] Music regression proof is stricter: focused tests passed, live `scripts/full_loop_regression.py --case music` passed in `7.511s` with `selected_current_time` about `4.0s`, and full `tests.test_safety` passed `944/944`.
 - [x] Current release gate proof refreshed: `scripts/pre_build_gate.py --base-url http://127.0.0.1:8765` passed `5/5` at `runtime/pre_build_gate/20260620-021401/summary.json`, and live `morning_status.py` now reports that gate as latest.
 - [x] Menu-bar head proof hardened: focused Swift/status-helper tests passed, live `output/Jarvis.app` relaunched as `0.1.472 build 472`, bundled `jarvis-status-helper --self-test` passed, `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-022400.json`, and full `tests.test_safety` passed `944/944`.
+- [x] Current `0.1.472` release gate refreshed after the commit: `scripts/pre_build_gate.py --base-url http://127.0.0.1:8765` passed `5/5` at `runtime/pre_build_gate/20260620-022537/summary.json`, and live `morning_status.py` shows it as latest.
