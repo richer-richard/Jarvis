@@ -12322,6 +12322,7 @@ Pages occupied by compressor:             10.
         self.assertIn('environment["JARVIS_TTS_PLAIN_SAY"] = "1"', source)
         self.assertIn('environment["JARVIS_TTS_VOICE"] = ""', source)
         self.assertIn('environment["JARVIS_TTS_RATE"] = ""', source)
+        self.assertIn('environment["JARVIS_TTS_REQUIRE_EMERGENCY_CONTROL"] = "1"', source)
         self.assertNotIn('environment["JARVIS_TTS_PROVIDER"] = "piper"', source)
 
     def test_swift_worker_supervisor_rejects_stale_bundle_workers(self):
@@ -18017,6 +18018,27 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertFalse(missing["tts_available"])
         self.assertEqual(missing["reply"], "Jarvis speech is unmuted, but the voice provider is missing.")
 
+    def test_speech_mute_status_marks_voice_unavailable_without_emergency_menu(self):
+        missing_helper = subprocess.CompletedProcess(
+            args=["pgrep"],
+            returncode=1,
+            stdout="",
+            stderr="",
+        )
+
+        with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+             patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+             patch("jarvis.tools.TTS_PROVIDER", "macos"), \
+             patch("jarvis.tools._find_executable", side_effect=lambda name: "/usr/bin/pgrep" if name == "pgrep" else "/usr/bin/say"), \
+             patch("jarvis.tools.subprocess.run", return_value=missing_helper):
+            status = jarvis_tools.speech_mute_status()
+
+        self.assertFalse(status["automatic_speech_available"])
+        self.assertEqual(status["tts_unavailable_reason"], "emergency_control_missing")
+        self.assertTrue(status["emergency_control_required"])
+        self.assertFalse(status["emergency_control_available"])
+        self.assertEqual(status["reply"], "Jarvis speech is unmuted, but automatic speech is unavailable.")
+
     def test_unmuting_prewarms_piper_voice_when_configured(self):
         readiness = {
             "ready": True,
@@ -18428,6 +18450,63 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("Groq", diagnostic_only.get("text_preview", ""))
         self.assertFalse(truly_empty["spoken"])
         self.assertEqual(truly_empty["status"], "empty")
+
+    def test_auto_speech_fails_closed_without_emergency_menu_when_required(self):
+        missing_helper = subprocess.CompletedProcess(
+            args=["pgrep"],
+            returncode=1,
+            stdout="",
+            stderr="",
+        )
+
+        with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+             patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+             patch("jarvis.tools._find_executable", side_effect=lambda name: "/usr/bin/pgrep" if name == "pgrep" else "/usr/bin/say"), \
+             patch("jarvis.tools.subprocess.run", return_value=missing_helper), \
+             patch("jarvis.tools.subprocess.Popen") as popen_mock:
+            result = jarvis_tools.speak_text_async("Jarvis should not trap Leo with audio.", reason="final")
+
+        self.assertFalse(result["spoken"])
+        self.assertEqual(result["status"], "emergency_control_missing")
+        self.assertTrue(result["emergency_control_required"])
+        self.assertFalse(result["emergency_control_available"])
+        self.assertEqual(result["emergency_control_process"], "jarvis-status-helper")
+        popen_mock.assert_not_called()
+
+    def test_auto_speech_allows_audio_when_emergency_menu_is_running(self):
+        class FakeProcess:
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                return 0
+
+        helper_running = subprocess.CompletedProcess(
+            args=["pgrep"],
+            returncode=0,
+            stdout="12345\n",
+            stderr="",
+        )
+
+        jarvis_tools.SPEECH_PROCESS = None
+        try:
+            with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+                 patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+                 patch("jarvis.tools.TTS_PROVIDER", "macos"), \
+                 patch("jarvis.tools._find_executable", side_effect=lambda name: "/usr/bin/pgrep" if name == "pgrep" else "/usr/bin/say"), \
+                 patch("jarvis.tools.subprocess.run", return_value=helper_running), \
+                 patch("jarvis.tools.threading.Thread") as thread_mock, \
+                 patch("jarvis.tools.subprocess.Popen", return_value=FakeProcess()) as popen_mock:
+                result = jarvis_tools.speak_text_async("Jarvis can speak because Shut Up is available.", reason="final")
+        finally:
+            jarvis_tools.SPEECH_PROCESS = None
+            jarvis_tools.SPEECH_PROCESS_REASON = None
+
+        self.assertTrue(result["spoken"])
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["provider"], "macos")
+        self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/say", "Jarvis can speak because Shut Up is available."])
+        self.assertTrue(thread_mock.called)
 
     def test_speech_diagnostics_include_full_spoken_text_for_echo_detection(self):
         spoken = " ".join(

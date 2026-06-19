@@ -89,6 +89,7 @@ from .config import (
     TTS_PROVIDER,
     TTS_PLAIN_SAY,
     TTS_RATE,
+    TTS_REQUIRE_EMERGENCY_CONTROL,
     TTS_SPEAK_STATUS,
     TTS_VOICE,
 )
@@ -2386,6 +2387,42 @@ def _macos_say_command(spoken: str) -> list[str]:
     return command
 
 
+def _speech_emergency_control_snapshot() -> dict[str, Any]:
+    """Return whether a user-visible emergency speech control is currently reachable."""
+    if not TTS_REQUIRE_EMERGENCY_CONTROL:
+        return {
+            "emergency_control_required": False,
+            "emergency_control_available": True,
+            "emergency_control_process": "",
+            "emergency_control_detail": "not_required",
+        }
+    pgrep = _find_executable("pgrep") or "/usr/bin/pgrep"
+    try:
+        completed = subprocess.run(
+            [pgrep, "-x", "jarvis-status-helper"],
+            cwd=PROJECT_ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=0.35,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "emergency_control_required": True,
+            "emergency_control_available": False,
+            "emergency_control_process": "jarvis-status-helper",
+            "emergency_control_detail": type(error).__name__,
+        }
+    return {
+        "emergency_control_required": True,
+        "emergency_control_available": completed.returncode == 0 and bool(completed.stdout.strip()),
+        "emergency_control_process": "jarvis-status-helper",
+        "emergency_control_detail": "running" if completed.returncode == 0 else "missing",
+    }
+
+
 def _start_piper_warm_speech_async(
     spoken: str,
     *,
@@ -2576,6 +2613,16 @@ def speak_text_async(text: str, *, reason: str = "reply", force: bool = False) -
                 **_speech_text_diagnostics(spoken),
                 **_duration_fields(started_at),
             }
+        emergency_control = _speech_emergency_control_snapshot()
+        if not emergency_control["emergency_control_available"]:
+            return {
+                "spoken": False,
+                "status": "emergency_control_missing",
+                "reason": reason,
+                **emergency_control,
+                **_speech_text_diagnostics(spoken),
+                **_duration_fields(started_at),
+            }
         queued_after_status = _queue_final_after_status_locked(
             spoken,
             reason=reason,
@@ -2617,15 +2664,22 @@ def _speech_readiness_snapshot(*, prewarm: bool = False) -> dict[str, Any]:
     fallback_provider = _normalize_tts_provider(TTS_FALLBACK_PROVIDER)
     macos_available = bool(_find_executable("say"))
     piper = _piper_readiness()
+    emergency_control = _speech_emergency_control_snapshot()
     preferred_available = bool(piper["ready"]) if provider == "piper" else macos_available
     fallback_available = macos_available if fallback_provider == "macos" else bool(piper["ready"])
     tts_available = preferred_available or fallback_available
-    automatic_available = bool(TTS_AUTOMATIC_ENABLED and tts_available)
+    automatic_available = bool(
+        TTS_AUTOMATIC_ENABLED
+        and tts_available
+        and emergency_control["emergency_control_available"]
+    )
     unavailable_reason = ""
     if not TTS_AUTOMATIC_ENABLED:
         unavailable_reason = "automatic_tts_disabled"
     elif not tts_available:
         unavailable_reason = "tts_provider_unavailable"
+    elif not emergency_control["emergency_control_available"]:
+        unavailable_reason = "emergency_control_missing"
     snapshot: dict[str, Any] = {
         "automatic_tts_enabled": TTS_AUTOMATIC_ENABLED,
         "status_speech_enabled": TTS_SPEAK_STATUS,
@@ -2636,6 +2690,7 @@ def _speech_readiness_snapshot(*, prewarm: bool = False) -> dict[str, Any]:
         "tts_unavailable_reason": unavailable_reason,
         "macos_say_available": macos_available,
         "piper_available": bool(piper["ready"]),
+        **emergency_control,
     }
     if prewarm and automatic_available and provider == "piper":
         with PIPER_WORKER_LOCK:

@@ -251,6 +251,7 @@ final class JarvisWorkerSupervisor {
         environment["JARVIS_TTS_PLAIN_SAY"] = "1"
         environment["JARVIS_TTS_VOICE"] = ""
         environment["JARVIS_TTS_RATE"] = ""
+        environment["JARVIS_TTS_REQUIRE_EMERGENCY_CONTROL"] = "1"
         if let workspaceRoot = sourceWorkspaceRoot(),
            workspaceRoot.standardizedFileURL.path != projectRoot.standardizedFileURL.path {
             environment["JARVIS_WORKSPACE_ROOT"] = workspaceRoot.path
