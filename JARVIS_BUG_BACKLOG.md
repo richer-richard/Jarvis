@@ -273,6 +273,11 @@ Status legend:
      emergency menu alive beside the canonical app. The Swift self-test covers
      keeping the current canonical process while targeting only stale duplicate
      Jarvis app/helper processes.
+   - 2026-06-19 proof update: `scripts/morning_status.py` now reports both
+     `jarvis-menu-bar` and `jarvis-status-helper` processes and checks
+     `/api/speech/mute`. If speech is unmuted/available while no emergency menu
+     process exists, it prints `Speech emergency: missing menu helper while
+     speech is unmuted` and points to `scripts/open_jarvis.sh`.
 
 10. Partially fixed/risky: Hey Jarvis crashed or flickered.
     - Leo reported crashes after Start Hey Jarvis.

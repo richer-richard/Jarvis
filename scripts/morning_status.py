@@ -106,7 +106,7 @@ def main() -> int:
     print_requirement_audit()
     print_latest_latency_smoke()
     print_current_bundle()
-    print_process_status()
+    print_process_status(base_url)
     return 0
 
 
@@ -420,10 +420,27 @@ def print_current_bundle() -> None:
     print("Short launcher: scripts/open_jarvis.sh")
 
 
-def print_process_status() -> None:
+def print_process_status(base_url: str) -> None:
+    app_pids = process_pids("jarvis-menu-bar")
+    helper_pids = process_pids("jarvis-status-helper")
+    parts: list[str] = []
+    if app_pids:
+        parts.append(f"{len(app_pids)} jarvis-menu-bar")
+    if helper_pids:
+        parts.append(f"{len(helper_pids)} jarvis-status-helper")
+    if parts:
+        print(f"App processes: {', '.join(parts)} running")
+    else:
+        print("App processes: none")
+    if len(app_pids) > 1 or len(helper_pids) > 1:
+        print("Action: quit duplicate Jarvis app/helper processes, then reopen once with `scripts/open_jarvis.sh`")
+    print_speech_emergency_status(base_url, app_pids=app_pids, helper_pids=helper_pids)
+
+
+def process_pids(process_name: str) -> list[str]:
     try:
         completed = subprocess.run(
-            ["pgrep", "-x", "jarvis-menu-bar"],
+            ["pgrep", "-x", process_name],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -431,15 +448,28 @@ def print_process_status() -> None:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return
+        return []
+    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
-    pids = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    if not pids:
-        print("App processes: none")
+
+def print_speech_emergency_status(base_url: str, *, app_pids: list[str], helper_pids: list[str]) -> None:
+    try:
+        speech = get_json(f"{base_url.rstrip('/')}/api/speech/mute", timeout=2)
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
         return
-    print(f"App processes: {len(pids)} jarvis-menu-bar running")
-    if len(pids) > 1:
-        print("Action: quit duplicate Jarvis app processes, then reopen once with `scripts/open_jarvis.sh`")
+    muted = bool(speech.get("muted"))
+    active = bool(speech.get("active_speech"))
+    automatic_available = bool(speech.get("automatic_speech_available"))
+    emergency_ready = bool(app_pids or helper_pids)
+    if muted:
+        print("Speech emergency: safe (speech muted)")
+        return
+    if emergency_ready:
+        print("Speech emergency: ready (menu helper/app process present)")
+        return
+    if active or automatic_available:
+        print("Speech emergency: missing menu helper while speech is unmuted")
+        print("Action: run `scripts/open_jarvis.sh` before enabling spoken replies")
 
 
 def current_bundle_candidates(output: Path) -> list[Path]:
