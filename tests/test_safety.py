@@ -5308,6 +5308,35 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("in Music", result["reply"])
         open_mock.assert_called_once()
 
+    def test_music_app_bridge_play_resumes_when_song_is_selected_but_paused(self):
+        requested_song = {
+            "id": "song-waving",
+            "title": "Waving Through A Window",
+            "artist": "Dear Evan Hansen",
+        }
+        bridge_responses = iter([
+            {"ok": True, "app": "Music"},
+            {"ok": True, "song": requested_song},
+            {"ok": True, "playing": False, "nowPlaying": requested_song},
+            {"ok": True, "message": "Resumed"},
+            {"ok": True, "playing": True, "nowPlaying": requested_song},
+        ])
+        with patch("jarvis.tools._music_app_bridge_request", side_effect=lambda *_args, **_kwargs: next(bridge_responses)) as bridge_mock, \
+             patch("jarvis.tools.time.sleep"):
+            result = jarvis_tools._music_app_bridge_play(
+                query="Waving Through A Window",
+                user_request="play Waving Through A Window",
+                from_your_pick=False,
+                started_at=time.monotonic(),
+            )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["status"], "playing")
+        self.assertEqual(result["playback_confirmation"], "playing")
+        self.assertEqual(result["music_app_bridge"]["resume"]["message"], "Resumed")
+        self.assertIn(("POST", "/resume"), [call.args[:2] for call in bridge_mock.call_args_list])
+
     def test_music_app_bridge_play_rejects_wrong_current_track(self):
         bridge_responses = iter([
             {"ok": True, "app": "Music"},

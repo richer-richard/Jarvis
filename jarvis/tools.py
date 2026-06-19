@@ -3659,6 +3659,22 @@ def _music_app_bridge_play(
     playback_song = playback.get("nowPlaying") if isinstance(playback.get("nowPlaying"), dict) else {}
     song = playback_song if playback_song else requested_song
     playing = playback.get("ok") is True and playback.get("playing") is True and isinstance(song, dict)
+    resume: dict[str, Any] = {}
+    if (
+        playback.get("ok") is True
+        and playback.get("playing") is False
+        and isinstance(requested_song, dict)
+        and isinstance(playback_song, dict)
+        and _music_app_bridge_same_song(requested_song, playback_song)
+    ):
+        resume = _music_app_bridge_request("POST", "/resume", timeout=2.0)
+        time.sleep(0.35)
+        refreshed_playback = _music_app_bridge_request("GET", "/playback-state", timeout=2.0)
+        if refreshed_playback.get("ok") is True:
+            playback = refreshed_playback
+            playback_song = playback.get("nowPlaying") if isinstance(playback.get("nowPlaying"), dict) else {}
+            song = playback_song if playback_song else requested_song
+            playing = playback.get("playing") is True and isinstance(song, dict)
     current_track_matches_request = bool(
         playing
         and (
@@ -3676,6 +3692,7 @@ def _music_app_bridge_play(
                 "health": health,
                 "play": play,
                 "playback": playback,
+                "resume": resume,
             },
             "reply": (
                 "Music started a different track than the one I requested, so I stopped instead of claiming success."
@@ -3705,6 +3722,7 @@ def _music_app_bridge_play(
             "health": health,
             "play": play,
             "playback": playback,
+            "resume": resume,
             "startup": startup,
         },
         "reply": f"Playing {phrase} in Music.",

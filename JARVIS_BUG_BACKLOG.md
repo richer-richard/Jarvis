@@ -375,6 +375,10 @@ Status legend:
      everything into generic not-playing; results include `permission_issue`,
      `next_steps`, and `spoken_summary` while still refusing hidden fallback
      audio.
+   - 2026-06-19 proof update: when the native Music bridge selects the requested
+     song but `/playback-state` reports it is paused, Jarvis now calls the
+     bridge `/resume` endpoint, waits briefly, and only claims success if the
+     refreshed playback state confirms the requested song is playing.
 
 6. Partially fixed/risky: Chrome/LocalOS refused connection or JavaScript
    control.
