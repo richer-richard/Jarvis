@@ -3425,6 +3425,31 @@ def _localos_music_connection_blocker_details(
     }
 
 
+def _music_app_bridge_failure_details(attempt: dict[str, Any]) -> dict[str, Any]:
+    confirmation = str(attempt.get("playback_confirmation") or "music_app_not_playing")
+    if confirmation == "wrong_track_playing":
+        return {
+            "permission_issue": "music_app_wrong_track_playing",
+            "requires_user_action": False,
+            "next_steps": [
+                "Keep the Music app open.",
+                "Try the song request again so Jarvis can retry the exact track.",
+                "If Music keeps choosing the wrong song, rename or disambiguate the requested track in the music library.",
+            ],
+            "spoken_summary": "Music started a different track than requested, so Jarvis did not claim success.",
+        }
+    return {
+        "permission_issue": "music_app_playback_not_confirmed",
+        "requires_user_action": False,
+        "next_steps": [
+            "Keep the Music app open for a moment.",
+            "If no audio starts, press play in Music once, then try the request again.",
+            "Jarvis did not start any hidden fallback audio.",
+        ],
+        "spoken_summary": "Music did not confirm playback, and Jarvis did not start a hidden player.",
+    }
+
+
 def _music_app_bridge_enabled_for_live_path() -> bool:
     if os.environ.get("JARVIS_MUSIC_APP_BRIDGE", "1").strip().lower() in {"0", "false", "no", "off"}:
         return False
@@ -4084,15 +4109,21 @@ def localos_music_play(
     if isinstance(music_app_attempt, dict) and music_app_attempt.get("status") == "playing":
         return music_app_attempt
     if isinstance(music_app_attempt, dict):
+        playback_confirmation = str(music_app_attempt.get("playback_confirmation") or "music_app_not_playing")
+        failure_details = _music_app_bridge_failure_details(music_app_attempt)
         return {
             **base,
             "status": "not_queued",
             "available": False,
             "played_by": "none",
             "control_lane": "music_app_bridge",
-            "playback_confirmation": "music_app_not_playing",
+            "playback_confirmation": playback_confirmation,
             "music_app_attempt": music_app_attempt,
-            "reply": "I tried Music, but it did not confirm playback. I did not start another hidden music player.",
+            "reply": (
+                str(music_app_attempt.get("reply") or "").strip()
+                or "I tried Music, but it did not confirm playback. I did not start another hidden music player."
+            ),
+            **failure_details,
             **_duration_fields(started_at),
         }
     selected: dict[str, Any] | None = None

@@ -5164,8 +5164,48 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(result["legacy_localos_fallback_allowed"])
         self.assertEqual(result["control_lane"], "music_app_bridge")
         self.assertEqual(result["playback_confirmation"], "music_app_not_playing")
+        self.assertEqual(result["permission_issue"], "music_app_playback_not_confirmed")
+        self.assertFalse(result["requires_user_action"])
+        self.assertIn("did not start a hidden player", result["spoken_summary"])
+        self.assertIn("press play in Music once", " ".join(result["next_steps"]))
         self.assertIn("did not confirm playback", result["reply"])
         self.assertIn("did not start another hidden music player", result["reply"])
+        music_mock.assert_called_once()
+        localos_search.assert_not_called()
+        chrome_mock.assert_not_called()
+
+    def test_music_play_preserves_music_app_wrong_track_failure(self):
+        music_result = {
+            "tool": "localos.music_play",
+            "executed": True,
+            "status": "music_app_not_playing",
+            "played_by": "none",
+            "playback_confirmation": "wrong_track_playing",
+            "music_app_bridge": {
+                "health": {"ok": True, "app": "Music"},
+                "play": {"ok": True, "song": {"title": "Waving Through A Window"}},
+                "playback": {
+                    "ok": True,
+                    "playing": True,
+                    "nowPlaying": {"title": "Beauty and a Beat", "artist": "Justin Bieber"},
+                },
+            },
+            "reply": "Music started a different track than the one I requested, so I stopped instead of claiming success.",
+        }
+        with patch("jarvis.tools._music_app_bridge_play", return_value=music_result) as music_mock, \
+             patch("jarvis.tools.localos_music_search") as localos_search, \
+             patch("jarvis.tools._localos_music_play_via_chrome") as chrome_mock:
+            result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
+
+        self.assertEqual(result["status"], "not_queued")
+        self.assertEqual(result["played_by"], "none")
+        self.assertEqual(result["control_lane"], "music_app_bridge")
+        self.assertEqual(result["playback_confirmation"], "wrong_track_playing")
+        self.assertEqual(result["permission_issue"], "music_app_wrong_track_playing")
+        self.assertFalse(result["requires_user_action"])
+        self.assertIn("different track", result["reply"])
+        self.assertIn("did not claim success", result["spoken_summary"])
+        self.assertIn("disambiguate the requested track", " ".join(result["next_steps"]))
         music_mock.assert_called_once()
         localos_search.assert_not_called()
         chrome_mock.assert_not_called()

@@ -359,6 +359,11 @@ Status legend:
 5. Partially fixed/risky: LocalOS opened and selected a song but did not play.
    - Browser autoplay/user-gesture rule caused "play() failed because the user
      didn't interact with the document first."
+   - 2026-06-19 proof update: native Music bridge failures now preserve exact
+     playback confirmation such as `wrong_track_playing` instead of flattening
+     everything into generic not-playing; results include `permission_issue`,
+     `next_steps`, and `spoken_summary` while still refusing hidden fallback
+     audio.
 
 6. Partially fixed/risky: Chrome/LocalOS refused connection or JavaScript
    control.
