@@ -2063,11 +2063,11 @@ def run_native_visible_screen_follow_up(
             }
 
     latest_failure: dict[str, Any] | None = None
-    max_attempts = max(
-        1,
-        1 if browser_page_follow_up.get("status") == "browser_permission_blocked" else VISIBLE_SCREEN_FOLLOW_UP_RETRY_ATTEMPTS,
-    )
+    browser_read_permission_blocked = browser_page_follow_up.get("status") == "browser_permission_blocked"
+    max_attempts = max(1, 2 if browser_read_permission_blocked else VISIBLE_SCREEN_FOLLOW_UP_RETRY_ATTEMPTS)
+    attempts_made = 0
     for attempt in range(1, max_attempts + 1):
+        attempts_made = attempt
         if attempt > 1:
             time.sleep(VISIBLE_SCREEN_FOLLOW_UP_RETRY_DELAY_SECONDS)
         attempt_result = run_native_visible_screen_follow_up_attempt(
@@ -2133,27 +2133,29 @@ def run_native_visible_screen_follow_up(
             browser_open=browser_open,
             attempt_result=attempt_result,
         ):
-            visible_reply = (
-                native_capture_failed_teams_reply()
-                if visible_screen_attempt_is_native_capture_failed(attempt_result)
-                else (
-                    "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
-                    "I have not inspected the newest Music assignment yet."
+            latest_failure = teams_wrong_surface_attempt_failure(attempt_result, browser_open)
+            if attempt < max_attempts and teams_wrong_surface_retry_worthwhile(attempt_result):
+                browser_after_mismatch = read_chrome_front_tab_state(
+                    target_host=(urlparse(str(browser_open.get("browser_url") or "")).hostname or "").lower(),
+                    timeout=timeout,
                 )
-            )
-            latest_failure = {
-                **attempt_result,
-                "used": False,
-                "status": "browser_focus_not_verified",
-                "browser_focus_mismatch": True,
-                "browser_open_active_title": browser_open.get("browser_open_active_title"),
-                "browser_open_active_url": browser_open.get("browser_open_active_url"),
-                "browser_open_verification_url": browser_open.get("browser_open_verification_url"),
-                "browser_open_verification_source": browser_open.get("browser_open_verification_source"),
-                "visible_reply_preview": visible_reply,
-                "visible_navigation_targets": wrong_surface_visible_navigation_targets(),
-                "response": None,
-            }
+                if browser_after_mismatch.get("browser_open_attempted"):
+                    browser_open.update(browser_after_mismatch)
+                    result.update(browser_after_mismatch)
+                    latest_failure.update(
+                        {
+                            "browser_open_active_title": browser_open.get("browser_open_active_title"),
+                            "browser_open_active_url": browser_open.get("browser_open_active_url"),
+                            "browser_open_verification_url": browser_open.get("browser_open_verification_url"),
+                            "browser_open_verification_source": browser_open.get("browser_open_verification_source"),
+                        }
+                    )
+                if (
+                    browser_open.get("browser_open_target_host_verified") is False
+                    and browser_open.get("browser_open_verification_source") != "active_title_url"
+                ):
+                    break
+                continue
             break
         if attempt_result.get("status") == "completed":
             return {
@@ -2163,6 +2165,8 @@ def run_native_visible_screen_follow_up(
                 "duration_seconds": round(time.monotonic() - started, 3),
             }
         latest_failure = attempt_result
+        if browser_read_permission_blocked:
+            break
 
     navigation_steps: list[dict[str, Any]] = []
     if exercise_visible_navigation and isinstance(latest_failure, dict):
@@ -2265,7 +2269,7 @@ def run_native_visible_screen_follow_up(
     return {
         **result,
         **merge_follow_up_failures(browser_page_follow_up, latest_failure),
-        "attempts": max_attempts,
+        "attempts": attempts_made,
         "duration_seconds": round(time.monotonic() - started, 3),
     }
 
@@ -2275,6 +2279,60 @@ def visible_screen_attempt_is_native_capture_failed(attempt_result: dict[str, An
         str(attempt_result.get("capture_status") or "") == "failed"
         or str(attempt_result.get("response_status") or "") == "native_capture_failed"
     )
+
+
+def teams_wrong_surface_attempt_failure(attempt_result: dict[str, Any], browser_open: dict[str, Any]) -> dict[str, Any]:
+    visible_reply = (
+        native_capture_failed_teams_reply()
+        if visible_screen_attempt_is_native_capture_failed(attempt_result)
+        else (
+            "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
+            "I have not inspected the newest Music assignment yet."
+        )
+    )
+    return {
+        **attempt_result,
+        "used": False,
+        "status": "browser_focus_not_verified",
+        "browser_focus_mismatch": True,
+        "browser_open_active_title": browser_open.get("browser_open_active_title"),
+        "browser_open_active_url": browser_open.get("browser_open_active_url"),
+        "browser_open_verification_url": browser_open.get("browser_open_verification_url"),
+        "browser_open_verification_source": browser_open.get("browser_open_verification_source"),
+        "visible_reply_preview": visible_reply,
+        "visible_navigation_targets": wrong_surface_visible_navigation_targets(),
+        "response": None,
+    }
+
+
+def teams_wrong_surface_retry_worthwhile(attempt_result: dict[str, Any]) -> bool:
+    if visible_screen_attempt_is_native_capture_failed(attempt_result):
+        return True
+    diagnostics = attempt_result.get("capture_diagnostics")
+    capture_window_title = (
+        str(diagnostics.get("window_title") or "")
+        if isinstance(diagnostics, dict)
+        else str(attempt_result.get("capture_window_title") or "")
+    ).casefold()
+    if capture_window_title and "teams" not in capture_window_title and "microsoft" not in capture_window_title:
+        return True
+    text = " ".join(
+        [
+            str(attempt_result.get("captured_text_preview") or ""),
+            str(attempt_result.get("visible_reply_preview") or ""),
+        ]
+    ).casefold()
+    wrong_surface_markers = (
+        "google chrome. i can see",
+        "youtube",
+        "codex",
+        "chatgpt",
+        "local assistant prototype",
+        "type to jarvis",
+        "jarvis activity",
+        "prompts for approval",
+    )
+    return any(marker in text for marker in wrong_surface_markers)
 
 
 def native_capture_failed_teams_reply() -> str:

@@ -4855,10 +4855,10 @@ class VerifySafeScriptTests(unittest.TestCase):
                  "scripts.voice_loop_qa.run_browser_page_follow_up",
                  return_value={
                      "used": False,
-                     "status": "response_not_useful",
+                     "status": "browser_permission_blocked",
                      "tool": "browser.read_page",
-                     "response_status": "no_page_text",
-                     "visible_reply_preview": "I need a visible page before I can summarize it.",
+                     "response_status": "teams_page_text_unavailable",
+                     "visible_reply_preview": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
                  },
              ), \
              patch(
@@ -5084,10 +5084,10 @@ class VerifySafeScriptTests(unittest.TestCase):
                  "scripts.voice_loop_qa.run_browser_page_follow_up",
                  return_value={
                      "used": False,
-                     "status": "response_not_useful",
+                     "status": "browser_permission_blocked",
                      "tool": "browser.read_page",
-                     "response_status": "no_page_text",
-                     "visible_reply_preview": "I need a visible page before I can summarize it.",
+                     "response_status": "teams_page_text_unavailable",
+                     "visible_reply_preview": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
                  },
              ), \
              patch(
@@ -5415,10 +5415,10 @@ class VerifySafeScriptTests(unittest.TestCase):
                  "scripts.voice_loop_qa.run_browser_page_follow_up",
                  return_value={
                      "used": False,
-                     "status": "response_not_useful",
+                     "status": "browser_permission_blocked",
                      "tool": "browser.read_page",
-                     "response_status": "no_page_text",
-                     "visible_reply_preview": "I need a visible page before I can summarize it.",
+                     "response_status": "teams_page_text_unavailable",
+                     "visible_reply_preview": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
                  },
              ), \
              patch(
@@ -5471,7 +5471,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 timeout=5.0,
             )
 
-        self.assertEqual(attempt_mock.call_count, 1)
+        self.assertEqual(attempt_mock.call_count, 2)
         self.assertEqual(attempt_mock.call_args.kwargs["preferred_window_title_contains"], "")
         self.assertEqual(result["status"], "browser_focus_not_verified")
         self.assertTrue(result["browser_focus_mismatch"])
@@ -5484,6 +5484,80 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(targets["teams_search"]["reason"], "browser_focus_not_verified")
         self.assertFalse(targets["teams_search_plan"]["planned"])
         self.assertEqual(targets["teams_search_plan"]["reason"], "browser_focus_not_verified")
+
+    def test_voice_loop_qa_visible_screen_followup_recovers_after_wrong_surface_retry(self):
+        wrong_surface_attempt = {
+            "used": False,
+            "status": "assignment_subject_mismatch",
+            "tool": "screen.visible_text",
+            "response_status": "assignment_subject_mismatch",
+            "captured_text_preview": "Local assistant prototype Type to Jarvis Jarvis Activity",
+            "visible_reply_preview": (
+                "I read the visible Teams screen, but it does not look like the Music assignment."
+            ),
+        }
+        recovered_attempt = {
+            "used": True,
+            "status": "completed",
+            "tool": "screen.visible_text",
+            "response_status": "checked",
+            "captured_text_preview": "Microsoft Teams Music Assignment rubric due next week",
+            "visible_reply_preview": (
+                "I read the visible Teams screen. I can see assignment-related text: Music Assignment rubric."
+            ),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.VISIBLE_SCREEN_PROBE", Path("/tmp/fake-probe")), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 return_value={"used": False, "status": "browser_permission_blocked", "tool": "browser.read_page"},
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.open_visible_screen_follow_up_url",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_url": "https://teams.cloud.microsoft/",
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "https://teams.cloud.microsoft/",
+                     "browser_open_active_title": "Teams and Channels | General | Microsoft Teams",
+                     "browser_open_verification_url": "https://teams.cloud.microsoft/",
+                     "browser_open_verification_source": "active_url",
+                     "browser_open_target_host_verified": True,
+                 },
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt",
+                 side_effect=[wrong_surface_attempt, recovered_attempt],
+             ) as attempt_mock, \
+             patch(
+                 "scripts.voice_loop_qa.read_chrome_front_tab_state",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_open_settle_check": True,
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "https://teams.cloud.microsoft/",
+                     "browser_open_active_title": "Teams and Channels | General | Microsoft Teams",
+                     "browser_open_verification_url": "https://teams.cloud.microsoft/",
+                     "browser_open_verification_source": "active_url",
+                     "browser_open_target_host_verified": True,
+                     "browser_open_login_gate": False,
+                 },
+             ) as settle_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.cloud.microsoft/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+            )
+
+        self.assertEqual(attempt_mock.call_count, 2)
+        settle_mock.assert_called_once()
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(result["used"])
+        self.assertEqual(result["attempts"], 2)
+        self.assertIn("Music Assignment", result["visible_reply_preview"])
 
     def test_voice_loop_qa_visible_screen_followup_rejects_jarvis_window_ocr_after_teams_open(self):
         self.assertTrue(
