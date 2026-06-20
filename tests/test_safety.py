@@ -4267,6 +4267,18 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(verification_url, "https://teams.microsoft.com/v2/?clientexperience=t3")
         self.assertEqual(source, "active_title_url")
 
+    def test_voice_loop_qa_similarity_normalizes_sharpay_email_stt_noise(self):
+        expected = (
+            "Sharpay Cao shared the preliminary results of the 20262027 student council applications "
+            "for Year7."
+        )
+        transcript = (
+            "Sharpay Cows shared the preliminary results of the 20 million, 262,27 student council "
+            "applications for year 7."
+        )
+
+        self.assertGreaterEqual(voice_loop_qa.text_similarity(expected, transcript), 0.9)
+
     def test_voice_loop_qa_visible_screen_followup_preserves_assignment_mismatch_after_browser_block(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch(
