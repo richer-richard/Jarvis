@@ -2304,10 +2304,26 @@ def select_ocr_line_target(
         screen_center = ocr_line_screen_center(best, capture_payload)
         if screen_center:
             best["screen_center"] = screen_center
+        screen_leading = ocr_line_screen_leading_point(best, capture_payload)
+        if screen_leading:
+            best["screen_leading"] = screen_leading
     return best if best and best.get("found") else {"found": False, "reason": "no_label_match"}
 
 
 def ocr_line_screen_center(target: dict[str, Any], capture_payload: dict[str, Any]) -> dict[str, float] | None:
+    return ocr_line_screen_point(target, capture_payload, anchor="center")
+
+
+def ocr_line_screen_leading_point(target: dict[str, Any], capture_payload: dict[str, Any]) -> dict[str, float] | None:
+    return ocr_line_screen_point(target, capture_payload, anchor="leading")
+
+
+def ocr_line_screen_point(
+    target: dict[str, Any],
+    capture_payload: dict[str, Any],
+    *,
+    anchor: str,
+) -> dict[str, float] | None:
     pixels = target.get("pixels") if isinstance(target.get("pixels"), dict) else {}
     diagnostics = capture_payload.get("diagnostics") if isinstance(capture_payload.get("diagnostics"), dict) else {}
     try:
@@ -2323,8 +2339,12 @@ def ocr_line_screen_center(target: dict[str, Any], capture_payload: dict[str, An
         return None
     if pixel_width <= 0 or pixel_height <= 0 or scale_x <= 0 or scale_y <= 0:
         return None
+    if anchor == "leading":
+        anchor_x = pixel_x + min(max(pixel_width * 0.18, 8.0), 18.0)
+    else:
+        anchor_x = pixel_x + pixel_width / 2.0
     return {
-        "x": round(bounds_x + (pixel_x + pixel_width / 2.0) / scale_x, 2),
+        "x": round(bounds_x + anchor_x / scale_x, 2),
         "y": round(bounds_y + (pixel_y + pixel_height / 2.0) / scale_y, 2),
     }
 
@@ -2348,7 +2368,14 @@ def visible_navigation_plan(
             "reason": str(target.get("reason") or "target_missing") if isinstance(target, dict) else "target_missing",
             "will_click": False,
         }
-    center = target.get("screen_center") if isinstance(target.get("screen_center"), dict) else {}
+    target_text = str(target.get("text") or "")
+    is_back_target = target_text.lstrip().startswith(("‹", "<"))
+    if is_back_target and action == "click":
+        action = "browser_back"
+    preferred_point = "screen_leading" if is_back_target else "screen_center"
+    center = target.get(preferred_point) if isinstance(target.get(preferred_point), dict) else {}
+    if not center and preferred_point != "screen_center":
+        center = target.get("screen_center") if isinstance(target.get("screen_center"), dict) else {}
     coordinate_space = "screen_points" if center else "image_pixels"
     if not center:
         center = target.get("center") if isinstance(target.get("center"), dict) else {}
@@ -2368,7 +2395,7 @@ def visible_navigation_plan(
         "purpose": purpose,
         "will_click": False,
         "requires_explicit_live_navigation": True,
-        "target_text": str(target.get("text") or ""),
+        "target_text": target_text,
         "point": {"x": round(x, 2), "y": round(y, 2)},
         "coordinate_space": coordinate_space,
         "target": target,
@@ -2483,6 +2510,45 @@ def execute_visible_navigation_plan(
         return {"attempted": False, "executed": False, "status": "plan_not_ready"}
     if plan.get("will_click") is not False:
         return {"attempted": False, "executed": False, "status": "plan_not_fail_closed"}
+    action = str(plan.get("action") or "click")
+    if action == "browser_back":
+        applescript = f'''
+tell application "{escape_applescript_string(target_app_name)}" to activate
+delay 0.2
+tell application "System Events"
+  tell process "{escape_applescript_string(target_app_name)}"
+    keystroke "[" using command down
+  end tell
+end tell
+'''
+        try:
+            completed = subprocess.run(
+                ["osascript", "-e", applescript],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+                timeout=min(max(timeout, 1.0), 10.0),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            return {
+                "attempted": True,
+                "executed": False,
+                "status": "browser_back_timeout",
+                "timeout_seconds": min(max(timeout, 1.0), 10.0),
+                "stdout_tail": str(error.stdout or "")[-500:],
+                "stderr_tail": str(error.stderr or "")[-500:],
+                "target_app_name": target_app_name,
+            }
+        return {
+            "attempted": True,
+            "executed": completed.returncode == 0,
+            "status": "browser_back" if completed.returncode == 0 else "browser_back_failed",
+            "returncode": completed.returncode,
+            "stdout_tail": str(completed.stdout or "")[-500:],
+            "stderr_tail": str(completed.stderr or "")[-500:],
+            "target_app_name": target_app_name,
+        }
     if plan.get("coordinate_space") != "screen_points":
         return {
             "attempted": False,

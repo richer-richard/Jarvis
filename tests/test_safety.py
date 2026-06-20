@@ -3135,6 +3135,56 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(sequence[0]["plan"]["point"], {"x": 257.0, "y": 322.5})
         self.assertEqual(sequence[1]["plan"]["reason"], "requires_previous_step")
 
+    def test_voice_loop_qa_chevron_all_teams_uses_leading_screen_click_point(self):
+        capture_payload = {
+            "diagnostics": {
+                "capture_bounds_x": 74.0,
+                "capture_bounds_y": 220.0,
+                "capture_scale_x": 2.0,
+                "capture_scale_y": 2.0,
+            },
+            "ocr_lines": [
+                {
+                    "text": "‹ All teams",
+                    "pixels": {"x": 55.98, "y": 101.92, "width": 60.03, "height": 12.16},
+                }
+            ],
+        }
+        target = voice_loop_qa.select_ocr_line_target(capture_payload, ["All teams"])
+        plan = voice_loop_qa.visible_navigation_plan(
+            target,
+            action="click",
+            purpose="return to the Teams list so the requested class can be selected",
+        )
+
+        self.assertEqual(target["screen_center"], {"x": 117.0, "y": 274.0})
+        self.assertEqual(plan["action"], "browser_back")
+        self.assertLess(plan["point"]["x"], target["screen_center"]["x"])
+        self.assertEqual(plan["point"], {"x": 107.39, "y": 274.0})
+        self.assertEqual(plan["coordinate_space"], "screen_points")
+
+    def test_voice_loop_qa_execute_visible_navigation_uses_browser_back_for_back_plan(self):
+        plan = {
+            "planned": True,
+            "will_click": False,
+            "action": "browser_back",
+            "point": {"x": 107.39, "y": 274.0},
+            "coordinate_space": "screen_points",
+        }
+
+        with patch.dict(os.environ, {"JARVIS_ALLOW_LIVE_UI_NAVIGATION": "1"}), \
+             patch("scripts.voice_loop_qa.subprocess.run", return_value=subprocess.CompletedProcess(["osascript"], 0, stdout="", stderr="")) as run_mock:
+            result = voice_loop_qa.execute_visible_navigation_plan(
+                plan,
+                target_app_name="Google Chrome",
+                timeout=30.0,
+            )
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["status"], "browser_back")
+        self.assertIn("keystroke \"[\" using command down", run_mock.call_args.args[0][2])
+
     def test_voice_loop_qa_visible_navigation_plan_fails_closed(self):
         plan = voice_loop_qa.visible_navigation_plan(
             {"found": False, "reason": "no_label_match"},
