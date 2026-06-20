@@ -4854,6 +4854,34 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(result["used"])
         self.assertIn("TimeoutExpired", result["browser_open_error"])
 
+    def test_voice_loop_qa_open_visible_url_recovers_login_after_timeout(self):
+        timeout_error = subprocess.TimeoutExpired(["osascript"], timeout=15.0)
+        with patch("scripts.voice_loop_qa.subprocess.run", side_effect=timeout_error), \
+             patch(
+                 "scripts.voice_loop_qa.read_chrome_front_tab_state",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_open_settle_check": True,
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+                     "browser_open_active_title": "Sign in to your account",
+                     "browser_open_verification_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+                     "browser_open_verification_source": "active_url",
+                     "browser_open_target_host_verified": False,
+                     "browser_open_login_gate": True,
+                 },
+             ) as front_tab_mock:
+            result = voice_loop_qa.open_visible_screen_follow_up_url(
+                {"result": {"url": "https://teams.microsoft.com/v2/?clientexperience=t3"}},
+                timeout=90.0,
+            )
+
+        front_tab_mock.assert_called_once_with(target_host="teams.microsoft.com", timeout=3.0)
+        self.assertTrue(result["browser_open_login_gate"])
+        self.assertTrue(result["browser_open_recovered_from_timeout"])
+        self.assertIn("TimeoutExpired", result["browser_open_error"])
+        self.assertEqual(result["browser_url"], "https://teams.microsoft.com/v2/?clientexperience=t3")
+
     def test_voice_loop_qa_visible_screen_followup_rechecks_login_after_required_window_capture_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch(
@@ -4915,13 +4943,50 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
 
         attempt_mock.assert_called_once()
-        settle_mock.assert_called_once_with(target_host="teams.microsoft.com", timeout=5.0)
+        settle_mock.assert_called_once_with(target_host="teams.microsoft.com", timeout=3.0)
         self.assertEqual(result["status"], "login_gate_visible")
         self.assertEqual(result["attempts"], 1)
         self.assertFalse(result["used"])
         self.assertTrue(result["browser_open_login_gate"])
         self.assertEqual(result["browser_open_active_title"], "Sign in to your account")
         self.assertIn("sign-in gate", result["visible_reply_preview"])
+
+    def test_voice_loop_qa_post_capture_settle_retries_until_login_redirect(self):
+        states = iter([
+            {
+                "browser_open_attempted": True,
+                "browser_open_settle_check": True,
+                "browser_open_returncode": 0,
+                "browser_open_active_url": "https://teams.microsoft.com/v2/",
+                "browser_open_active_title": "Microsoft Teams",
+                "browser_open_verification_url": "https://teams.microsoft.com/v2/",
+                "browser_open_verification_source": "active_url",
+                "browser_open_target_host_verified": True,
+                "browser_open_login_gate": False,
+            },
+            {
+                "browser_open_attempted": True,
+                "browser_open_settle_check": True,
+                "browser_open_returncode": 0,
+                "browser_open_active_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+                "browser_open_active_title": "Sign in to your account",
+                "browser_open_verification_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+                "browser_open_verification_source": "active_url",
+                "browser_open_target_host_verified": False,
+                "browser_open_login_gate": True,
+            },
+        ])
+        with patch("scripts.voice_loop_qa.read_chrome_front_tab_state", side_effect=lambda **_kwargs: next(states)) as read_mock, \
+             patch("scripts.voice_loop_qa.time.sleep") as sleep_mock:
+            result = voice_loop_qa.settle_chrome_front_tab_after_capture_failure(
+                target_host="teams.microsoft.com",
+                timeout=5.0,
+            )
+
+        self.assertTrue(result["browser_open_login_gate"])
+        self.assertEqual(result["browser_open_post_capture_settle_attempts"], 2)
+        self.assertEqual(read_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(1.25)
 
     def test_voice_loop_qa_visible_screen_followup_opens_browser_only_after_initial_page_read_is_not_useful(self):
         with tempfile.TemporaryDirectory() as temp_dir, \

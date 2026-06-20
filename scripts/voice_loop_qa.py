@@ -2083,9 +2083,12 @@ def run_native_visible_screen_follow_up(
         if (
             str(attempt_result.get("capture_status") or "") == "failed"
             and str(attempt_result.get("response_status") or "") == "native_capture_failed"
-            and browser_open.get("browser_open_target_host_verified")
+            and (
+                browser_open.get("browser_open_target_host_verified")
+                or browser_open.get("browser_open_verification_source") == "active_title_url"
+            )
         ):
-            browser_after_capture = read_chrome_front_tab_state(
+            browser_after_capture = settle_chrome_front_tab_after_capture_failure(
                 target_host=(urlparse(str(browser_open.get("browser_url") or "")).hostname or "").lower(),
                 timeout=timeout,
             )
@@ -3069,6 +3072,22 @@ return frontTitle & linefeed & frontURL
             "browser_open_login_gate": login_gate,
             "browser_open_target_host_verified": bool(completed.returncode == 0 and target_host_verified),
         }
+    except subprocess.TimeoutExpired as error:
+        front_tab = read_chrome_front_tab_state(target_host=target_host, timeout=min(timeout, 3.0))
+        if front_tab.get("browser_open_attempted"):
+            return {
+                **front_tab,
+                "browser_open_attempted": True,
+                "browser_url": url,
+                "browser_open_method": "chrome_existing_session",
+                "browser_open_error": f"TimeoutExpired: {error}",
+                "browser_open_recovered_from_timeout": True,
+            }
+        return {
+            "browser_open_attempted": True,
+            "browser_url": url,
+            "browser_open_error": f"TimeoutExpired: {error}",
+        }
     except Exception as error:
         return {
             "browser_open_attempted": True,
@@ -3127,6 +3146,23 @@ return frontTitle & linefeed & frontURL
             "browser_open_settle_check": True,
             "browser_open_error": f"{type(error).__name__}: {error}",
         }
+
+
+def settle_chrome_front_tab_after_capture_failure(*, target_host: str, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + min(10.0, max(1.0, timeout))
+    latest: dict[str, Any] = {}
+    attempt = 0
+    while True:
+        attempt += 1
+        latest = read_chrome_front_tab_state(target_host=target_host, timeout=min(timeout, 3.0))
+        latest["browser_open_post_capture_settle_attempts"] = attempt
+        if latest.get("browser_open_login_gate"):
+            return latest
+        if latest.get("browser_open_target_host_verified") is False and latest.get("browser_open_verification_source") != "active_title_url":
+            return latest
+        if time.monotonic() >= deadline or attempt >= 8:
+            return latest
+        time.sleep(1.25)
 
 
 def escape_applescript_string(value: str) -> str:
