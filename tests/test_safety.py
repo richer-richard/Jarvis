@@ -3118,6 +3118,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["status"], "clicked")
         script = run_mock.call_args.args[0][-1]
         self.assertIn('tell application "Google Chrome" to activate', script)
+        self.assertIn('tell process "Google Chrome"', script)
         self.assertIn("click at {68.0, 577.0}", script)
 
     def test_voice_loop_qa_execute_visible_navigation_reports_timeout(self):

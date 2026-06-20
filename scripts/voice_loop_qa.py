@@ -2464,7 +2464,9 @@ def execute_visible_navigation_plan(
 tell application "{escape_applescript_string(target_app_name)}" to activate
 delay 0.2
 tell application "System Events"
-  click at {{{round(x, 2)}, {round(y, 2)}}}
+  tell process "{escape_applescript_string(target_app_name)}"
+    click at {{{round(x, 2)}, {round(y, 2)}}}
+  end tell
 end tell
 '''
     click_timeout = max(3.0, min(timeout, 10.0))
