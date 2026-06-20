@@ -2909,7 +2909,7 @@ tell application "Google Chrome"
     end if
     set frontURL to ""
     set frontTitle to ""
-    repeat 10 times
+    repeat 25 times
         delay 0.2
         try
             set frontURL to URL of active tab of front window
@@ -2935,9 +2935,10 @@ return frontTitle & linefeed & frontURL
         title, active_url = parse_chrome_front_tab_output(stdout)
         verification_url, verification_source = chrome_front_tab_verification_url(title, active_url)
         active_host = (urlparse(verification_url).hostname or "").lower()
-        target_host_verified = active_host == target_host or (
-            target_host in {"teams.microsoft.com", "teams.cloud.microsoft"}
-            and active_host in {"teams.microsoft.com", "teams.cloud.microsoft"}
+        target_host_verified = chrome_front_tab_host_verified(
+            target_host=target_host,
+            active_host=active_host,
+            verification_source=verification_source,
         )
         return {
             "browser_open_attempted": True,
@@ -2979,6 +2980,15 @@ def chrome_front_tab_verification_url(title: str, active_url: str) -> tuple[str,
     if re.match(r"^https?://", title_text, flags=re.IGNORECASE):
         return title_text, "active_title_url"
     return "", ""
+
+
+def chrome_front_tab_host_verified(*, target_host: str, active_host: str, verification_source: str) -> bool:
+    target = str(target_host or "").lower()
+    active = str(active_host or "").lower()
+    source = str(verification_source or "")
+    if target in {"teams.microsoft.com", "teams.cloud.microsoft"}:
+        return source == "active_url" and active in {"teams.microsoft.com", "teams.cloud.microsoft"}
+    return bool(active and (active == target))
 
 
 def browser_page_follow_up_response_looks_useful(response: dict[str, Any], *, command_text: str = "") -> bool:

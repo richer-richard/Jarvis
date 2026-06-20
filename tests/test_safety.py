@@ -1032,6 +1032,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(proof["browser_open_active_url"], "")
         self.assertEqual(proof["browser_open_verification_url"], "https://teams.microsoft.com/v2/?clientexperience=t3")
         self.assertEqual(proof["browser_open_verification_source"], "active_title_url")
+        self.assertFalse(proof["browser_focus_not_verified"])
 
     def test_full_loop_teams_honesty_preserves_visible_navigation_execution(self):
         execution = {
@@ -4635,6 +4636,36 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(verification_url, "https://teams.microsoft.com/v2/?clientexperience=t3")
         self.assertEqual(source, "active_title_url")
+        self.assertFalse(
+            voice_loop_qa.chrome_front_tab_host_verified(
+                target_host="teams.microsoft.com",
+                active_host="teams.microsoft.com",
+                verification_source=source,
+            )
+        )
+        self.assertTrue(
+            voice_loop_qa.chrome_front_tab_host_verified(
+                target_host="example.com",
+                active_host="example.com",
+                verification_source=source,
+            )
+        )
+
+    def test_voice_loop_qa_chrome_front_tab_verification_accepts_teams_active_url_only(self):
+        self.assertTrue(
+            voice_loop_qa.chrome_front_tab_host_verified(
+                target_host="teams.microsoft.com",
+                active_host="teams.cloud.microsoft",
+                verification_source="active_url",
+            )
+        )
+        self.assertFalse(
+            voice_loop_qa.chrome_front_tab_host_verified(
+                target_host="teams.microsoft.com",
+                active_host="teams.cloud.microsoft",
+                verification_source="active_title_url",
+            )
+        )
 
     def test_voice_loop_qa_similarity_normalizes_sharpay_email_stt_noise(self):
         expected = (
@@ -18161,9 +18192,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('["/usr/bin/osascript", "-e", applescript]', script_source)
         self.assertIn('"browser_open_method": "chrome_existing_session"', script_source)
         self.assertIn("if tabURL is targetURL then", script_source)
-        self.assertIn("repeat 10 times", script_source)
+        self.assertIn("repeat 25 times", script_source)
         self.assertIn('if frontURL is not "" then', script_source)
         self.assertIn("chrome_front_tab_verification_url(title, active_url)", script_source)
+        self.assertIn("chrome_front_tab_host_verified(", script_source)
+        self.assertIn('source == "active_url" and active in {"teams.microsoft.com", "teams.cloud.microsoft"}', script_source)
         self.assertIn('"browser_open_verification_source": verification_source', script_source)
         self.assertIn('return title_text, "active_title_url"', script_source)
         self.assertNotIn('tabURL contains "teams.cloud.microsoft"', script_source)
