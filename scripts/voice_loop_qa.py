@@ -2080,6 +2080,32 @@ def run_native_visible_screen_follow_up(
             preferred_window_title_contains=str(browser_open.get("browser_open_active_title") or ""),
             attempt=attempt,
         )
+        if (
+            str(attempt_result.get("capture_status") or "") == "failed"
+            and str(attempt_result.get("response_status") or "") == "native_capture_failed"
+            and browser_open.get("browser_open_target_host_verified")
+        ):
+            browser_after_capture = read_chrome_front_tab_state(
+                target_host=(urlparse(str(browser_open.get("browser_url") or "")).hostname or "").lower(),
+                timeout=timeout,
+            )
+            if browser_after_capture.get("browser_open_attempted"):
+                browser_open.update(browser_after_capture)
+                result.update(browser_after_capture)
+            if browser_open.get("browser_open_login_gate"):
+                return {
+                    **result,
+                    **attempt_result,
+                    "status": "login_gate_visible",
+                    "used": False,
+                    "attempts": attempt,
+                    "browser_open_login_gate": True,
+                    "visible_reply_preview": (
+                        "Teams opened in Chrome, but Microsoft is showing a sign-in gate. "
+                        "I have not inspected the newest Music assignment yet."
+                    ),
+                    "duration_seconds": round(time.monotonic() - started, 3),
+                }
         if visible_screen_attempt_mismatches_expected_teams(
             command_text=command_text,
             browser_open=browser_open,

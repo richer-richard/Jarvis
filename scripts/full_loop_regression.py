@@ -1218,7 +1218,7 @@ def run_teams_assignment_case(
             if action_proof.get("chrome_page_read_blocked"):
                 warnings.append("Chrome page-read was blocked before the visible-screen fallback.")
             if action_proof.get("browser_focus_not_verified"):
-                warnings.append("Chrome did not foreground the Teams tab before visible-screen OCR.")
+                warnings.append(teams_focus_warning(action_proof))
             if action_proof.get("requested_class_target_found"):
                 warnings.append("Visible requested-class navigation target was found for the next safe navigation step.")
             if action_proof.get("all_teams_target_found"):
@@ -1254,6 +1254,17 @@ def run_teams_assignment_case(
         cleanup.update(clean_new_chrome_tabs(before_tabs, after_tabs, hosts=("teams.microsoft.com", "teams.cloud.microsoft")))
         write_json(run_dir / "chrome-tabs-after.json", {"tabs": after_tabs})
         write_json(run_dir / "cleanup.json", cleanup)
+
+
+def teams_focus_warning(action_proof: dict[str, Any]) -> str:
+    capture_status = str(action_proof.get("capture_status") or "").strip()
+    capture_response_status = str(action_proof.get("capture_response_status") or "").strip()
+    capture_window_title = str(action_proof.get("capture_window_title") or "").strip()
+    if capture_status == "failed" or capture_response_status == "native_capture_failed":
+        return "Expected Teams window was not capturable before visible-screen OCR."
+    if capture_window_title:
+        return f"OCR captured a different Chrome window before Teams inspection: {capture_window_title}."
+    return "Chrome did not foreground the Teams tab before visible-screen OCR."
 
 
 def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, Any]:
