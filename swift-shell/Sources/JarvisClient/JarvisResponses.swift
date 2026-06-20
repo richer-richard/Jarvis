@@ -4,6 +4,7 @@ public struct CommandResponse: Decodable, Sendable {
     public let command: String?
     public let tool: String?
     public let summary: String?
+    public let reply: String?
     public let result: JSONValue?
     public let executed: Bool?
     public let confirmation: Confirmation?

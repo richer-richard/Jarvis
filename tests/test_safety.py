@@ -6736,7 +6736,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
-        self.assertIn("0.1.489", shipped)
+        self.assertIn("0.1.490", shipped)
+        self.assertIn("tool-backed diagnostics expose the same human answer", shipped)
         self.assertIn("summon popout", shipped)
         self.assertIn("grouped system Liquid Glass", shipped)
         self.assertIn("0.1.488", shipped)
@@ -14118,6 +14119,29 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("stop-speaking interruption", result.result["reply"])
         self.assertIn("did not read email", result.result["reply"])
 
+    def test_capability_status_command_promotes_tool_reply(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            result = server.command("capabilities status", suppress_speech=True)
+
+        self.assertEqual(result["tool"], "diagnostics.capabilities")
+        self.assertEqual(result["reply"], result["result"]["reply"])
+        self.assertIn("Capability status:", result["reply"])
+        self.assertNotEqual(result["reply"], result["summary"])
+
+    def test_streamed_capability_status_final_promotes_tool_reply(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            events = list(server.stream_command("capabilities status", suppress_speech=True))
+
+        final = events[-1]["data"]
+        self.assertEqual(final["tool"], "diagnostics.capabilities")
+        self.assertEqual(final["reply"], final["result"]["reply"])
+        self.assertIn("Capability status", final["speech"]["spoken_text"])
+        self.assertIn("working", final["speech"]["spoken_text"])
+
     def test_safety_status_is_no_content_diagnostic(self):
         result = Planner().handle("what requires confirmation")
 
@@ -15564,8 +15588,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.489}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-489}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.490}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-490}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
@@ -25763,6 +25787,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("build", speak_mock.call_args.args[0])
         self.assertNotIn("Fast model", speak_mock.call_args.args[0])
         self.assertNotIn("Codex jobs", speak_mock.call_args.args[0])
+        speak_mock.assert_called_once()
 
     def test_command_can_suppress_final_speech_per_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:

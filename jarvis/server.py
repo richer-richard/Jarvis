@@ -1198,6 +1198,25 @@ def _speech_text_from_result(result: dict[str, Any]) -> str:
     return ""
 
 
+def _visible_reply_from_result(result: dict[str, Any]) -> str:
+    for key in ("reply", "email_summary", "spoken_summary"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            sanitized = _sanitize_user_visible_text(value)
+            if sanitized:
+                return sanitized
+    return ""
+
+
+def _promote_result_reply(data: dict[str, Any]) -> None:
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return
+    reply = _visible_reply_from_result(result)
+    if reply:
+        data["reply"] = reply
+
+
 def _sanitize_user_visible_result_fields(data: dict[str, Any]) -> None:
     if _has_raw_speech_candidate(data):
         data["_had_raw_speech_candidate_before_sanitize"] = True
@@ -1211,6 +1230,7 @@ def _sanitize_user_visible_result_fields(data: dict[str, Any]) -> None:
         value = result.get(key)
         if isinstance(value, str) and value.strip():
             result[key] = _sanitize_user_visible_text(value)
+    _promote_result_reply(data)
 
 
 class RequestHandler(BaseHTTPRequestHandler):

@@ -2424,6 +2424,10 @@ final class JarvisShellModel: ObservableObject {
             return reply
         }
 
+        if let reply = response.reply?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
+            return reply
+        }
+
         switch response.tool {
         case "system.status":
             return "I checked the local worker. Jarvis is online and the status details are available below."
