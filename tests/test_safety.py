@@ -1336,6 +1336,29 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(len(result["warmup"]["attempts"]), cleanup_chrome_test_tabs.CHROME_CLEANUP_WARMUP_ATTEMPTS)
         self.assertEqual(result["attempts"], [])
 
+    def test_cleanup_chrome_test_tabs_warmup_uses_applescript_not_jxa(self):
+        warmup_completed = subprocess.CompletedProcess(
+            args=["osascript"],
+            returncode=0,
+            stdout="1\n",
+            stderr="",
+        )
+        cleanup_completed = subprocess.CompletedProcess(
+            args=["osascript"],
+            returncode=0,
+            stdout="[]",
+            stderr="",
+        )
+        with patch(
+            "scripts.cleanup_chrome_test_tabs.subprocess.run",
+            side_effect=[warmup_completed, cleanup_completed],
+        ) as run_mock:
+            result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=True)
+
+        self.assertTrue(result["ok"])
+        warmup_command = run_mock.call_args_list[0].args[0]
+        self.assertEqual(warmup_command, ["osascript", "-e", 'tell application "Google Chrome" to count windows'])
+
     def test_cleanup_chrome_test_tabs_retries_warmup_after_timeout(self):
         warmup_completed = subprocess.CompletedProcess(
             args=["osascript"],

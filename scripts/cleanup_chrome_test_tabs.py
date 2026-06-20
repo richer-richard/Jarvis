@@ -29,14 +29,14 @@ CHROME_CLEANUP_WARMUP_RETRY_DELAY_SECONDS = 1.0
 
 
 def _chrome_warmup() -> dict[str, Any]:
-    script = 'Application("Google Chrome").windows.length'
+    script = 'tell application "Google Chrome" to count windows'
     attempts: list[dict[str, Any]] = []
     for attempt in range(1, CHROME_CLEANUP_WARMUP_ATTEMPTS + 1):
         if attempt > 1:
             time.sleep(CHROME_CLEANUP_WARMUP_RETRY_DELAY_SECONDS)
         try:
             completed = subprocess.run(
-                ["osascript", "-l", "JavaScript", "-e", script],
+                ["osascript", "-e", script],
                 check=False,
                 capture_output=True,
                 text=True,
