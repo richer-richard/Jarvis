@@ -27621,6 +27621,17 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("active: Teams and Channels", blocker)
         self.assertNotIn("OCR captured a different Chrome window", blocker)
 
+    def test_native_visible_screen_probe_attempts_screencapturekit_before_cg_fallback(self):
+        source = (PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMacNative" / "JarvisNativeOutlookReader.swift").read_text(encoding="utf-8")
+
+        self.assertIn("import ScreenCaptureKit", source)
+        self.assertLess(
+            source.index("captureVisibleWindowWithScreenCaptureKit("),
+            source.index("captureVisibleWindow("),
+        )
+        self.assertIn('captureMethod: "screencapturekit_window"', source)
+        self.assertIn('captureMethod: "chrome_applescript_display_crop"', source)
+
     def test_morning_status_latest_teams_live_navigation_diagnostic(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

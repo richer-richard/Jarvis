@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import JarvisClient
+import ScreenCaptureKit
 import Vision
 
 public struct NativeOutlookOCRResult: Sendable {
@@ -120,7 +121,10 @@ public enum JarvisNativeOutlookReader {
         }
 
         let ownerNames = cleanTargetName?.isEmpty == false ? Set([cleanTargetName!]) : nil
-        let initialWindowCapture = captureVisibleWindow(
+        let initialWindowCapture = await captureVisibleWindowWithScreenCaptureKit(
+            ownerNames: ownerNames,
+            preferredWindowTitleContains: cleanPreferredWindowTitle?.isEmpty == false ? cleanPreferredWindowTitle : nil
+        ) ?? captureVisibleWindow(
             ownerNames: ownerNames,
             preferredWindowTitleContains: cleanPreferredWindowTitle?.isEmpty == false ? cleanPreferredWindowTitle : nil
         )
@@ -331,6 +335,72 @@ public enum JarvisNativeOutlookReader {
             windowTitle: selected.windowTitle,
             captureMethod: "cg_screen_bounds_fallback"
         )
+    }
+
+    private static func captureVisibleWindowWithScreenCaptureKit(
+        ownerNames: Set<String>? = nil,
+        preferredWindowTitleContains: String? = nil
+    ) async -> NativeWindowCapture? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: false
+            )
+            let preferredTitle = preferredWindowTitleContains?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidates = content.windows.filter { window in
+                let ownerName = window.owningApplication?.applicationName ?? ""
+                if let ownerNames {
+                    guard ownerNames.contains(ownerName) else {
+                        return false
+                    }
+                } else if ownerName.localizedCaseInsensitiveContains("Jarvis") {
+                    return false
+                }
+                guard window.windowLayer == 0 else {
+                    return false
+                }
+                guard window.frame.width >= 240, window.frame.height >= 180 else {
+                    return false
+                }
+                return true
+            }
+
+            let selected: SCWindow?
+            if let preferredTitle, !preferredTitle.isEmpty,
+               let matchingCandidate = candidates.first(where: { candidate in
+                   (candidate.title ?? "").localizedCaseInsensitiveContains(preferredTitle)
+               }) {
+                selected = matchingCandidate
+            } else if preferredTitle?.isEmpty == false {
+                selected = candidates.first
+            } else {
+                selected = candidates.first
+            }
+            guard let selected else {
+                return nil
+            }
+
+            let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+            let configuration = SCStreamConfiguration()
+            configuration.width = max(1, Int(selected.frame.width * scale))
+            configuration.height = max(1, Int(selected.frame.height * scale))
+            configuration.showsCursor = false
+            configuration.capturesAudio = false
+            let filter = SCContentFilter(desktopIndependentWindow: selected)
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            )
+            return NativeWindowCapture(
+                image: image,
+                bounds: selected.frame,
+                ownerName: selected.owningApplication?.applicationName ?? "",
+                windowTitle: selected.title ?? "",
+                captureMethod: "screencapturekit_window"
+            )
+        } catch {
+            return nil
+        }
     }
 
     private static func captureChromeFrontWindowViaAppleScript() -> NativeWindowCapture? {
