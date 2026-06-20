@@ -492,6 +492,15 @@ def run_music_waving_case(
                     warnings = []
                     result["warnings"] = warnings
                 warnings.append("Music cleanup left a new media playback surface running.")
+            blocked_surfaces = after_media_surfaces.get("blocked")
+            if isinstance(blocked_surfaces, list) and "Google Chrome" in blocked_surfaces:
+                if result.get("status") == "passed":
+                    result["status"] = "warning"
+                warnings = result.get("warnings")
+                if not isinstance(warnings, list):
+                    warnings = []
+                    result["warnings"] = warnings
+                warnings.append("Chrome media-surface inspection was blocked, so this proof could not rule out hidden Chrome audio.")
         write_json(run_dir / "cleanup.json", cleanup)
 
 
