@@ -4783,6 +4783,12 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(result["used"])
         self.assertIn("did not contain Teams content", result["visible_reply_preview"])
         self.assertEqual(result["browser_open_verification_source"], "active_title_url")
+        targets = result["visible_navigation_targets"]
+        self.assertEqual(targets["sequence"], [])
+        self.assertFalse(targets["teams_search"]["found"])
+        self.assertEqual(targets["teams_search"]["reason"], "browser_focus_not_verified")
+        self.assertFalse(targets["teams_search_plan"]["planned"])
+        self.assertEqual(targets["teams_search_plan"]["reason"], "browser_focus_not_verified")
 
     def test_voice_loop_qa_parse_chrome_front_tab_output(self):
         title, active_url = voice_loop_qa.parse_chrome_front_tab_output("Microsoft Teams\nhttps://teams.microsoft.com/v2/\n")

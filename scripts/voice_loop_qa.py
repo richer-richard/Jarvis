@@ -2064,6 +2064,7 @@ def run_native_visible_screen_follow_up(
                     "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
                     "I have not inspected the newest Music assignment yet."
                 ),
+                "visible_navigation_targets": wrong_surface_visible_navigation_targets(),
                 "response": None,
             }
             break
@@ -2154,6 +2155,7 @@ def run_native_visible_screen_follow_up(
                         "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
                         "I have not inspected the newest Music assignment yet."
                     ),
+                    "visible_navigation_targets": wrong_surface_visible_navigation_targets(),
                     "response": None,
                 }
             after_navigation["visible_navigation_execution"] = navigation_result
@@ -2172,6 +2174,22 @@ def run_native_visible_screen_follow_up(
         **merge_follow_up_failures(browser_page_follow_up, latest_failure),
         "attempts": max_attempts,
         "duration_seconds": round(time.monotonic() - started, 3),
+    }
+
+
+def wrong_surface_visible_navigation_targets() -> dict[str, Any]:
+    target = {"found": False, "reason": "browser_focus_not_verified"}
+    plan = {"planned": False, "reason": "browser_focus_not_verified", "will_click": False}
+    return {
+        "requested_class": dict(target),
+        "requested_class_plan": dict(plan),
+        "teams_search": dict(target),
+        "teams_search_plan": dict(plan),
+        "all_teams": dict(target),
+        "all_teams_plan": dict(plan),
+        "assignments": dict(target),
+        "assignments_plan": dict(plan),
+        "sequence": [],
     }
 
 
