@@ -2133,6 +2133,14 @@ def run_native_visible_screen_follow_up(
             browser_open=browser_open,
             attempt_result=attempt_result,
         ):
+            visible_reply = (
+                native_capture_failed_teams_reply()
+                if visible_screen_attempt_is_native_capture_failed(attempt_result)
+                else (
+                    "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
+                    "I have not inspected the newest Music assignment yet."
+                )
+            )
             latest_failure = {
                 **attempt_result,
                 "used": False,
@@ -2142,10 +2150,7 @@ def run_native_visible_screen_follow_up(
                 "browser_open_active_url": browser_open.get("browser_open_active_url"),
                 "browser_open_verification_url": browser_open.get("browser_open_verification_url"),
                 "browser_open_verification_source": browser_open.get("browser_open_verification_source"),
-                "visible_reply_preview": (
-                    "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
-                    "I have not inspected the newest Music assignment yet."
-                ),
+                "visible_reply_preview": visible_reply,
                 "visible_navigation_targets": wrong_surface_visible_navigation_targets(),
                 "response": None,
             }
@@ -2225,6 +2230,14 @@ def run_native_visible_screen_follow_up(
                 browser_open=browser_open,
                 attempt_result=after_navigation,
             ):
+                visible_reply = (
+                    native_capture_failed_teams_reply()
+                    if visible_screen_attempt_is_native_capture_failed(after_navigation)
+                    else (
+                        "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
+                        "I have not inspected the newest Music assignment yet."
+                    )
+                )
                 after_navigation = {
                     **after_navigation,
                     "used": False,
@@ -2234,10 +2247,7 @@ def run_native_visible_screen_follow_up(
                     "browser_open_active_url": browser_open.get("browser_open_active_url"),
                     "browser_open_verification_url": browser_open.get("browser_open_verification_url"),
                     "browser_open_verification_source": browser_open.get("browser_open_verification_source"),
-                    "visible_reply_preview": (
-                        "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
-                        "I have not inspected the newest Music assignment yet."
-                    ),
+                    "visible_reply_preview": visible_reply,
                     "visible_navigation_targets": wrong_surface_visible_navigation_targets(),
                     "response": None,
                 }
@@ -2258,6 +2268,20 @@ def run_native_visible_screen_follow_up(
         "attempts": max_attempts,
         "duration_seconds": round(time.monotonic() - started, 3),
     }
+
+
+def visible_screen_attempt_is_native_capture_failed(attempt_result: dict[str, Any]) -> bool:
+    return (
+        str(attempt_result.get("capture_status") or "") == "failed"
+        or str(attempt_result.get("response_status") or "") == "native_capture_failed"
+    )
+
+
+def native_capture_failed_teams_reply() -> str:
+    return (
+        "Teams is open in Chrome, but Jarvis could not capture the Teams window for OCR yet. "
+        "I have not inspected the newest Music assignment yet."
+    )
 
 
 def wrong_surface_visible_navigation_targets() -> dict[str, Any]:

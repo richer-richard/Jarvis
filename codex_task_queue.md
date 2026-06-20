@@ -44,9 +44,11 @@
 - [x] Start the official Jarvis macOS UI upgrade: redesign the main app toward native SwiftUI/macOS Liquid Glass patterns, show every user-visible Jarvis utterance and every meaningful Jarvis action/tool step, and remove the ugly rectangular gradient/color block behind the summon popout.
 - [ ] Prototype Apple Speech/Dictation as Jarvis's primary STT lane: use macOS Speech framework if possible, compare transcript quality/latency against the current local STT on the same recorded prompts, and keep local STT as fallback until Apple dictation is live-proven.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
+- [x] Clarify Teams native-capture-failure wording so Jarvis says it could not capture the Teams window, rather than implying OCR read a non-Teams page.
 
 ## Completed This Turn
 
+- [x] Clarified Teams native-capture-failure wording in the live proof path: focused tests passed, full `tests.test_safety` passed `1074/1074`, and live Teams proof `runtime/full_loop_regression/20260621-012741/summary.json` now says Jarvis could not capture the Teams window for OCR instead of claiming OCR did not contain Teams content.
 - [x] Added top-level `passed`, `total`, and `source_commit` fields to safe-verification reports. Focused verifier tests passed, full `tests.test_safety` passed `1073/1073`, and live `runtime/verification/latest.json` now shows `source_commit: 64ab4a8`, `106/106`, and `ok: true`.
 - [x] Made `scripts/verify_safe.py` publish `runtime/verification/latest.json` beside timestamped verifier reports. Focused verifier tests passed, full `tests.test_safety` passed `1073/1073`, and a live verifier run passed `106/106` with `runtime/verification/latest.json` now present.
 - [x] Shipped Jarvis `0.1.483` Teams browser-fallback honesty: if Teams OCR only sees Chrome/Teams shell text with no assignment context, Jarvis now returns `teams_page_text_unavailable` instead of summarizing tab-strip junk. Focused browser tests passed, full `tests.test_safety` passed `1072/1072`, live Jarvis `0.1.483` launched, and Teams-only proof `runtime/full_loop_regression/20260621-005113/summary.json` now says `Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.`

@@ -5146,6 +5146,71 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("did not foreground Teams", result["visible_reply_preview"])
         self.assertNotIn("Teams is open in Chrome", result["visible_reply_preview"])
 
+    def test_voice_loop_qa_visible_screen_followup_names_native_capture_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 return_value={
+                     "used": False,
+                     "status": "response_not_useful",
+                     "tool": "browser.read_page",
+                     "response_status": "no_page_text",
+                     "visible_reply_preview": "I need a visible page before I can summarize it.",
+                 },
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.open_visible_screen_follow_up_url",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_url": "https://teams.microsoft.com/v2/",
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "https://teams.microsoft.com/v2/",
+                     "browser_open_active_title": "Microsoft Teams",
+                     "browser_open_verification_url": "https://teams.microsoft.com/v2/",
+                     "browser_open_verification_source": "active_url",
+                     "browser_open_target_host_verified": True,
+                     "browser_open_login_gate": False,
+                 },
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt",
+                 return_value={
+                     "used": False,
+                     "status": "response_not_useful",
+                     "tool": "screen.visible_text",
+                     "capture_status": "failed",
+                     "response_status": "native_capture_failed",
+                     "capture_window_title": "Codex",
+                     "captured_text_chars": 0,
+                     "visible_reply_preview": "I cannot read the Teams window yet.",
+                 },
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.read_chrome_front_tab_state",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_open_settle_check": True,
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "https://teams.microsoft.com/v2/",
+                     "browser_open_active_title": "Microsoft Teams",
+                     "browser_open_verification_url": "https://teams.microsoft.com/v2/",
+                     "browser_open_verification_source": "active_url",
+                     "browser_open_target_host_verified": True,
+                     "browser_open_login_gate": False,
+                 },
+             ):
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+            )
+
+        self.assertEqual(result["status"], "browser_focus_not_verified")
+        self.assertIn("could not capture the Teams window", result["visible_reply_preview"])
+        self.assertNotIn("OCR did not contain Teams content", result["visible_reply_preview"])
+
     def test_voice_loop_qa_post_capture_settle_retries_until_login_redirect(self):
         states = iter([
             {
