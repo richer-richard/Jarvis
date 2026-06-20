@@ -2077,7 +2077,7 @@ def run_native_visible_screen_follow_up(
             timeout=timeout,
             target_app_name=target["target_app_name"],
             target_bundle_identifier=target["target_bundle_identifier"],
-            preferred_window_title_contains=str(browser_open.get("browser_open_active_title") or ""),
+            preferred_window_title_contains=native_visible_screen_preferred_window_title(browser_open),
             attempt=attempt,
         )
         if (
@@ -2198,7 +2198,7 @@ def run_native_visible_screen_follow_up(
                 timeout=timeout,
                 target_app_name=target["target_app_name"],
                 target_bundle_identifier=target["target_bundle_identifier"],
-                preferred_window_title_contains=str(browser_open.get("browser_open_active_title") or ""),
+                preferred_window_title_contains=native_visible_screen_preferred_window_title(browser_open),
                 attempt=max_attempts + navigation_attempt,
             )
             if visible_screen_attempt_mismatches_expected_teams(
@@ -2522,6 +2522,18 @@ def visible_screen_attempt_mismatches_expected_teams(
     if any(marker in reply_text for marker in teams_reply_markers):
         return False
     return any(marker in attempt_text for marker in wrong_surface_markers) or len(attempt_text) >= 80
+
+
+def native_visible_screen_preferred_window_title(browser_open: dict[str, Any]) -> str:
+    """Return a real Chrome title hint and ignore URL-shaped loading titles."""
+    title = str(browser_open.get("browser_open_active_title") or "").strip()
+    if not title:
+        return ""
+    if re.match(r"^https?://", title, flags=re.IGNORECASE):
+        return ""
+    if str(browser_open.get("browser_open_verification_source") or "") == "active_title_url":
+        return ""
+    return title
 
 
 def select_ocr_line_target(

@@ -3031,6 +3031,26 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("--preferred-window-title-contains", command)
         self.assertIn("Microsoft Teams", command)
 
+    def test_voice_loop_qa_omits_url_shaped_preferred_window_title(self):
+        self.assertEqual(
+            voice_loop_qa.native_visible_screen_preferred_window_title(
+                {
+                    "browser_open_active_title": "https://teams.microsoft.com/v2/?clientexperience=t3",
+                    "browser_open_verification_source": "active_title_url",
+                }
+            ),
+            "",
+        )
+        self.assertEqual(
+            voice_loop_qa.native_visible_screen_preferred_window_title(
+                {
+                    "browser_open_active_title": "Microsoft Teams",
+                    "browser_open_verification_source": "active_url",
+                }
+            ),
+            "Microsoft Teams",
+        )
+
     def test_voice_loop_qa_allocates_unique_parallel_report_dirs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -5149,6 +5169,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
 
         self.assertEqual(attempt_mock.call_count, 1)
+        self.assertEqual(attempt_mock.call_args.kwargs["preferred_window_title_contains"], "")
         self.assertEqual(result["status"], "browser_focus_not_verified")
         self.assertTrue(result["browser_focus_mismatch"])
         self.assertFalse(result["used"])
