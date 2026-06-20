@@ -1323,6 +1323,21 @@ def teams_focus_warning(action_proof: dict[str, Any]) -> str:
     return "Chrome did not foreground the Teams tab before visible-screen OCR."
 
 
+def join_unique_reply_fragments(*fragments: str) -> str:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for fragment in fragments:
+        text = str(fragment or "").strip()
+        if not text:
+            continue
+        normalized = " ".join(text.casefold().split())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(text)
+    return " ".join(unique).strip()
+
+
 def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, Any]:
     result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
     visible_reply = str(result.get("visible_reply_preview") or "")
@@ -1384,7 +1399,7 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         if isinstance(navigation_targets.get("sequence"), list)
         else []
     )
-    combined_reply = " ".join(part for part in [visible_reply, follow_up_reply] if part).strip()
+    combined_reply = join_unique_reply_fragments(visible_reply, follow_up_reply)
     lower_reply = combined_reply.casefold()
     failures: list[str] = []
     inspected_music = (

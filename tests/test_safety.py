@@ -819,6 +819,26 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["passed"])
         self.assertIn("Teams proof regressed to a generic Chrome/YouTube visible-screen summary.", proof["failures"])
 
+    def test_full_loop_teams_honesty_dedupes_same_login_gate_reply(self):
+        reply = (
+            "Teams is still behind a password or sign-in gate in Chrome, "
+            "so I have not reached the assignment page yet."
+        )
+
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": reply,
+                "visible_screen_follow_up": {
+                    "status": "login_gate_visible",
+                    "tool": "browser.read_page",
+                    "visible_reply_preview": reply,
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertEqual(proof["visible_reply_preview"], reply)
+
     def test_full_loop_teams_honesty_accepts_visible_screen_subject_mismatch(self):
         proof = full_loop_regression.verify_teams_assignment_honesty({
             "result": {
