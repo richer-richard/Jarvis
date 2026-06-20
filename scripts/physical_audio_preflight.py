@@ -5,7 +5,15 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = PROJECT_ROOT / "runtime" / "physical_audio_preflight"
+BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 LOOPBACK_NAME_MARKERS = (
@@ -88,6 +96,18 @@ def physical_audio_preflight() -> dict[str, Any]:
     }
 
 
+def write_latest_physical_audio_preflight(result: dict[str, Any], *, output_dir: Path = OUTPUT_DIR) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        **result,
+        "generated_at": datetime.now(BEIJING).isoformat(timespec="seconds"),
+        "artifact_kind": "physical_audio_preflight",
+    }
+    latest_path = output_dir / "latest.json"
+    latest_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    return latest_path
+
+
 def audio_devices_from_system_profiler(payload: dict[str, Any]) -> list[dict[str, Any]]:
     devices: list[dict[str, Any]] = []
     groups = payload.get("SPAudioDataType")
@@ -139,6 +159,8 @@ def is_virtual_duplex_candidate(device: dict[str, Any]) -> bool:
 
 def main() -> int:
     result = physical_audio_preflight()
+    latest_path = write_latest_physical_audio_preflight(result)
+    result = {**result, "latest_path": str(latest_path)}
     print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
     return 0 if result.get("ok") else 1
 

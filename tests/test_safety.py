@@ -28104,6 +28104,34 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["output_device_count"], 2)
         self.assertEqual(result["virtual_duplex_devices"][0]["name"], "Microsoft Teams Audio")
 
+    def test_physical_audio_preflight_writes_stable_latest_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            latest_path = physical_audio_preflight.write_latest_physical_audio_preflight(
+                {
+                    "ok": True,
+                    "status": "loopback_device_missing",
+                    "ready_for_physical_capture": False,
+                    "requests_microphone": False,
+                    "captures_audio": False,
+                },
+                output_dir=Path(tmpdir),
+            )
+
+            data = json.loads(latest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(latest_path.name, "latest.json")
+        self.assertEqual(data["artifact_kind"], "physical_audio_preflight")
+        self.assertEqual(data["status"], "loopback_device_missing")
+        self.assertFalse(data["requests_microphone"])
+        self.assertFalse(data["captures_audio"])
+        self.assertIn("generated_at", data)
+
+    def test_render_overnight_status_supporting_files_include_physical_audio_latest(self):
+        supporting = dict(render_overnight_status.SUPPORTING_FILES)
+
+        self.assertIn("runtime/physical_audio_preflight/latest.json", supporting)
+        self.assertIn("physical audio", supporting["runtime/physical_audio_preflight/latest.json"].lower())
+
     def test_morning_status_requirement_audit_summary(self):
         summary = requirement_audit_summary(
             [

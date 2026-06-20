@@ -588,6 +588,7 @@ SUPPORTING_FILES = [
     ("runtime/pre_build_gate/latest.json", "Latest pre-build proof gate summary"),
     ("runtime/pre_build_gate/latest.md", "Latest pre-build proof gate notes"),
     ("runtime/pre_build_gate/", "Pre-build proof gate artifacts"),
+    ("runtime/physical_audio_preflight/latest.json", "Latest read-only physical audio loopback preflight"),
     ("runtime/codex_cli_proxy_benchmarks/latest.json", "Latest Codex CLI proxy benchmark summary"),
     ("runtime/codex_cli_proxy_benchmarks/latest.md", "Latest Codex CLI proxy benchmark notes"),
     ("runtime/model_comparison/", "Cloud-first middle model comparison reports"),
