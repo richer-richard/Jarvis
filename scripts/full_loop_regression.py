@@ -1319,6 +1319,8 @@ def teams_focus_warning(action_proof: dict[str, Any]) -> str:
     if capture_status == "failed" or capture_response_status == "native_capture_failed":
         return "Expected Teams window was not capturable before visible-screen OCR."
     if capture_window_title:
+        if "teams" in capture_window_title.casefold() or "microsoft" in capture_window_title.casefold():
+            return "Visible-screen OCR captured a Teams-titled Chrome window, but the OCR text did not contain usable Teams assignment content."
         return f"OCR captured a different Chrome window before Teams inspection: {capture_window_title}."
     return "Chrome did not foreground the Teams tab before visible-screen OCR."
 

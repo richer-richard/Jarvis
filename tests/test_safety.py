@@ -1029,6 +1029,14 @@ class VerifySafeScriptTests(unittest.TestCase):
             full_loop_regression.teams_focus_warning({
                 "browser_focus_not_verified": True,
                 "capture_status": "captured",
+                "capture_window_title": "Teams and Channels | General | Microsoft Teams",
+            }),
+            "Visible-screen OCR captured a Teams-titled Chrome window, but the OCR text did not contain usable Teams assignment content.",
+        )
+        self.assertEqual(
+            full_loop_regression.teams_focus_warning({
+                "browser_focus_not_verified": True,
+                "capture_status": "captured",
                 "capture_window_title": "Music for macOS",
             }),
             "OCR captured a different Chrome window before Teams inspection: Music for macOS.",
