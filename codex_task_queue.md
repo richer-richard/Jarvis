@@ -49,6 +49,7 @@
 - [x] Let native visible-screen OCR fall back to main-display/Chrome-bounds capture when strict Chrome window-title capture fails, so Teams can still be read or fail closed after verified Chrome foregrounding.
 - [x] Make Teams follow-up failure merging prefer native screen-capture failures over generic Chrome page-read unavailable messages.
 - [x] Clarify Teams native-capture-failure wording so Jarvis says it could not capture the Teams window, rather than implying OCR read a non-Teams page.
+- [x] Fix full-loop regression report traceability so `runtime/full_loop_regression/latest.json` records the source commit like the other proof surfaces.
 
 ## Completed This Turn
 

@@ -234,21 +234,13 @@ def main() -> int:
     passed = sum(1 for result in results if result.get("status") == "passed")
     failed = sum(1 for result in results if result.get("status") == "failed")
     warnings = sum(1 for result in results if result.get("status") == "warning")
-    summary = {
-        "schema": "jarvis.full_loop_regression.v1",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "base_url": base_url,
-        "run_dir": str(run_dir),
-        "case_selection": args.case,
-        "canonical_latest": args.case == "all",
-        "status": "passed" if failed == 0 and warnings == 0 else "warning" if failed == 0 else "failed",
-        "passed": passed,
-        "warning": warnings,
-        "failed": failed,
-        "total": len(results),
-        "duration_seconds": round(time.monotonic() - suite_started, 3),
-        "results": results,
-    }
+    summary = make_suite_summary(
+        base_url=base_url,
+        run_dir=run_dir,
+        case_selection=args.case,
+        results=results,
+        started=suite_started,
+    )
     write_summary(summary, run_dir, Path(args.output_dir).resolve(), update_latest=bool(summary["canonical_latest"]))
     if not args.no_report_refresh:
         try:
@@ -264,6 +256,52 @@ def main() -> int:
     for result in results:
         print(f"{result['case_id']}: {result['status']} ({result.get('total_seconds')}s)")
     return 0 if summary["status"] == "passed" else 1
+
+
+def make_suite_summary(
+    *,
+    base_url: str,
+    run_dir: Path,
+    case_selection: str,
+    results: list[dict[str, Any]],
+    started: float,
+) -> dict[str, Any]:
+    passed = sum(1 for result in results if result.get("status") == "passed")
+    failed = sum(1 for result in results if result.get("status") == "failed")
+    warnings = sum(1 for result in results if result.get("status") == "warning")
+    return {
+        "schema": "jarvis.full_loop_regression.v1",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "source_commit": git_commit_short(),
+        "base_url": base_url,
+        "run_dir": str(run_dir),
+        "case_selection": case_selection,
+        "canonical_latest": case_selection == "all",
+        "status": "passed" if failed == 0 and warnings == 0 else "warning" if failed == 0 else "failed",
+        "passed": passed,
+        "warning": warnings,
+        "failed": failed,
+        "total": len(results),
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "results": results,
+    }
+
+
+def git_commit_short() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
 
 
 def allocate_run_dir(output_dir: Path) -> Path:

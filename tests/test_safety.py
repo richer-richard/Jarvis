@@ -1582,6 +1582,20 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(summary["source_commit"], "abc1234")
 
+    def test_full_loop_summary_records_source_commit(self):
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.git_commit_short", return_value="abc1234"):
+            summary = full_loop_regression.make_suite_summary(
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir),
+                case_selection="all",
+                results=[{"status": "passed"}],
+                started=time.monotonic(),
+            )
+
+        self.assertEqual(summary["source_commit"], "abc1234")
+        self.assertTrue(summary["canonical_latest"])
+
     def test_chrome_teams_deeplinks_inventory_reads_history_sqlite_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
