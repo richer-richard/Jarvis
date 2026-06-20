@@ -2467,14 +2467,26 @@ tell application "System Events"
   click at {{{round(x, 2)}, {round(y, 2)}}}
 end tell
 '''
-    completed = subprocess.run(
-        ["/usr/bin/osascript", "-e", applescript],
-        cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        timeout=max(3.0, min(timeout, 10.0)),
-        check=False,
-    )
+    click_timeout = max(3.0, min(timeout, 10.0))
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", applescript],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=click_timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "attempted": True,
+            "executed": False,
+            "status": "click_timeout",
+            "target_app_name": target_app_name,
+            "point": {"x": round(x, 2), "y": round(y, 2)},
+            "timeout_seconds": round(click_timeout, 3),
+            "stderr_tail": str(exc)[-500:],
+        }
     return {
         "attempted": True,
         "executed": completed.returncode == 0,

@@ -862,6 +862,33 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(proof["browser_open_active_title"], "Codex")
         self.assertEqual(proof["browser_open_active_url"], "https://chatgpt.com/codex")
 
+    def test_full_loop_teams_honesty_preserves_visible_navigation_execution(self):
+        execution = {
+            "attempted": True,
+            "executed": False,
+            "status": "click_timeout",
+            "point": {"x": 257.13, "y": 323.04},
+        }
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": (
+                    "I read the visible Teams screen, but it does not look like the Music assignment. "
+                    "I can see assignment-related text: Lesson 2: The Geography of Greece Group Assignment."
+                ),
+                "visible_screen_follow_up": {
+                    "status": "assignment_subject_mismatch",
+                    "tool": "screen.visible_text",
+                    "visible_navigation_execution": execution,
+                    "visible_navigation_execution_steps": [execution],
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertEqual(proof["completion_status"], "wrong_subject")
+        self.assertEqual(proof["visible_navigation_execution"], execution)
+        self.assertEqual(proof["visible_navigation_execution_steps"], [execution])
+
     def test_full_loop_email_sharpay_accepts_resolved_sender_summary(self):
         proof = full_loop_regression.verify_email_sharpay_honesty({
             "result": {
@@ -3092,6 +3119,29 @@ class VerifySafeScriptTests(unittest.TestCase):
         script = run_mock.call_args.args[0][-1]
         self.assertIn('tell application "Google Chrome" to activate', script)
         self.assertIn("click at {68.0, 577.0}", script)
+
+    def test_voice_loop_qa_execute_visible_navigation_reports_timeout(self):
+        plan = {
+            "planned": True,
+            "will_click": False,
+            "point": {"x": 257.13, "y": 323.04},
+        }
+        with patch.dict(os.environ, {"JARVIS_ALLOW_LIVE_UI_NAVIGATION": "1"}, clear=False), \
+             patch(
+                 "scripts.voice_loop_qa.subprocess.run",
+                 side_effect=subprocess.TimeoutExpired(["osascript"], timeout=10.0),
+             ):
+            result = voice_loop_qa.execute_visible_navigation_plan(
+                plan,
+                target_app_name="Google Chrome",
+                timeout=30.0,
+            )
+
+        self.assertTrue(result["attempted"])
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["status"], "click_timeout")
+        self.assertEqual(result["point"], {"x": 257.13, "y": 323.04})
+        self.assertEqual(result["timeout_seconds"], 10.0)
 
     def test_voice_loop_qa_visible_screen_followup_live_navigation_stays_locked_by_default(self):
         command_response = {"tool": "teams.assignment", "result": {}}

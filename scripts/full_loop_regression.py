@@ -1327,6 +1327,16 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "all_teams_navigation_plan_ready": bool(all_teams_plan.get("planned")),
         "all_teams_navigation_plan": all_teams_plan,
         "visible_navigation_sequence": navigation_sequence,
+        "visible_navigation_execution": (
+            follow_up.get("visible_navigation_execution")
+            if isinstance(follow_up.get("visible_navigation_execution"), dict)
+            else None
+        ),
+        "visible_navigation_execution_steps": (
+            follow_up.get("visible_navigation_execution_steps")
+            if isinstance(follow_up.get("visible_navigation_execution_steps"), list)
+            else []
+        ),
         "capability_complete": capability_complete,
         "completion_status": completion_status,
         "visible_reply_preview": combined_reply[:500],
