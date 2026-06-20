@@ -2286,6 +2286,10 @@ def run_native_visible_screen_follow_up(
                     "visible_navigation_targets": wrong_surface_visible_navigation_targets(),
                     "response": None,
                 }
+            visible_state_changed = visible_screen_text_changed(latest_failure, after_navigation)
+            navigation_result["visible_state_changed"] = visible_state_changed
+            if not visible_state_changed:
+                navigation_result["visible_state_change_status"] = "no_visible_change_after_navigation"
             after_navigation["visible_navigation_execution"] = navigation_result
             after_navigation["visible_navigation_execution_steps"] = list(navigation_steps)
             if after_navigation.get("status") == "completed":
@@ -2310,6 +2314,18 @@ def visible_screen_attempt_is_native_capture_failed(attempt_result: dict[str, An
         str(attempt_result.get("capture_status") or "") == "failed"
         or str(attempt_result.get("response_status") or "") == "native_capture_failed"
     )
+
+
+def visible_screen_text_changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    before_text = normalize_visible_screen_text_for_change(before.get("captured_text_preview"))
+    after_text = normalize_visible_screen_text_for_change(after.get("captured_text_preview"))
+    if not before_text or not after_text:
+        return True
+    return before_text != after_text
+
+
+def normalize_visible_screen_text_for_change(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").casefold()).strip()
 
 
 def teams_wrong_surface_attempt_failure(attempt_result: dict[str, Any], browser_open: dict[str, Any]) -> dict[str, Any]:

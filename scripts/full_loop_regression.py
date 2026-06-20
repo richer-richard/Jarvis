@@ -1572,6 +1572,12 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
 
 
 def visible_navigation_execution_warning(action_proof: dict[str, Any]) -> str:
+    steps = action_proof.get("visible_navigation_execution_steps")
+    if isinstance(steps, list) and any(
+        isinstance(step, dict) and step.get("executed") and step.get("visible_state_changed") is False
+        for step in steps
+    ):
+        return "Live visible navigation was exercised but did not visibly change the Teams screen."
     execution = action_proof.get("visible_navigation_execution")
     if not isinstance(execution, dict):
         return ""

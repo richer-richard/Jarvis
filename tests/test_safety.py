@@ -1283,6 +1283,28 @@ class VerifySafeScriptTests(unittest.TestCase):
             "Live browser back navigation was requested but stopped as navigation loop prevented.",
         )
 
+    def test_full_loop_visible_navigation_warning_reports_no_visible_change(self):
+        proof = {
+            "visible_navigation_execution_steps": [
+                {
+                    "attempted": True,
+                    "executed": True,
+                    "status": "browser_back",
+                    "visible_state_changed": False,
+                }
+            ],
+            "visible_navigation_execution": {
+                "attempted": False,
+                "executed": False,
+                "status": "navigation_loop_prevented",
+            },
+        }
+
+        self.assertEqual(
+            full_loop_regression.visible_navigation_execution_warning(proof),
+            "Live visible navigation was exercised but did not visibly change the Teams screen.",
+        )
+
     def test_full_loop_email_sharpay_accepts_resolved_sender_summary(self):
         proof = full_loop_regression.verify_email_sharpay_honesty({
             "result": {
@@ -4149,6 +4171,13 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(plan["navigation_key"], "teams_search")
         self.assertEqual(plan["action"], "type_search")
+
+    def test_voice_loop_qa_visible_screen_text_changed_detects_repeated_capture(self):
+        before = {"captured_text_preview": "Teams and Channels | General\nLesson 2: Geography"}
+        after = {"captured_text_preview": "Teams and Channels | General Lesson 2: Geography"}
+
+        self.assertFalse(voice_loop_qa.visible_screen_text_changed(before, after))
+        self.assertTrue(voice_loop_qa.visible_screen_text_changed(before, {"captured_text_preview": "Music Assignments"}))
 
     def test_voice_loop_qa_chevron_all_teams_uses_leading_screen_click_point(self):
         capture_payload = {
@@ -28167,7 +28196,13 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                     },
                                     "visible_navigation_execution_steps": [
                                         {"attempted": True, "executed": True, "status": "clicked"},
-                                        {"attempted": True, "executed": True, "status": "type_search", "query": "Music"},
+                                        {
+                                            "attempted": True,
+                                            "executed": True,
+                                            "status": "type_search",
+                                            "query": "Music",
+                                            "visible_state_changed": False,
+                                        },
                                     ],
                                 },
                             }
@@ -28181,7 +28216,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 diagnostic = latest_teams_live_navigation_diagnostic()
 
         self.assertIn("stopped as browser_back navigation_loop_prevented at (257.13, 323.04) in screen points", diagnostic)
-        self.assertIn("2 step(s) (clicked -> type_search Music)", diagnostic)
+        self.assertIn("2 step(s) (clicked -> type_search Music no visible change)", diagnostic)
         self.assertIn("runtime/full_loop_regression/20260620-095114/summary.json", diagnostic)
 
     def test_morning_status_latest_teams_diagnostic_reports_exhausted_safe_plans(self):

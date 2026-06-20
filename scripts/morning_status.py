@@ -622,9 +622,12 @@ def teams_navigation_steps_text(steps: list[object]) -> str:
         status = str(raw_step.get("status") or "unknown").strip() or "unknown"
         query = str(raw_step.get("query") or "").strip()
         if query:
-            labels.append(f"{status} {query}")
+            label = f"{status} {query}"
         else:
-            labels.append(status)
+            label = status
+        if raw_step.get("visible_state_changed") is False:
+            label = f"{label} no visible change"
+        labels.append(label)
     if not labels:
         return ""
     return f" ({' -> '.join(labels)})"
