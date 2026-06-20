@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.481 makes the main app more inspectable: Jarvis Activity now shows a bounded scrollable history of up to 24 recent command, tool, browser, speech, reply, and error events instead of only the last six.",
     "Jarvis 0.1.480 tightens the polished summon popout: the capsule is smaller, the fallback surface now uses native SwiftUI material instead of a rectangular AppKit blur view, and the host panel masks transparent layers so fullscreen should not show a stray block behind the glass.",
     "Jarvis 0.1.479 makes Teams live navigation safer: native OCR now exports window bounds and Retina scale, and the live click harness refuses to click raw screenshot pixels unless they have been converted to screen points.",
     "Jarvis 0.1.478 packages the latest reliability hardening: Magic Keyboard yuan conversion now falls back to the safe commerce tool when the first model fails, Teams wrong-class proof plans `All teams` before `Assignments`, Chrome cleanup uses short retry metadata, and gate reports separate fatal blockers from warnings.",

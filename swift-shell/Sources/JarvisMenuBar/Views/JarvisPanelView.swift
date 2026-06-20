@@ -146,11 +146,15 @@ struct JarvisPanelView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             } else {
-                LazyVStack(alignment: .leading, spacing: 7) {
-                    ForEach(model.actionEvents.suffix(6).reversed()) { event in
-                        JarvisActionRow(event: event)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 7) {
+                        ForEach(model.actionEvents.suffix(24).reversed()) { event in
+                            JarvisActionRow(event: event)
+                        }
                     }
+                    .padding(.vertical, 1)
                 }
+                .frame(maxHeight: 220)
             }
         }
         .padding(10)
