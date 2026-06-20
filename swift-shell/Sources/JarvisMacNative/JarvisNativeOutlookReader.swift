@@ -45,6 +45,7 @@ private struct NativeWindowCapture {
     let image: CGImage
     let bounds: CGRect
     let ownerName: String
+    let windowTitle: String
 }
 
 public enum JarvisNativeOutlookReader {
@@ -84,7 +85,8 @@ public enum JarvisNativeOutlookReader {
                 captureError: nil,
                 appBundlePath: Bundle.main.bundleURL.path,
                 appExecutablePath: Bundle.main.executableURL?.path ?? "",
-                bundleIdentifier: Bundle.main.bundleIdentifier ?? ""
+                bundleIdentifier: Bundle.main.bundleIdentifier ?? "",
+                windowTitle: windowCapture?.windowTitle ?? ""
             ),
             lines: lines
         )
@@ -156,7 +158,8 @@ public enum JarvisNativeOutlookReader {
                 appBundlePath: Bundle.main.bundleURL.path,
                 appExecutablePath: Bundle.main.executableURL?.path ?? "",
                 bundleIdentifier: Bundle.main.bundleIdentifier ?? "",
-                targetAppName: cleanTargetName ?? ""
+                targetAppName: cleanTargetName ?? "",
+                windowTitle: windowCapture?.windowTitle ?? ""
             ),
             lines: lines
         )
@@ -237,7 +240,7 @@ public enum JarvisNativeOutlookReader {
             return nil
         }
 
-        let candidates: [(windowID: CGWindowID, bounds: CGRect, ownerName: String)] = windowInfo.compactMap { window in
+        let candidates: [(windowID: CGWindowID, bounds: CGRect, ownerName: String, windowTitle: String)] = windowInfo.compactMap { window in
             let ownerName = window[kCGWindowOwnerName as String] as? String ?? ""
             if let ownerNames {
                 guard ownerNames.contains(ownerName) else {
@@ -260,14 +263,11 @@ public enum JarvisNativeOutlookReader {
             guard bounds.width >= 240, bounds.height >= 180 else {
                 return nil
             }
-            return (CGWindowID(number.uint32Value), bounds, ownerName)
+            let windowTitle = window[kCGWindowName as String] as? String ?? ""
+            return (CGWindowID(number.uint32Value), bounds, ownerName, windowTitle)
         }
 
-        let selected = ownerNames == nil
-            ? candidates.first
-            : candidates.max(by: { lhs, rhs in
-                lhs.bounds.width * lhs.bounds.height < rhs.bounds.width * rhs.bounds.height
-            })
+        let selected = candidates.first
         guard let selected else {
             return nil
         }
@@ -287,7 +287,12 @@ public enum JarvisNativeOutlookReader {
         guard let image else {
             return nil
         }
-        return NativeWindowCapture(image: image, bounds: selected.bounds, ownerName: selected.ownerName)
+        return NativeWindowCapture(
+            image: image,
+            bounds: selected.bounds,
+            ownerName: selected.ownerName,
+            windowTitle: selected.windowTitle
+        )
     }
 
     private static func captureScale(imagePixels: Int, screenPoints: CGFloat?) -> Double {

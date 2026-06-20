@@ -2879,6 +2879,64 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["apple_speech"]["status"], "apple_speech_skipped_no_permission_prompts")
         local_stt.assert_called_once()
 
+    def test_voice_loop_qa_flags_teams_ocr_window_title_mismatch(self):
+        mismatch = voice_loop_qa.visible_screen_attempt_mismatches_expected_teams(
+            command_text="Look in Teams for my newest Music assignment.",
+            browser_open={
+                "browser_open_verification_url": "https://teams.microsoft.com/v2/",
+                "browser_open_active_url": "https://teams.microsoft.com/v2/",
+                "browser_open_active_title": "Microsoft Teams",
+            },
+            attempt_result={
+                "capture_diagnostics": {
+                    "target_app_name": "Google Chrome",
+                    "window_title": "in apple shortcuts, can a shortcut change settings - Google Search",
+                },
+                "captured_text_preview": "How to change settings with Apple Shortcuts.",
+                "visible_reply_preview": "",
+            },
+        )
+
+        self.assertTrue(mismatch)
+
+    def test_voice_loop_qa_preserves_capture_diagnostics_from_visible_probe(self):
+        fake_capture = {
+            "status": "captured",
+            "text": "Microsoft Teams\nMusic Assignments",
+            "diagnostics": {
+                "target_app_name": "Google Chrome",
+                "window_title": "Microsoft Teams",
+            },
+        }
+        fake_summary = {
+            "tool": "screen.visible_text",
+            "result": {"status": "checked", "reply": "I found assignment-related text."},
+            "reply": "I found assignment-related text.",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.subprocess.run") as run_mock, \
+             patch("scripts.voice_loop_qa.post_loopback_json", return_value=fake_summary):
+            run_mock.return_value = subprocess.CompletedProcess(
+                args=["jarvis-visible-screen-probe"],
+                returncode=0,
+                stdout=json.dumps(fake_capture),
+                stderr="",
+            )
+            result = voice_loop_qa.run_native_visible_screen_follow_up_attempt(
+                command_text="Look in Teams for my newest Music assignment.",
+                base_url="http://127.0.0.1:8765",
+                follow_up_dir=Path(temp_dir),
+                timeout=1,
+                target_app_name="Google Chrome",
+                target_bundle_identifier="com.google.Chrome",
+                attempt=1,
+            )
+
+        self.assertEqual(result["capture_diagnostics"]["window_title"], "Microsoft Teams")
+        self.assertEqual(result["capture_window_title"], "Microsoft Teams")
+        self.assertEqual(result["capture_status"], "captured")
+
     def test_voice_loop_qa_allocates_unique_parallel_report_dirs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -10861,6 +10919,21 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("observation.boundingBox", native_source)
         self.assertIn("recognizeTextLines(in: image)", native_source)
         self.assertIn("lines.map(\\.text).joined", native_source)
+
+    def test_visible_screen_probe_targets_frontmost_matching_window_not_largest(self):
+        native_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMacNative"
+            / "JarvisNativeOutlookReader.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("let selected = candidates.first", native_source)
+        self.assertNotIn("candidates.max(by:", native_source)
+        self.assertIn("let windowTitle = window[kCGWindowName as String] as? String ?? \"\"", native_source)
+        self.assertIn("windowTitle: selected.windowTitle", native_source)
+        self.assertIn("windowTitle: windowCapture?.windowTitle ?? \"\"", native_source)
 
     def test_status_helper_exits_when_parent_app_disappears(self):
         app_source = (

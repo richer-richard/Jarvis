@@ -2417,6 +2417,8 @@ def run_native_visible_screen_follow_up_attempt(
         "probe_stdout_tail": stdout[-500:],
         "probe_stderr_tail": stderr[-500:],
         "capture_status": capture_payload.get("status"),
+        "capture_diagnostics": diagnostics,
+        "capture_window_title": diagnostics.get("window_title"),
         "captured_text_chars": len(captured_text),
         "captured_text_preview": captured_text[:300],
         "tool": summary_response.get("tool"),
@@ -2456,6 +2458,13 @@ def visible_screen_attempt_mismatches_expected_teams(
     ).casefold()
     if not any(marker in browser_text for marker in ("teams.microsoft.com", "teams.cloud.microsoft", "microsoft teams")):
         return False
+    capture_diagnostics = attempt_result.get("capture_diagnostics")
+    if isinstance(capture_diagnostics, dict):
+        capture_window_title = str(capture_diagnostics.get("window_title") or "").casefold()
+    else:
+        capture_window_title = str(attempt_result.get("capture_window_title") or "").casefold()
+    if capture_window_title and "teams" not in capture_window_title and "microsoft" not in capture_window_title:
+        return True
     captured_text = str(attempt_result.get("captured_text_preview") or "").casefold()
     reply_text = str(attempt_result.get("visible_reply_preview") or "").casefold()
     attempt_text = " ".join([captured_text, reply_text]).strip()
