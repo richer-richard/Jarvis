@@ -41,6 +41,7 @@
 - [x] Add a model-route guardrail so clear RAM/Activity Monitor requests execute the safe memory tool if the first model punts to chat.
 - [x] Rebuild and launch Jarvis `0.1.474` build `474` so the normal bundled app contains the current model-route guardrails.
 - [x] Start the official Jarvis macOS UI upgrade: redesign the main app toward native SwiftUI/macOS Liquid Glass patterns, show every user-visible Jarvis utterance and every meaningful Jarvis action/tool step, and remove the ugly rectangular gradient/color block behind the summon popout.
+- [ ] Prototype Apple Speech/Dictation as Jarvis's primary STT lane: use macOS Speech framework if possible, compare transcript quality/latency against the current local STT on the same recorded prompts, and keep local STT as fallback until Apple dictation is live-proven.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
