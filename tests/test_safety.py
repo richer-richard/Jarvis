@@ -7307,6 +7307,54 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Ms. Sharpay", page)
         self.assertIn("What a real pass means", page)
 
+    def test_render_capability_questions_page_surfaces_latest_full_loop_proof(self):
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "runtime") as temp_dir:
+            root = Path(temp_dir)
+            report_dir = root / "runtime" / "full_loop_regression"
+            report_dir.mkdir(parents=True)
+            latest = report_dir / "latest.json"
+            latest.write_text(json.dumps({
+                "schema": "jarvis.full_loop_regression.v1",
+                "status": "warning",
+                "passed": 1,
+                "total": 2,
+                "results": [
+                    {
+                        "case_id": "music_play_waving_through_window",
+                        "status": "passed",
+                        "total_seconds": 9.25,
+                    },
+                    {
+                        "case_id": "teams_music_assignment_honesty",
+                        "status": "warning",
+                        "total_seconds": 23.87,
+                        "warnings": ["Jarvis did not inspect the requested Music assignment."],
+                    },
+                ],
+            }), encoding="utf-8")
+            context = {
+                "bundle": "Jarvis 0.1.test build test",
+                "bundle_source": "live worker",
+                "updated": "2026-06-21 04:40 CST",
+                "commit": "abc1234",
+                "branch": "codex/test",
+                "upstream": "origin/codex/test",
+                "git_sync": "ahead 1",
+                "git_dirty": "clean",
+                "python_test_count": 1087,
+                "verification": {"label": "passed"},
+                "no_prompt_verification": {"label": "passed"},
+                "launch_mode": "regular Dock app",
+                "full_loop": {"path": "runtime/full_loop_regression/latest.json"},
+            }
+            with patch("scripts.render_overnight_status.PROJECT_ROOT", root):
+                page = render_overnight_status.render_capability_questions(context)
+
+        self.assertIn("proved in latest run", page)
+        self.assertIn("honest warning", page)
+        self.assertIn("Jarvis did not inspect the requested Music assignment.", page)
+        self.assertIn("latest full-loop JSON", page)
+
     def test_verify_safe_checks_wake_audition_corpus_route(self):
         def fake_http_response(_base_url, path, **_kwargs):
             if path == "/wake-audition/":

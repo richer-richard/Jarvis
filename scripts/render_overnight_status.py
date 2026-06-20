@@ -604,48 +604,56 @@ SUPPORTING_FILES = [
 CAPABILITY_QUESTIONS = [
     {
         "prompt": "Jarvis, look in Teams for my newest Music assignment and ask me the questions you need so you can help finish it.",
+        "case_id": "teams_music_assignment_honesty",
         "quality": "Shows browser handoff, signed-in Chrome reuse, visible-screen OCR honesty, assignment extraction, and follow-up-question planning.",
         "proof": "This should not fake success if Teams is on the wrong class, behind a sign-in wall, or unreadable.",
         "status": "hardest",
     },
     {
         "prompt": "Jarvis, play Waving Through a Window.",
+        "case_id": "music_play_waving_through_window",
         "quality": "Shows Music-app bridge control, song selection, playback confirmation, cleanup safety, and no hidden mystery audio owner.",
         "proof": "A real pass means the Music bridge reports the expected track as playing and Jarvis can stop it cleanly.",
         "status": "live action",
     },
     {
         "prompt": "Jarvis, check Activity Monitor and tell me how much RAM my computer is using.",
+        "case_id": "ram_activity_monitor",
         "quality": "Shows tool choice for live Mac status, safe local system reads, and concise spoken numbers.",
         "proof": "The answer should come from a tool route, not a model guessing a generic memory number.",
         "status": "fast tool",
     },
     {
         "prompt": "Jarvis, check my calendar for my schedule today.",
+        "case_id": "calendar_today_schedule",
         "quality": "Shows local calendar cache access, date awareness, and voice-friendly event summaries.",
         "proof": "The answer should summarize the day without dumping raw calendar database fields.",
         "status": "daily utility",
     },
     {
         "prompt": "Jarvis, search up the price of the Magic Keyboard and tell me its price converted to yuan.",
+        "case_id": "magic_keyboard_yuan",
         "quality": "Shows web/search planning, commerce-price extraction, currency conversion, and source-honest fallback behavior.",
         "proof": "The best answer names the price, conversion, and whether the value came from live search or safe cached/planned proof.",
         "status": "web + math",
     },
     {
         "prompt": "Jarvis, open Codex and send a prompt called test in the Default chat.",
+        "case_id": "codex_default_plan",
         "quality": "Shows Codex chat selection, Jarvis-generated prompt labeling, and protection against STT hearing Codex as Kodak.",
         "proof": "Jarvis should route to the Default chat context instead of creating a random new session.",
         "status": "agent handoff",
     },
     {
         "prompt": "Jarvis, summarize all the emails from Ms. Sharpay in the past month.",
+        "case_id": "email_sharpay_month",
         "quality": "Shows contact-alias memory, email scanning, sender inference, private-content summarization, and URL-safe speech.",
         "proof": "It should infer the real sender where possible, summarize body meaning, and avoid reading raw links aloud.",
         "status": "memory + email",
     },
     {
         "prompt": "Jarvis, test the Gemma 3 4B model for me without slowing down this Mac.",
+        "case_id": "gemma_model_plan",
         "quality": "Shows model-task planning, remote-worker preference, resource awareness, and refusal to burn local RAM without permission.",
         "proof": "If the Air is unavailable, Jarvis should ask before running heavyweight local tests.",
         "status": "model ops",
@@ -1763,20 +1771,36 @@ def render_report(context: dict[str, Any]) -> str:
 
 def render_capability_questions(context: dict[str, Any]) -> str:
     rows = []
+    proof_by_case = capability_proof_by_case(context)
+    full_loop = context.get("full_loop") if isinstance(context.get("full_loop"), dict) else {}
+    full_loop_path = str(full_loop.get("path") or "")
     for index, item in enumerate(CAPABILITY_QUESTIONS, start=1):
+        proof = proof_by_case.get(str(item.get("case_id") or ""), {})
+        proof_status = str(proof.get("status_label") or "not in latest proof")
+        proof_class = str(proof.get("status_class") or "unknown")
+        proof_detail = str(proof.get("detail") or "No matching latest full-loop result was found for this prompt yet.")
         rows.append(
             f"""
-      <article class="question-card">
+      <article class="question-card proof-{e(proof_class)}">
         <div class="question-topline">
           <span class="question-number">{index:02d}</span>
           <span class="question-status">{e(item["status"])}</span>
         </div>
         <h2>{e(item["prompt"])}</h2>
+        <div class="proof-strip">
+          <span class="proof-badge">{e(proof_status)}</span>
+          <span>{e(proof_detail)}</span>
+        </div>
         <p><strong>What it shows:</strong> {e(item["quality"])}</p>
         <p><strong>What a real pass means:</strong> {e(item["proof"])}</p>
       </article>
 """
         )
+    proof_link = (
+        f'<a class="link-pill" href="../full_loop_regression/latest.json">latest full-loop JSON</a>'
+        if full_loop_path
+        else '<span class="link-pill muted">latest full-loop JSON not generated</span>'
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1797,6 +1821,7 @@ def render_capability_questions(context: dict[str, Any]) -> str:
     <section class="capability-intro">
       <h2>Use These To Stress The Product</h2>
       <p>These are deliberately difficult. A good Jarvis answer should be fast, spoken cleanly, visible in the app, tool-honest, and willing to say what it cannot verify yet.</p>
+      <p class="proof-note">Proof badges are pulled from the latest full-loop regression when available. {proof_link}</p>
     </section>
     <section class="question-grid">
       {"".join(rows)}
@@ -1805,6 +1830,57 @@ def render_capability_questions(context: dict[str, Any]) -> str:
 </body>
 </html>
 """
+
+
+def capability_proof_by_case(context: dict[str, Any]) -> dict[str, dict[str, str]]:
+    full_loop = context.get("full_loop") if isinstance(context.get("full_loop"), dict) else {}
+    latest_path = PROJECT_ROOT / "runtime" / "full_loop_regression" / "latest.json"
+    path_text = str(full_loop.get("path") or "")
+    if path_text:
+        candidate = PROJECT_ROOT / path_text
+        if candidate.exists():
+            latest_path = candidate
+    if not latest_path.exists():
+        return {}
+    try:
+        data = json.loads(latest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    results = data.get("results") if isinstance(data.get("results"), list) else []
+    proof: dict[str, dict[str, str]] = {}
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        case_id = str(result.get("case_id") or "")
+        if not case_id:
+            continue
+        status = str(result.get("status") or "unknown")
+        seconds = result.get("total_seconds")
+        try:
+            seconds_label = f"{float(seconds):.1f}s"
+        except (TypeError, ValueError):
+            seconds_label = ""
+        if status == "passed":
+            label = "proved in latest run"
+            status_class = "passed"
+        elif status == "warning":
+            label = "honest warning"
+            status_class = "warning"
+        elif status == "failed":
+            label = "failing"
+            status_class = "failed"
+        else:
+            label = status or "unknown"
+            status_class = "unknown"
+        warnings = result.get("warnings") if isinstance(result.get("warnings"), list) else []
+        warning_text = str(warnings[0]) if warnings else ""
+        detail_parts = [part for part in (seconds_label, warning_text) if part]
+        proof[case_id] = {
+            "status_label": label,
+            "status_class": status_class,
+            "detail": " | ".join(detail_parts) if detail_parts else "Latest full-loop run has this prompt in coverage.",
+        }
+    return proof
 
 
 def render_workboard(context: dict[str, Any]) -> str:
@@ -2333,6 +2409,64 @@ def style_block() -> str:
     .question-card strong {
       color: var(--text);
       font-weight: 700;
+    }
+    .proof-strip {
+      display: grid;
+      gap: 7px;
+      margin: 12px 0 2px;
+      padding: 10px 11px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .proof-badge {
+      width: fit-content;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #dfffee;
+      border: 1px solid rgba(85, 214, 143, 0.28);
+      background: rgba(85, 214, 143, 0.12);
+    }
+    .proof-warning .proof-badge {
+      color: #fff1bd;
+      border-color: rgba(255, 209, 102, 0.34);
+      background: rgba(255, 209, 102, 0.13);
+    }
+    .proof-failed .proof-badge {
+      color: #ffd3d3;
+      border-color: rgba(255, 128, 128, 0.34);
+      background: rgba(255, 128, 128, 0.12);
+    }
+    .proof-unknown .proof-badge {
+      color: var(--muted);
+      border-color: var(--line);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .proof-note {
+      margin-bottom: 0;
+      color: var(--muted);
+    }
+    .link-pill {
+      display: inline-block;
+      color: var(--blue);
+      text-decoration: none;
+      border: 1px solid rgba(123, 188, 255, 0.32);
+      border-radius: 999px;
+      padding: 3px 8px;
+      margin-left: 4px;
+      background: rgba(123, 188, 255, 0.09);
+      white-space: nowrap;
+    }
+    .link-pill.muted {
+      color: var(--muted);
+      border-color: var(--line);
+      background: rgba(255, 255, 255, 0.04);
     }
     .question-topline {
       display: flex;
