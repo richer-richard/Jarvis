@@ -6327,6 +6327,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.483", shipped)
         self.assertIn("0.1.482", shipped)
         self.assertIn("0.1.481", shipped)
         self.assertIn("0.1.480", shipped)
@@ -11124,6 +11125,55 @@ class PlannerTests(unittest.TestCase):
         )
         osascript_mock.assert_not_called()
 
+    def test_browser_read_page_rejects_teams_shell_ocr_without_assignment_context(self):
+        fake_scan = {"status": "ok", "findings": []}
+        with patch("jarvis.tools._find_executable", return_value="/usr/bin/osascript"), \
+             patch("jarvis.tools._native_chrome_page_probe", return_value={
+                 "status": "automation_not_allowed",
+                 "title": "",
+                 "url": "",
+                 "domain": "",
+                 "page_text": "",
+                 "returncode": -1723,
+                 "stderr": "Access not allowed. (-1723)",
+                 "chrome_automation": {"status": "needs_automation_access", "is_ready": False},
+                 "used_native_browser_probe": True,
+             }), \
+             patch("jarvis.tools._native_visible_screen_probe", return_value={
+                 "status": "captured",
+                 "text": "\n".join([
+                     "(28) tabs",
+                     "Teams and Channels | General | Microsoft Teams",
+                     "teams.cloud.microsoft",
+                     "iCloud Find Devices",
+                     "Sun Jun 21 12:44 AM",
+                 ]),
+                 "diagnostics": {
+                     "source": "native_vision_ocr_screen",
+                     "ocr_engine": "apple_vision",
+                     "line_count": 5,
+                     "capture_width": 3600,
+                     "capture_height": 2338,
+                     "target_app_name": "Google Chrome",
+                     "window_title": "Teams and Channels | General | Microsoft Teams",
+                 },
+             }), \
+             patch("jarvis.tools.scan_untrusted_text", return_value=fake_scan), \
+             patch("jarvis.tools._run_osascript") as osascript_mock:
+            result = browser_read_page(
+                max_chars=1000,
+                command="Look in Teams for my newest Music assignment and ask me questions.",
+            )
+
+        self.assertEqual(result["tool"], "browser.read_page")
+        self.assertEqual(result["status"], "teams_page_text_unavailable")
+        self.assertTrue(result["used_native_visible_screen_fallback"])
+        self.assertEqual(result["site_readability"], "teams_spa_not_reliably_readable")
+        self.assertIn("Teams is open in Chrome", result["reply"])
+        self.assertIn("have not inspected the assignment", result["spoken_summary"])
+        self.assertNotIn("I read Google Chrome. I can see", result["reply"])
+        osascript_mock.assert_not_called()
+
     def test_browser_read_page_keeps_automation_block_when_visible_screen_fallback_is_not_useful(self):
         with patch("jarvis.tools._find_executable", return_value="/usr/bin/osascript"), \
              patch("jarvis.tools._native_chrome_page_probe", return_value={
@@ -14953,8 +15003,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.482}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-482}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.483}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-483}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)

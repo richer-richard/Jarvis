@@ -13667,6 +13667,18 @@ def _browser_visible_screen_fallback(
     if summary_status not in {"checked", "read_without_digest", "login_gate_visible"}:
         return None
     fallback_status = "visible_screen_login_gate" if summary_status == "login_gate_visible" else "read_via_visible_screen"
+    if fallback_status == "read_via_visible_screen" and _visible_screen_summary_is_unhelpful_teams_shell(summary, command=command):
+        details = _browser_error_details("teams_page_text_unavailable", include_page_text=True)
+        return {
+            **summary,
+            **details,
+            "tool": "browser.read_page",
+            "status": "teams_page_text_unavailable",
+            "reply": _browser_error_reply("teams_page_text_unavailable"),
+            "used_native_visible_screen_fallback": True,
+            "visible_screen_fallback_source": summary.get("source"),
+            "visible_screen_fallback_target_app_name": summary.get("target_app_name"),
+        }
     return {
         **summary,
         "tool": "browser.read_page",
@@ -13677,6 +13689,32 @@ def _browser_visible_screen_fallback(
         "visible_screen_fallback_source": summary.get("source"),
         "visible_screen_fallback_target_app_name": summary.get("target_app_name"),
     }
+
+
+def _visible_screen_summary_is_unhelpful_teams_shell(summary: dict[str, Any], *, command: str | None) -> bool:
+    lower_command = str(command or "").casefold()
+    if "teams" not in lower_command or "assignment" not in lower_command:
+        return False
+    if summary.get("detected_assignment_context") or summary.get("assignment_digest_items"):
+        return False
+    digest_text = " ".join(
+        [
+            str(summary.get("page_digest") or ""),
+            " ".join(str(item) for item in (summary.get("page_digest_items") or []) if isinstance(item, str)),
+        ]
+    ).casefold()
+    if not digest_text:
+        return False
+    teams_shell_markers = (
+        "teams.cloud.microsoft",
+        "teams.microsoft.com",
+        "teams and channels",
+        "microsoft teams",
+    )
+    assignment_markers = ("assignment", "assignments", "rubric", "due", "classwork", "homework")
+    return any(marker in digest_text for marker in teams_shell_markers) and not any(
+        marker in digest_text for marker in assignment_markers
+    )
 
 
 def _chrome_bookmark_profile_paths() -> list[tuple[str, Path]]:
