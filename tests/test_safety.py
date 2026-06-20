@@ -25150,6 +25150,84 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("1 step(s)", diagnostic)
         self.assertIn("runtime/full_loop_regression/20260620-095114/summary.json", diagnostic)
 
+    def test_morning_status_latest_teams_diagnostic_prefers_fresh_not_exercised_artifact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            old_dir = root / "runtime" / "full_loop_regression" / "20260620-095114"
+            new_dir = root / "runtime" / "full_loop_regression" / "20260620-104341"
+            old_dir.mkdir(parents=True)
+            new_dir.mkdir(parents=True)
+            (old_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "action_proof": {
+                                    "visible_navigation_execution": {
+                                        "attempted": False,
+                                        "executed": False,
+                                        "status": "navigation_loop_prevented",
+                                        "point": {"x": 257.13, "y": 323.04},
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (new_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "action_proof": {
+                                    "visible_navigation_sequence": [
+                                        {"label": "All teams"},
+                                        {"label": "requested class"},
+                                        {"label": "Assignments"},
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os.utime(old_dir / "summary.json", (100, 100))
+            os.utime(new_dir / "summary.json", (200, 200))
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root):
+                diagnostic = latest_teams_live_navigation_diagnostic()
+
+        self.assertIn("not exercised in latest Teams artifact", diagnostic)
+        self.assertIn("All teams -> requested class -> Assignments", diagnostic)
+        self.assertIn("20260620-104341", diagnostic)
+        self.assertNotIn("navigation_loop_prevented", diagnostic)
+
+    def test_render_status_latest_teams_diagnostic_prefers_fresh_not_exercised_artifact(self):
+        data = {
+            "results": [
+                {
+                    "case_id": "teams_music_assignment_honesty",
+                    "action_proof": {
+                        "visible_navigation_sequence": [
+                            {"label": "All teams"},
+                            {"label": "requested class"},
+                            {"label": "Assignments"},
+                        ]
+                    },
+                }
+            ]
+        }
+
+        diagnostic = render_overnight_status.teams_live_navigation_diagnostic(data)
+
+        self.assertIn("not exercised in latest artifact", diagnostic)
+        self.assertIn("All teams -> requested class -> Assignments", diagnostic)
+
     def test_morning_status_pre_build_gate_cleanup_warning_summary(self):
         warning = pre_build_gate_cleanup_warning(
             {

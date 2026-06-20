@@ -1392,8 +1392,12 @@ def latest_full_loop_regression() -> dict[str, Any]:
 
 
 def latest_teams_live_navigation_diagnostic() -> str:
-    reports = sorted((PROJECT_ROOT / "runtime" / "full_loop_regression").glob("*/summary.json"))
-    for report in reversed(reports):
+    reports = sorted(
+        (path for path in (PROJECT_ROOT / "runtime" / "full_loop_regression").glob("*/summary.json") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for report in reports:
         try:
             data = json.loads(report.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -1412,7 +1416,20 @@ def teams_live_navigation_diagnostic(data: dict[str, Any], report_path: Path | N
         action_proof = result.get("action_proof") if isinstance(result.get("action_proof"), dict) else {}
         execution = action_proof.get("visible_navigation_execution")
         if not isinstance(execution, dict):
-            continue
+            sequence = action_proof.get("visible_navigation_sequence")
+            labels = [
+                str(step.get("label") or step.get("key") or "").strip()
+                for step in sequence
+                if isinstance(sequence, list)
+                and isinstance(step, dict)
+                and str(step.get("label") or step.get("key") or "").strip()
+            ] if isinstance(sequence, list) else []
+            label_text = f"; next sequence {' -> '.join(labels)}" if labels else ""
+            path_text = ""
+            if report_path is not None:
+                path = str(report_path.relative_to(PROJECT_ROOT)) if report_path.is_relative_to(PROJECT_ROOT) else str(report_path)
+                path_text = f"; {path}"
+            return f"latest Teams navigation not exercised in latest artifact{label_text}{path_text}"
         status = str(execution.get("status") or "").strip()
         if not status:
             continue

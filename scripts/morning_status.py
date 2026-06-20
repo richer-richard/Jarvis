@@ -469,8 +469,18 @@ def latest_teams_live_navigation_diagnostic() -> str:
             proof = item.get("action_proof") if isinstance(item.get("action_proof"), dict) else {}
             execution = proof.get("visible_navigation_execution")
             steps = proof.get("visible_navigation_execution_steps")
+            age = format_uptime(time_since(report.stat().st_mtime))
             if not isinstance(execution, dict) or not execution:
-                continue
+                sequence = proof.get("visible_navigation_sequence")
+                labels = [
+                    str(step.get("label") or step.get("key") or "").strip()
+                    for step in sequence
+                    if isinstance(sequence, list)
+                    and isinstance(step, dict)
+                    and str(step.get("label") or step.get("key") or "").strip()
+                ] if isinstance(sequence, list) else []
+                label_text = f"; next sequence {' -> '.join(labels)}" if labels else ""
+                return f"not exercised in latest Teams artifact{label_text}; {report.relative_to(PROJECT_ROOT)}, age {age}"
             status = str(execution.get("status") or "unknown").strip() or "unknown"
             point = execution.get("point") if isinstance(execution.get("point"), dict) else {}
             point_text = f" at ({point.get('x')}, {point.get('y')})" if point else ""
@@ -482,7 +492,6 @@ def latest_teams_live_navigation_diagnostic() -> str:
             else:
                 action = f"stopped as {status}{point_text}{coordinate_text}"
             step_count = len(steps) if isinstance(steps, list) else 0
-            age = format_uptime(time_since(report.stat().st_mtime))
             return f"{action}; {step_count} step(s); {report.relative_to(PROJECT_ROOT)}, age {age}"
     return ""
 
