@@ -844,6 +844,101 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(proof["honest_wrong_subject"])
         self.assertIn("Geography of Greece", proof["visible_reply_preview"])
 
+    def test_full_loop_teams_honesty_surfaces_visible_search_plan(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": "I read the visible Teams screen, but it does not look like the Music assignment.",
+                "visible_screen_follow_up": {
+                    "status": "assignment_subject_mismatch",
+                    "tool": "screen.visible_text",
+                    "visible_navigation_targets": {
+                        "requested_class": {"found": False, "reason": "no_label_match"},
+                        "requested_class_plan": {"planned": False, "will_click": False},
+                        "all_teams": {"found": False, "reason": "no_label_match"},
+                        "all_teams_plan": {"planned": False, "will_click": False},
+                        "assignments": {"found": False, "reason": "no_label_match"},
+                        "assignments_plan": {"planned": False, "will_click": False},
+                        "teams_search": {
+                            "found": True,
+                            "text": "Search (T % E)",
+                            "screen_center": {"x": 1821.84, "y": 146.25},
+                        },
+                        "teams_search_plan": {
+                            "planned": True,
+                            "action": "type_search",
+                            "will_click": False,
+                            "requires_explicit_live_navigation": True,
+                            "query": "Music",
+                            "point": {"x": 1821.84, "y": 146.25},
+                            "coordinate_space": "screen_points",
+                        },
+                        "sequence": [
+                            {
+                                "key": "teams_search",
+                                "label": "Teams search",
+                                "plan": {"planned": True, "action": "type_search", "query": "Music"},
+                            },
+                            {
+                                "key": "requested_class_after_search",
+                                "label": "requested class",
+                                "plan": {"planned": False, "reason": "requires_previous_step"},
+                            },
+                        ],
+                    },
+                    "visible_reply_preview": (
+                        "I read the visible Teams screen, but it does not look like the Music assignment. "
+                        "I can see assignment-related text: Student Leadership Video."
+                    ),
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertEqual(proof["completion_status"], "wrong_subject")
+        self.assertTrue(proof["teams_search_target_found"])
+        self.assertEqual(proof["teams_search_target"]["text"], "Search (T % E)")
+        self.assertTrue(proof["teams_search_navigation_plan_ready"])
+        self.assertEqual(proof["teams_search_navigation_plan"]["query"], "Music")
+        self.assertEqual([step["key"] for step in proof["visible_navigation_sequence"]], ["teams_search", "requested_class_after_search"])
+
+    def test_full_loop_teams_focus_failure_suppresses_navigation_targets(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": (
+                    "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
+                    "I have not inspected the newest Music assignment yet."
+                ),
+                "visible_screen_follow_up": {
+                    "status": "browser_focus_not_verified",
+                    "tool": "screen.visible_text",
+                    "browser_open_active_title": "https://teams.microsoft.com/v2/?clientexperience=t3",
+                    "visible_navigation_targets": {
+                        "requested_class": {"found": True, "text": "Music"},
+                        "requested_class_plan": {"planned": True, "point": {"x": 285.7, "y": 172.62}},
+                        "teams_search": {"found": True, "text": "Search, choose,"},
+                        "teams_search_plan": {
+                            "planned": True,
+                            "action": "type_search",
+                            "query": "Music",
+                            "point": {"x": 760.4, "y": 378.0},
+                        },
+                        "sequence": [
+                            {"key": "requested_class", "label": "requested class", "plan": {"planned": True}},
+                            {"key": "teams_search", "label": "Teams search", "plan": {"planned": True}},
+                        ],
+                    },
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertTrue(proof["browser_focus_not_verified"])
+        self.assertFalse(proof["requested_class_target_found"])
+        self.assertFalse(proof["requested_class_navigation_plan_ready"])
+        self.assertFalse(proof["teams_search_target_found"])
+        self.assertFalse(proof["teams_search_navigation_plan_ready"])
+        self.assertEqual(proof["visible_navigation_sequence"], [])
+
     def test_full_loop_teams_login_gate_is_honest_not_inspected(self):
         proof = full_loop_regression.verify_teams_assignment_honesty({
             "result": {
@@ -3517,6 +3612,30 @@ class VerifySafeScriptTests(unittest.TestCase):
             seen_navigation_keys={"all_teams", "teams_search"},
         )
         self.assertIsNone(exhausted_plan)
+
+    def test_voice_loop_qa_visible_navigation_sequence_can_search_without_all_teams(self):
+        targets = {
+            "requested_class_plan": {"planned": False, "will_click": False},
+            "all_teams_plan": {"planned": False, "will_click": False, "reason": "no_label_match"},
+            "teams_search_plan": {
+                "planned": True,
+                "action": "type_search",
+                "will_click": False,
+                "point": {"x": 1821.84, "y": 146.25},
+                "query": "Music",
+            },
+            "assignments_plan": {"planned": False, "will_click": False, "reason": "no_label_match"},
+        }
+
+        sequence = voice_loop_qa.visible_navigation_sequence(targets)
+
+        self.assertEqual(
+            [step["key"] for step in sequence],
+            ["teams_search", "requested_class_after_search"],
+        )
+        self.assertEqual(sequence[0]["plan"]["action"], "type_search")
+        self.assertEqual(sequence[0]["plan"]["query"], "Music")
+        self.assertEqual(sequence[1]["plan"]["reason"], "requires_previous_step")
 
     def test_voice_loop_qa_next_navigation_skips_seen_semantic_key(self):
         targets = {
@@ -25999,6 +26118,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                         "point": {"x": 257.0, "y": 322.5},
                                         "coordinate_space": "image_pixels",
                                     },
+                                    "teams_search_navigation_plan_ready": True,
+                                    "teams_search_navigation_plan": {
+                                        "query": "Music",
+                                        "point": {"x": 1821.84, "y": 146.25},
+                                        "coordinate_space": "screen_points",
+                                    },
                                     "assignments_navigation_plan_ready": True,
                                     "assignments_navigation_plan": {
                                         "point": {"x": 68.13, "y": 577.17}
@@ -26046,6 +26171,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("next no-click sequence: requested class -> Assignments", blocker)
         self.assertIn("Music Class no-click navigation plan is ready at (214.0, 344.0) in screen points", blocker)
         self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5) in screenshot pixels", blocker)
+        self.assertIn("Teams Search no-click plan is ready for Music at (1821.84, 146.25) in screen points", blocker)
         self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17) in legacy coordinate space", blocker)
 
     def test_morning_status_pre_build_gate_teams_blocker_reports_focus_failure(self):

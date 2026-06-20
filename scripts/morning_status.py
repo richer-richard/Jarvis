@@ -405,6 +405,18 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             if point:
                 point_text = f" at ({point.get('x')}, {point.get('y')})"
             parts.append(f"All teams no-click navigation plan is ready{point_text}{coordinate_space_status_text(plan)}")
+        if proof.get("teams_search_navigation_plan_ready"):
+            plan = (
+                proof.get("teams_search_navigation_plan")
+                if isinstance(proof.get("teams_search_navigation_plan"), dict)
+                else {}
+            )
+            point = plan.get("point") if isinstance(plan.get("point"), dict) else {}
+            query = str(plan.get("query") or "requested class").strip() or "requested class"
+            point_text = ""
+            if point:
+                point_text = f" at ({point.get('x')}, {point.get('y')})"
+            parts.append(f"Teams Search no-click plan is ready for {query}{point_text}{coordinate_space_status_text(plan)}")
         if proof.get("assignments_navigation_plan_ready"):
             plan = proof.get("assignments_navigation_plan") if isinstance(proof.get("assignments_navigation_plan"), dict) else {}
             point = plan.get("point") if isinstance(plan.get("point"), dict) else {}

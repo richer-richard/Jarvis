@@ -2585,6 +2585,18 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
             },
         ]
 
+    search_steps = _visible_navigation_search_step(navigation_targets)
+    if search_steps:
+        return [
+            *search_steps,
+            {
+                "key": "requested_class_after_search",
+                "label": "requested class",
+                "reason": "look for the requested Teams class after searching",
+                "plan": {"planned": False, "reason": "requires_previous_step", "will_click": False},
+            },
+        ]
+
     return _visible_navigation_sequence_tail(navigation_targets)
 
 

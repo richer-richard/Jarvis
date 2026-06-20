@@ -1262,6 +1262,16 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         if isinstance(navigation_targets.get("all_teams_plan"), dict)
         else {}
     )
+    teams_search_target = (
+        navigation_targets.get("teams_search")
+        if isinstance(navigation_targets.get("teams_search"), dict)
+        else {}
+    )
+    teams_search_plan = (
+        navigation_targets.get("teams_search_plan")
+        if isinstance(navigation_targets.get("teams_search_plan"), dict)
+        else {}
+    )
     navigation_sequence = (
         navigation_targets.get("sequence")
         if isinstance(navigation_targets.get("sequence"), list)
@@ -1294,6 +1304,16 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         if isinstance(item, dict)
     )
     browser_focus_not_verified = str(follow_up.get("status") or "") == "browser_focus_not_verified"
+    if browser_focus_not_verified:
+        assignments_target = {}
+        assignments_plan = {}
+        requested_class_target = {}
+        requested_class_plan = {}
+        all_teams_target = {}
+        all_teams_plan = {}
+        teams_search_target = {}
+        teams_search_plan = {}
+        navigation_sequence = []
     capability_complete = bool(inspected_music)
     completion_status = (
         "complete"
@@ -1340,6 +1360,10 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "all_teams_target": all_teams_target,
         "all_teams_navigation_plan_ready": bool(all_teams_plan.get("planned")),
         "all_teams_navigation_plan": all_teams_plan,
+        "teams_search_target_found": bool(teams_search_target.get("found")),
+        "teams_search_target": teams_search_target,
+        "teams_search_navigation_plan_ready": bool(teams_search_plan.get("planned")),
+        "teams_search_navigation_plan": teams_search_plan,
         "visible_navigation_sequence": navigation_sequence,
         "visible_navigation_execution": (
             follow_up.get("visible_navigation_execution")
