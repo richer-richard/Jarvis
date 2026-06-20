@@ -1423,6 +1423,32 @@ def check_endpoint_model_context(base_url: str) -> str:
     return "model context exposes dictation input policy without calling models"
 
 
+def check_endpoint_speech_input_policy(base_url: str) -> str:
+    data = post_json(
+        "/api/command",
+        {
+            "command": "speech recognition candidates",
+            "suppress_speech": True,
+        },
+        base_url=base_url,
+    )
+    result = data.get("result") or {}
+    policy = result.get("live_stt_policy") if isinstance(result.get("live_stt_policy"), dict) else {}
+    speech = data.get("speech") if isinstance(data.get("speech"), dict) else {}
+    require(data.get("tool") == "voice.stt_candidates", f"tool was {data.get('tool')}")
+    require(result.get("recorded_audio") is False, f"recorded_audio was {result.get('recorded_audio')}")
+    require(result.get("requested_microphone_permission") is False, f"requested microphone was {result.get('requested_microphone_permission')}")
+    require(result.get("sent_audio") is False, f"sent_audio was {result.get('sent_audio')}")
+    require(result.get("preferred_live_candidate_id") == "apple-speech-native", f"preferred was {result.get('preferred_live_candidate_id')}")
+    require(result.get("unattended_fallback_candidate_id") == "faster-whisper-tiny-en-local", f"fallback was {result.get('unattended_fallback_candidate_id')}")
+    require(policy.get("permission_prompt_safe_default") == "local", f"safe default was {policy.get('permission_prompt_safe_default')}")
+    require(policy.get("apple_speech_requires_explicit_opt_in") is True, "Apple Speech was not explicit opt-in")
+    require(policy.get("apple_speech_request_permissions_during_status") is False, "status check may request Apple Speech permission")
+    require(speech.get("status") in {None, "suppressed_by_request"}, f"speech status was {speech}")
+    require(speech.get("spoken") in {None, False}, f"speech spoken was {speech}")
+    return "speech input policy prefers Apple Speech with local no-prompt fallback"
+
+
 def check_endpoint_voice_loop_echo(base_url: str) -> str:
     data = post_json(
         "/api/command",
@@ -1820,6 +1846,7 @@ def run_checks() -> dict[str, Any]:
         results.append(endpoint_check("endpoint_wake_audition", lambda: check_endpoint_wake_audition(active_base_url)))
         results.append(endpoint_check("endpoint_wake_audition_corpus", lambda: check_endpoint_wake_audition_corpus(active_base_url)))
         results.append(endpoint_check("endpoint_model_context", lambda: check_endpoint_model_context(active_base_url)))
+        results.append(endpoint_check("endpoint_speech_input_policy", lambda: check_endpoint_speech_input_policy(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_echo", lambda: check_endpoint_voice_loop_echo(active_base_url)))
         results.append(endpoint_check("endpoint_voice_loop_repeated_wake", lambda: check_endpoint_voice_loop_repeated_wake(active_base_url)))
         results.append(endpoint_check("endpoint_wake_debug", lambda: check_endpoint_wake_debug(active_base_url)))

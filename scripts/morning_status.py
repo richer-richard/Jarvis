@@ -28,6 +28,7 @@ VERIFICATION_HIGHLIGHTS = {
     "endpoint_preflight": "local preflight summary",
     "endpoint_plan_preview": "plan-only command preview",
     "endpoint_wake_simulation": "text wake simulation + command assessment",
+    "endpoint_speech_input_policy": "speech input policy",
     "endpoint_prompt_injection_scan": "prompt-injection scan",
     "morning_status_base_url_command": "morning status URL normalization",
     "dashboard_non_loopback_rejected": "loopback bind guard",

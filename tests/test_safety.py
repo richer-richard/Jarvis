@@ -2045,6 +2045,36 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(captured_payloads, [{"command": "status", "suppress_speech": True}])
 
+    def test_verify_safe_checks_speech_input_policy_without_audio_or_permission_prompt(self):
+        captured_payloads = []
+
+        def fake_post_json(path, payload, *, base_url):
+            captured_payloads.append((path, payload, base_url))
+            return {
+                "tool": "voice.stt_candidates",
+                "result": {
+                    "recorded_audio": False,
+                    "requested_microphone_permission": False,
+                    "sent_audio": False,
+                    "preferred_live_candidate_id": "apple-speech-native",
+                    "unattended_fallback_candidate_id": "faster-whisper-tiny-en-local",
+                    "live_stt_policy": {
+                        "permission_prompt_safe_default": "local",
+                        "apple_speech_requires_explicit_opt_in": True,
+                        "apple_speech_request_permissions_during_status": False,
+                    },
+                },
+                "speech": {"status": "suppressed_by_request", "spoken": False},
+            }
+
+        with patch("scripts.verify_safe.post_json", side_effect=fake_post_json):
+            detail = verify_safe.check_endpoint_speech_input_policy("http://127.0.0.1:8765")
+
+        self.assertEqual(detail, "speech input policy prefers Apple Speech with local no-prompt fallback")
+        self.assertEqual(captured_payloads[0][0], "/api/command")
+        self.assertEqual(captured_payloads[0][1]["command"], "speech recognition candidates")
+        self.assertTrue(captured_payloads[0][1]["suppress_speech"])
+
     def test_verifiers_refuse_non_loopback_base_url_before_http(self):
         with patch("scripts.verify_safe.urllib.request.urlopen") as urlopen_mock:
             with self.assertRaises(ValueError):
@@ -2077,6 +2107,7 @@ class VerifySafeScriptTests(unittest.TestCase):
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_speech_mute", side_effect=fake_check("speech_mute")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_quiet_command", side_effect=fake_check("quiet_command")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_model_context", side_effect=fake_check("model_context")), \
+             patch("scripts.verify_no_prompt.verify_safe.check_endpoint_speech_input_policy", side_effect=fake_check("speech_input_policy")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_voice_loop_echo", side_effect=fake_check("voice_echo")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_voice_loop_repeated_wake", side_effect=fake_check("repeated_wake")), \
              patch("scripts.verify_no_prompt.verify_safe.check_endpoint_wake_debug", side_effect=fake_check("wake_debug")), \
@@ -2096,6 +2127,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "speech_mute",
                 "quiet_command",
                 "model_context",
+                "speech_input_policy",
                 "voice_echo",
                 "repeated_wake",
                 "wake_debug",
