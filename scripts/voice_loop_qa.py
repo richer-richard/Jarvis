@@ -1932,7 +1932,19 @@ def run_native_visible_screen_follow_up(
     if initial_browser_page_follow_up.get("status") != "browser_permission_blocked":
         browser_open = open_visible_screen_follow_up_url(command_response, timeout=timeout)
         result.update(browser_open)
-        if browser_open.get("attempted"):
+        if (
+            browser_open.get("browser_open_attempted")
+            and browser_open.get("browser_open_returncode") == 0
+            and browser_open.get("browser_open_target_host_verified") is False
+        ):
+            return {
+                **result,
+                "status": "browser_focus_not_verified",
+                "used": False,
+                "attempts": 0,
+                "duration_seconds": round(time.monotonic() - started, 3),
+            }
+        if browser_open.get("browser_open_attempted"):
             time.sleep(VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS)
 
         browser_page_follow_up = run_browser_page_follow_up(
@@ -2518,7 +2530,15 @@ tell application "Google Chrome"
             set active tab index to (count of tabs)
         end tell
     end if
+    delay 0.3
+    set frontURL to ""
+    set frontTitle to ""
+    try
+        set frontURL to URL of active tab of front window
+        set frontTitle to title of active tab of front window
+    end try
 end tell
+return frontTitle & linefeed & frontURL
 """
     try:
         completed = subprocess.run(
@@ -2529,13 +2549,23 @@ end tell
             timeout=max(10.0, timeout),
             check=False,
         )
+        stdout = completed.stdout.strip()
+        title, active_url = parse_chrome_front_tab_output(stdout)
+        active_host = (urlparse(active_url).hostname or "").lower()
+        target_host_verified = active_host == target_host or (
+            target_host in {"teams.microsoft.com", "teams.cloud.microsoft"}
+            and active_host in {"teams.microsoft.com", "teams.cloud.microsoft"}
+        )
         return {
             "browser_open_attempted": True,
             "browser_url": url,
             "browser_open_method": "chrome_existing_session",
             "browser_open_returncode": completed.returncode,
-            "browser_open_stdout_tail": completed.stdout.strip()[-500:],
+            "browser_open_stdout_tail": stdout[-500:],
             "browser_open_stderr_tail": completed.stderr.strip()[-500:],
+            "browser_open_active_title": title,
+            "browser_open_active_url": active_url,
+            "browser_open_target_host_verified": bool(completed.returncode == 0 and target_host_verified),
         }
     except Exception as error:
         return {
@@ -2547,6 +2577,13 @@ end tell
 
 def escape_applescript_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def parse_chrome_front_tab_output(stdout: str) -> tuple[str, str]:
+    lines = str(stdout or "").splitlines()
+    title = lines[0].strip() if lines else ""
+    active_url = lines[1].strip() if len(lines) > 1 else ""
+    return title, active_url
 
 
 def browser_page_follow_up_response_looks_useful(response: dict[str, Any], *, command_text: str = "") -> bool:

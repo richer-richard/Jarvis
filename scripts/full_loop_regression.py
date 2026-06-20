@@ -1177,6 +1177,8 @@ def run_teams_assignment_case(
             )
             if action_proof.get("chrome_page_read_blocked"):
                 warnings.append("Chrome page-read was blocked before the visible-screen fallback.")
+            if action_proof.get("browser_focus_not_verified"):
+                warnings.append("Chrome did not foreground the Teams tab before visible-screen OCR.")
             if action_proof.get("requested_class_target_found"):
                 warnings.append("Visible requested-class navigation target was found for the next safe navigation step.")
             if action_proof.get("all_teams_target_found"):
@@ -1280,6 +1282,7 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         for item in (browser_follow_up, initial_browser_follow_up)
         if isinstance(item, dict)
     )
+    browser_focus_not_verified = str(follow_up.get("status") or "") == "browser_focus_not_verified"
     capability_complete = bool(inspected_music)
     completion_status = (
         "complete"
@@ -1308,6 +1311,9 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "honest_wrong_subject": honest_wrong_subject,
         "honest_permission_blocked": honest_permission_blocked,
         "chrome_page_read_blocked": chrome_page_read_blocked,
+        "browser_focus_not_verified": browser_focus_not_verified,
+        "browser_open_active_url": str(follow_up.get("browser_open_active_url") or ""),
+        "browser_open_active_title": str(follow_up.get("browser_open_active_title") or ""),
         "assignments_target_found": bool(assignments_target.get("found")),
         "assignments_target": assignments_target,
         "assignments_navigation_plan_ready": bool(assignments_plan.get("planned")),

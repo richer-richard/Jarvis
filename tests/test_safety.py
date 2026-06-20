@@ -839,6 +839,29 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(proof["honest_wrong_subject"])
         self.assertIn("Geography of Greece", proof["visible_reply_preview"])
 
+    def test_full_loop_teams_honesty_reports_browser_focus_failure(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": (
+                    "Opening your Teams bookmark in signed-in Chrome now. "
+                    "I have not inspected the newest Music assignment until a later visible page or screen read succeeds."
+                ),
+                "visible_screen_follow_up": {
+                    "status": "browser_focus_not_verified",
+                    "tool": "screen.visible_text",
+                    "browser_open_active_title": "Codex",
+                    "browser_open_active_url": "https://chatgpt.com/codex",
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertFalse(proof["capability_complete"])
+        self.assertEqual(proof["completion_status"], "not_inspected")
+        self.assertTrue(proof["browser_focus_not_verified"])
+        self.assertEqual(proof["browser_open_active_title"], "Codex")
+        self.assertEqual(proof["browser_open_active_url"], "https://chatgpt.com/codex")
+
     def test_full_loop_email_sharpay_accepts_resolved_sender_summary(self):
         proof = full_loop_regression.verify_email_sharpay_honesty({
             "result": {
@@ -3610,7 +3633,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                      "tool": "screen.visible_text",
                      "visible_reply_preview": "Enter Password",
                  },
-             ) as attempt_mock:
+             ) as attempt_mock, \
+             patch("scripts.voice_loop_qa.time.sleep") as sleep_mock:
             result = voice_loop_qa.run_native_visible_screen_follow_up(
                 command_text="Look in Teams for my newest Music assignment.",
                 command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
@@ -3626,6 +3650,51 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["tool"], "browser.read_page")
         self.assertEqual(result["attempts"], 1)
         self.assertTrue(result["browser_open_attempted"])
+        sleep_mock.assert_any_call(voice_loop_qa.VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS)
+
+    def test_voice_loop_qa_visible_screen_followup_refuses_ocr_when_teams_tab_not_foregrounded(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 return_value={
+                     "used": False,
+                     "status": "response_not_useful",
+                     "tool": "browser.read_page",
+                     "response_status": "no_page_text",
+                     "visible_reply_preview": "I need a visible page before I can summarize it.",
+                 },
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.open_visible_screen_follow_up_url",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_url": "https://teams.microsoft.com/v2/",
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "https://chatgpt.com/codex",
+                     "browser_open_active_title": "Codex",
+                     "browser_open_target_host_verified": False,
+                 },
+             ), \
+             patch("scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt") as attempt_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+            )
+
+        attempt_mock.assert_not_called()
+        self.assertEqual(result["status"], "browser_focus_not_verified")
+        self.assertFalse(result["used"])
+        self.assertEqual(result["browser_open_active_url"], "https://chatgpt.com/codex")
+        self.assertEqual(result["attempts"], 0)
+
+    def test_voice_loop_qa_parse_chrome_front_tab_output(self):
+        title, active_url = voice_loop_qa.parse_chrome_front_tab_output("Microsoft Teams\nhttps://teams.microsoft.com/v2/\n")
+
+        self.assertEqual(title, "Microsoft Teams")
+        self.assertEqual(active_url, "https://teams.microsoft.com/v2/")
 
     def test_voice_loop_qa_visible_screen_followup_preserves_assignment_mismatch_after_browser_block(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
@@ -24809,6 +24878,45 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Music Class no-click navigation plan is ready at (214.0, 344.0)", blocker)
         self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5)", blocker)
         self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17)", blocker)
+
+    def test_morning_status_pre_build_gate_teams_blocker_reports_focus_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "summary.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {
+                                    "completion_status": "not_inspected",
+                                    "browser_focus_not_verified": True,
+                                    "browser_open_active_title": "Codex",
+                                    "browser_open_active_url": "https://chatgpt.com/codex",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            blocker = pre_build_gate_teams_blocker(
+                {
+                    "results": [
+                        {
+                            "id": "full_loop_regression",
+                            "ok": False,
+                            "stdout_tail": f"Report: {report_path}\nteams_music_assignment_honesty: warning",
+                        }
+                    ]
+                }
+            )
+
+        self.assertIn("Teams assignment is not_inspected", blocker)
+        self.assertIn("Chrome did not foreground Teams before OCR", blocker)
+        self.assertIn("active: Codex", blocker)
 
     def test_morning_status_pre_build_gate_cleanup_warning_summary(self):
         warning = pre_build_gate_cleanup_warning(

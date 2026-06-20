@@ -318,6 +318,11 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
         parts = [f"Teams assignment is {completion}"]
         if proof.get("chrome_page_read_blocked"):
             parts.append("Chrome page-read is blocked")
+        if proof.get("browser_focus_not_verified"):
+            active_title = str(proof.get("browser_open_active_title") or "").strip()
+            active_url = str(proof.get("browser_open_active_url") or "").strip()
+            detail = active_title or active_url
+            parts.append(f"Chrome did not foreground Teams before OCR{f' (active: {detail})' if detail else ''}")
         sequence = proof.get("visible_navigation_sequence")
         if isinstance(sequence, list) and sequence:
             labels = [
