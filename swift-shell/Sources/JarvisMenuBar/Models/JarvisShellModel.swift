@@ -39,6 +39,7 @@ final class JarvisShellModel: ObservableObject {
     @Published private(set) var browserStatusText: String = "Browser ready"
     @Published private(set) var browserHintText: String = ""
     @Published private(set) var browserAuthenticatedLane: Bool = false
+    @Published private(set) var actionEvents: [JarvisActionEvent] = []
     @Published private(set) var messages: [ChatMessage] = [
         ChatMessage(
             role: .jarvis,
@@ -252,6 +253,11 @@ final class JarvisShellModel: ObservableObject {
                 state = response.muted ? "Muted" : "Ready"
                 let muteLabel = speechMuteText
                 chatExportText = Self.speechMuteChatExportText(label: muteLabel, muted: response.muted)
+                recordActionEvent(
+                    kind: .speech,
+                    title: response.muted ? "Speech muted" : "Speech unmuted",
+                    detail: Self.speechMuteUserMessage(label: muteLabel, muted: response.muted)
+                )
                 messages.append(
                     ChatMessage(
                         role: .system,
@@ -289,6 +295,7 @@ final class JarvisShellModel: ObservableObject {
                 let reply = assistantReply(for: response).trimmingCharacters(in: .whitespacesAndNewlines)
                 state = "Ready"
                 chatExportText = reply.isEmpty ? "Music stop sent" : reply
+                recordActionEvent(kind: .tool, title: "Music stop sent", detail: reply.isEmpty ? "Asked the worker to stop music." : reply)
                 messages.append(ChatMessage(role: .jarvis, text: reply.isEmpty ? "Music stop sent." : reply))
             } catch {
                 state = "Error"
@@ -306,6 +313,7 @@ final class JarvisShellModel: ObservableObject {
                 _ = try await sendUnmuteAudio()
                 state = "Ready"
                 chatExportText = "Audio unmute sent"
+                recordActionEvent(kind: .tool, title: "Audio unmute sent", detail: "Jarvis sent the system audio unmute command.")
                 messages.append(ChatMessage(role: .system, text: "Jarvis sent the system audio unmute command."))
             } catch {
                 state = "Error"
@@ -742,6 +750,7 @@ final class JarvisShellModel: ObservableObject {
             state = "Working"
             chatExportText = "Busy"
             messages.append(ChatMessage(role: .jarvis, text: Self.busyReplyText, detail: "Busy"))
+            recordActionEvent(kind: .status, title: "Command held", detail: "Jarvis was already working, so this command was not started.")
             return
         }
         let drivesSummonSurface = pendingWakeSummonCommand
@@ -756,6 +765,7 @@ final class JarvisShellModel: ObservableObject {
         }
         isBusy = true
         messages.append(ChatMessage(role: .user, text: trimmed))
+        recordActionEvent(kind: .command, title: "Command sent", detail: trimmed)
         command = ""
 
         Task {
@@ -810,6 +820,15 @@ final class JarvisShellModel: ObservableObject {
             "history_payload_preview": historyPreview,
             "history_payload_preview_note": "This is the filtered history Jarvis would send with the current command; Working rows, system rows, and the current user command are removed.",
             "last_result_text": Self.redactChatExportText(resultText),
+            "action_events": actionEvents.map { event in
+                [
+                    "id": event.id.uuidString,
+                    "kind": event.kind.rawValue,
+                    "title": Self.redactChatExportText(event.title),
+                    "detail": Self.redactChatExportText(event.detail),
+                    "created_at": ISO8601DateFormatter().string(from: event.createdAt),
+                ]
+            },
             "messages": messages.map { message in
                 var item: [String: Any] = [
                     "id": message.id.uuidString,
@@ -1542,6 +1561,11 @@ final class JarvisShellModel: ObservableObject {
             }
 
             tool = response.tool ?? "unknown"
+            recordActionEvent(
+                kind: .tool,
+                title: "Used \(tool)",
+                detail: Self.actionEventDetail(from: response)
+            )
             confirmation = response.confirmation
             state = response.confirmation?.required == true ? "Approval" : "Ready"
             resultText = render(response)
@@ -1550,6 +1574,7 @@ final class JarvisShellModel: ObservableObject {
             let finalText = assistantReply(for: response)
             finalVisibleText = finalText
             let finalDetail = chatDetail(for: response)
+            recordActionEvent(kind: .reply, title: "Jarvis replied", detail: finalText)
             notePotentialSpeech(from: response.speech?.anyValue, fallbackText: finalText)
             stopProgressNudges()
             recordTurnPhase("Answering", detail: "Final visible answer displayed.")
@@ -1571,6 +1596,7 @@ final class JarvisShellModel: ObservableObject {
             updateTimerMirrorsIfNeeded(from: response)
             if browserSurfaceOpened {
                 chatExportText = "Browser opened"
+                recordActionEvent(kind: .browser, title: "Browser opened", detail: browserAddressText)
             }
             finishSummon(finalText)
             turnEndedCleanly = true
@@ -1587,6 +1613,7 @@ final class JarvisShellModel: ObservableObject {
                 "command": commandText,
                 "error": "\(error)",
             ]
+            recordActionEvent(kind: .error, title: "Worker error", detail: "\(error)")
             stopProgressNudges()
             if let placeholderId {
                 replaceMessage(
@@ -1975,6 +2002,49 @@ final class JarvisShellModel: ObservableObject {
         let message = ChatMessage(role: .jarvis, text: text, detail: detail)
         messages.append(message)
         return message.id
+    }
+
+    private func recordActionEvent(kind: JarvisActionKind, title: String, detail: String) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else {
+            return
+        }
+        actionEvents.append(
+            JarvisActionEvent(
+                kind: kind,
+                title: cleanTitle,
+                detail: cleanDetail.isEmpty ? "No extra detail." : String(cleanDetail.prefix(500))
+            )
+        )
+        if actionEvents.count > 40 {
+            actionEvents.removeFirst(actionEvents.count - 40)
+        }
+    }
+
+    private static func actionEventDetail(from response: CommandResponse) -> String {
+        var parts: [String] = []
+        if let summary = response.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+            parts.append(summary)
+        }
+        if let executed = response.executed {
+            parts.append(executed ? "Executed." : "Prepared only.")
+        }
+        if let auditEventId = response.auditEventId, !auditEventId.isEmpty {
+            parts.append("Audit: \(auditEventId)")
+        }
+        if let result = response.result?.objectValue {
+            if let source = result["source"]?.stringValue, !source.isEmpty {
+                parts.append("Source: \(source)")
+            }
+            if let url = result["url"]?.stringValue, !url.isEmpty {
+                parts.append("URL: \(url)")
+            }
+            if let path = result["path"]?.stringValue, !path.isEmpty {
+                parts.append("Path: \(path)")
+            }
+        }
+        return parts.isEmpty ? "Tool returned no summary." : parts.joined(separator: " ")
     }
 
     private func conversationHistoryPayload(currentCommand: String) -> [[String: String]] {
@@ -3746,4 +3816,36 @@ enum ChatRole: String, Equatable {
     case user
     case jarvis
     case system
+}
+
+struct JarvisActionEvent: Identifiable, Equatable {
+    let id: UUID
+    let kind: JarvisActionKind
+    let title: String
+    let detail: String
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        kind: JarvisActionKind,
+        title: String,
+        detail: String,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.createdAt = createdAt
+    }
+}
+
+enum JarvisActionKind: String, Equatable {
+    case command
+    case status
+    case tool
+    case browser
+    case speech
+    case reply
+    case error
 }

@@ -3,8 +3,9 @@ import SwiftUI
 
 struct JarvisSummonOverlayView: View {
     @ObservedObject var model: JarvisShellModel
-    private let panelWidth: CGFloat = 326
-    private let panelHeight: CGFloat = 92
+    static let panelSize = CGSize(width: 300, height: 82)
+    private let panelWidth: CGFloat = Self.panelSize.width
+    private let panelHeight: CGFloat = Self.panelSize.height
 
     var body: some View {
         let surface = model.summonSurface
@@ -17,7 +18,7 @@ struct JarvisSummonOverlayView: View {
 
             HStack(spacing: 11) {
                 JarvisSummonCore(phase: surface.phase)
-                    .frame(width: 43, height: 43)
+                    .frame(width: 38, height: 38)
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -68,8 +69,10 @@ struct JarvisSummonOverlayView: View {
         .frame(width: panelWidth, height: panelHeight)
         .clipShape(Capsule(style: .continuous))
         .contentShape(Capsule(style: .continuous))
+        .compositingGroup()
         .shadow(color: Color.black.opacity(0.24), radius: 18, x: 0, y: 9)
         .shadow(color: accentColor(for: surface.phase).opacity(0.16), radius: 18, x: 0, y: 5)
+        .background(Color.clear)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: surface)
     }
 
@@ -175,6 +178,7 @@ private struct JarvisGlassCapsule: View {
                     .glassEffect(.regular.tint(accent.opacity(0.18)), in: Capsule(style: .continuous))
             } else {
                 JarvisVisualEffectBackground()
+                    .background(Color.clear)
                     .clipShape(Capsule(style: .continuous))
             }
 

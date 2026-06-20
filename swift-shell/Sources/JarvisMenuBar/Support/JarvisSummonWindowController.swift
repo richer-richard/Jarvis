@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class JarvisSummonWindowController {
     private let window: NSPanel
-    private let size = NSSize(width: 326, height: 92)
+    private let size = NSSize(width: JarvisSummonOverlayView.panelSize.width, height: JarvisSummonOverlayView.panelSize.height)
     private let edgeInset: CGFloat = 12
 
     init(model: JarvisShellModel) {
@@ -15,6 +15,9 @@ final class JarvisSummonWindowController {
         hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
         hostingController.view.layer?.isOpaque = false
         hostingController.view.layer?.masksToBounds = false
+        hostingController.view.layer?.cornerRadius = size.height / 2
+        hostingController.view.layer?.cornerCurve = .continuous
+        hostingController.view.layer?.contentsFormat = .RGBA8Uint
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -26,6 +29,8 @@ final class JarvisSummonWindowController {
         panel.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView?.layer?.isOpaque = false
         panel.contentView?.layer?.masksToBounds = false
+        panel.contentView?.layer?.cornerRadius = size.height / 2
+        panel.contentView?.layer?.cornerCurve = .continuous
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false

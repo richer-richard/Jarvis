@@ -16134,8 +16134,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("styleMask: [.borderless, .nonactivatingPanel]", window_source)
         self.assertIn("panel.level = .statusBar", window_source)
         self.assertIn("panel.ignoresMouseEvents = true", window_source)
-        self.assertIn("NSSize(width: 326, height: 92)", window_source)
+        self.assertIn("static let panelSize = CGSize(width: 300, height: 82)", view_source)
+        self.assertIn("NSSize(width: JarvisSummonOverlayView.panelSize.width", window_source)
         self.assertIn("layer?.backgroundColor = NSColor.clear.cgColor", window_source)
+        self.assertIn("layer?.cornerRadius = size.height / 2", window_source)
+        self.assertIn("layer?.cornerCurve = .continuous", window_source)
         self.assertIn("visibleFrame.maxX - size.width - edgeInset", window_source)
         self.assertIn("visibleFrame.maxY - size.height - edgeInset", window_source)
         self.assertIn("enum JarvisSummonPhase", surface_source)
@@ -16151,6 +16154,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("schedulePostTurnRefresh()", model_source)
         self.assertIn('Button("Popout")', panel_source)
         self.assertIn("glassEffect(.regular.tint", view_source)
+        self.assertIn(".compositingGroup()", view_source)
+        self.assertIn(".background(Color.clear)", view_source)
         self.assertIn("NSVisualEffectView", view_source)
         self.assertIn("AngularGradient", view_source)
         self.assertIn("TimelineView(.animation)", view_source)
@@ -16169,6 +16174,40 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("Writing the response.", view_source)
         self.assertNotIn("Writing the response.", model_source)
         self.assertNotIn("phaseProgressWidth", view_source)
+
+    def test_macos_panel_exposes_visible_action_timeline(self):
+        model_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Models"
+            / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+        panel_source = (
+            PROJECT_ROOT
+            / "swift-shell"
+            / "Sources"
+            / "JarvisMenuBar"
+            / "Views"
+            / "JarvisPanelView.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("@Published private(set) var actionEvents: [JarvisActionEvent] = []", model_source)
+        self.assertIn("struct JarvisActionEvent", model_source)
+        self.assertIn("enum JarvisActionKind", model_source)
+        self.assertIn("recordActionEvent(kind: .command, title: \"Command sent\"", model_source)
+        self.assertIn("recordActionEvent(", model_source)
+        self.assertIn("Self.actionEventDetail(from: response)", model_source)
+        self.assertIn("\"action_events\": actionEvents.map", model_source)
+        self.assertIn("activityTimelinePanel", panel_source)
+        self.assertIn("Text(\"Jarvis Activity\")", panel_source)
+        self.assertIn("Text(\"What Jarvis said and did\")", panel_source)
+        self.assertIn("JarvisActionRow(event: event)", panel_source)
+        self.assertIn("Image(systemName: symbolName)", panel_source)
+        self.assertIn("case browser", model_source)
+        self.assertIn("case speech", model_source)
+        self.assertIn("case reply", model_source)
 
     def test_swift_menu_bar_has_shut_up_toggle_contract(self):
         app_source = (

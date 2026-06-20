@@ -40,6 +40,7 @@
 - [x] Add a Hey Jarvis self-test probe proving Stop cancels a pending delayed restart and leaves the listener Off.
 - [x] Add a model-route guardrail so clear RAM/Activity Monitor requests execute the safe memory tool if the first model punts to chat.
 - [x] Rebuild and launch Jarvis `0.1.474` build `474` so the normal bundled app contains the current model-route guardrails.
+- [ ] Start the official Jarvis macOS UI upgrade: redesign the main app toward native SwiftUI/macOS Liquid Glass patterns, show every user-visible Jarvis utterance and every meaningful Jarvis action/tool step, and remove the ugly rectangular gradient/color block behind the summon popout.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn

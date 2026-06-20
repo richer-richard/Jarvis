@@ -12,6 +12,7 @@ struct JarvisPanelView: View {
             chatSection
             composer
             quickActions
+            activityTimelinePanel
             if model.isBrowserVisible {
                 JarvisBrowserPanelView(model: model)
             }
@@ -121,6 +122,39 @@ struct JarvisPanelView: View {
             QuickActionButton("Screen", command: "screenshot capability", model: model)
             QuickActionButton("Codex", command: "ask Codex to review this project", model: model)
         }
+    }
+
+    private var activityTimelinePanel: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Jarvis Activity")
+                    .font(.caption.weight(.semibold))
+                Text("What Jarvis said and did")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !model.actionEvents.isEmpty {
+                    Text("\(model.actionEvents.count)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if model.actionEvents.isEmpty {
+                Text("Actions will appear here as Jarvis reads, browses, speaks, or uses tools.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 7) {
+                    ForEach(model.actionEvents.suffix(6).reversed()) { event in
+                        JarvisActionRow(event: event)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -416,6 +450,79 @@ private struct ChatBubble: View {
 
     private var bubbleBackground: some ShapeStyle {
         isUser ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.regularMaterial)
+    }
+}
+
+private struct JarvisActionRow: View {
+    let event: JarvisActionEvent
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbolName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(symbolColor)
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(event.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 8)
+                    Text(event.createdAt.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+
+                Text(event.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var symbolName: String {
+        switch event.kind {
+        case .command:
+            return "paperplane.fill"
+        case .status:
+            return "clock.fill"
+        case .tool:
+            return "wrench.and.screwdriver.fill"
+        case .browser:
+            return "safari.fill"
+        case .speech:
+            return "speaker.wave.2.fill"
+        case .reply:
+            return "text.bubble.fill"
+        case .error:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var symbolColor: Color {
+        switch event.kind {
+        case .command:
+            return .blue
+        case .status:
+            return .orange
+        case .tool:
+            return .purple
+        case .browser:
+            return .teal
+        case .speech:
+            return .green
+        case .reply:
+            return .cyan
+        case .error:
+            return .red
+        }
     }
 }
 
