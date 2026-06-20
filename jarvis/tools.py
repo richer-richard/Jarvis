@@ -9781,7 +9781,7 @@ def _chrome_teams_deeplink_route_from_snapshot(goal: str) -> dict[str, Any]:
     goal_tokens = {
         token
         for token in re.findall(r"[a-z0-9]+", str(goal or "").casefold())
-        if token not in {"go", "to", "the", "my", "newest", "latest", "assignment", "assignments", "class", "classes", "teams", "for", "me", "and", "ask", "questions", "open", "look", "in"}
+        if len(token) >= 3 and token not in {"the", "newest", "latest", "assignment", "assignments", "class", "classes", "teams", "for", "and", "ask", "questions", "open", "look", "information", "answer", "answers", "finish", "finished", "complete", "completed"}
     }
     scored: list[tuple[int, int, dict[str, Any]]] = []
     for index, raw_link in enumerate(links):
@@ -9794,14 +9794,15 @@ def _chrome_teams_deeplink_route_from_snapshot(goal: str) -> dict[str, Any]:
             str(raw_link.get(key) or "")
             for key in ("title", "source", "class_id", "channel_id", "view", "action")
         ).casefold()
+        haystack_tokens = set(re.findall(r"[a-z0-9]+", haystack))
         score = 0
         if str(raw_link.get("assignment_ids") or "") not in {"", "[]"}:
             score += 3
         if str(raw_link.get("source") or "") == "teams.classroom_entity":
             score += 2
-        if goal_tokens and any(token in haystack for token in goal_tokens):
+        if goal_tokens and any(token in haystack_tokens for token in goal_tokens):
             score += 8
-        if "music" in goal_tokens and "music" in haystack:
+        if "music" in goal_tokens and "music" in haystack_tokens:
             score += 12
         scored.append((score, -index, raw_link))
     if not scored:

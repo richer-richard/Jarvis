@@ -14615,6 +14615,44 @@ Pages occupied by compressor:             10.
         self.assertIn("browser.open_url", {phase["tool"] for phase in result["phases"]})
         self.assertIn("visible Teams page read succeeds", result["reply"])
 
+    def test_teams_assignment_deeplink_selector_ignores_short_stt_noise_tokens(self):
+        fake_bookmark_plan = {
+            "tool": "browser.bookmark_open",
+            "status": "planned",
+            "url": "https://teams.microsoft.com/v2/",
+            "read_private_content": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "chrome_teams_deeplinks.json"
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.chrome_teams_deeplinks.v1",
+                        "links": [
+                            {
+                                "source": "teams.classroom_entity",
+                                "title": "World History assignment",
+                                "url": "https://teams.microsoft.com/l/entity/66aeee93-507d-479a-a3ef-8f494af43945/classroom?context=history",
+                                "class_id": "history-class",
+                                "assignment_ids": ["history-assignment"],
+                                "view": "assignment-viewer",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("jarvis.tools.chrome_bookmark_open_plan", return_value=fake_bookmark_plan), \
+                 patch("jarvis.tools.CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH", snapshot_path):
+                result = teams_assignment_workflow_plan(
+                    "look in teams for my newest music assignment n ask me a list of questions to answer"
+                )
+
+        self.assertFalse(result["uses_teams_deeplink_first"])
+        self.assertTrue(result["uses_imported_bookmark_first"])
+        self.assertEqual(result["teams_deeplink_route_status"], "no_prompt_match")
+        self.assertEqual(result["url"], "https://teams.microsoft.com/v2/")
+
     def test_teams_assignment_audit_redacts_bookmark_target(self):
         safe = _audit_safe_result(
             "teams.assignment",
