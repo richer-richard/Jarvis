@@ -122,9 +122,6 @@ public enum JarvisNativeOutlookReader {
             ownerNames: ownerNames,
             preferredWindowTitleContains: cleanPreferredWindowTitle?.isEmpty == false ? cleanPreferredWindowTitle : nil
         )
-        if initialWindowCapture == nil, cleanPreferredWindowTitle?.isEmpty == false {
-            throw NativeOutlookReadError.captureFailed
-        }
         guard let initialImage = initialWindowCapture?.image ?? CGDisplayCreateImage(CGMainDisplayID()) else {
             throw NativeOutlookReadError.captureFailed
         }
@@ -132,7 +129,7 @@ public enum JarvisNativeOutlookReader {
         var image = initialImage
         var windowCapture = initialWindowCapture
         var lines = try recognizeTextLines(in: image)
-        var source = "native_vision_ocr_screen"
+        var source = initialWindowCapture == nil ? "native_vision_ocr_screen_display_fallback" : "native_vision_ocr_screen"
         let initialText = lines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         if (lines.isEmpty || lines.count <= 2 || initialText.count < 80),
            ownerNames != nil,
@@ -286,11 +283,14 @@ public enum JarvisNativeOutlookReader {
            }) {
             selected = matchingCandidate
         } else if preferredTitle?.isEmpty == false {
-            selected = nil
+            selected = candidates.first
         } else {
             selected = candidates.first
         }
         guard let selected else {
+            if ownerNames?.contains("Google Chrome") == true {
+                return captureChromeFrontWindowViaAppleScript()
+            }
             return nil
         }
 
@@ -306,6 +306,9 @@ public enum JarvisNativeOutlookReader {
             kCGNullWindowID,
             imageOptions
         )
+        if image == nil, selected.ownerName == "Google Chrome" {
+            return captureChromeFrontWindowViaAppleScript()
+        }
         guard let image else {
             return nil
         }
@@ -314,6 +317,76 @@ public enum JarvisNativeOutlookReader {
             bounds: selected.bounds,
             ownerName: selected.ownerName,
             windowTitle: selected.windowTitle
+        )
+    }
+
+    private static func captureChromeFrontWindowViaAppleScript() -> NativeWindowCapture? {
+        let script = """
+        tell application "Google Chrome"
+            if (count of windows) is 0 then return ""
+            set windowBounds to bounds of front window
+            set activeTitle to title of active tab of front window
+            return activeTitle & linefeed & (item 1 of windowBounds as text) & "," & (item 2 of windowBounds as text) & "," & (item 3 of windowBounds as text) & "," & (item 4 of windowBounds as text)
+        end tell
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        guard let stdout = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        let parts = stdout.split(separator: "\n", omittingEmptySubsequences: false)
+        guard parts.count >= 2 else {
+            return nil
+        }
+        let title = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let values = parts[1].split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard values.count == 4 else {
+            return nil
+        }
+        let bounds = CGRect(
+            x: values[0],
+            y: values[1],
+            width: max(0, values[2] - values[0]),
+            height: max(0, values[3] - values[1])
+        )
+        guard bounds.width >= 240, bounds.height >= 180,
+              let displayImage = CGDisplayCreateImage(CGMainDisplayID()) else {
+            return nil
+        }
+        let displayBounds = CGDisplayBounds(CGMainDisplayID())
+        let scaleX = CGFloat(displayImage.width) / max(displayBounds.width, 1)
+        let scaleY = CGFloat(displayImage.height) / max(displayBounds.height, 1)
+        var crop = CGRect(
+            x: (bounds.origin.x - displayBounds.origin.x) * scaleX,
+            y: (bounds.origin.y - displayBounds.origin.y) * scaleY,
+            width: bounds.width * scaleX,
+            height: bounds.height * scaleY
+        ).integral
+        let imageRect = CGRect(x: 0, y: 0, width: displayImage.width, height: displayImage.height)
+        crop = crop.intersection(imageRect)
+        guard crop.width > 0, crop.height > 0,
+              let croppedImage = displayImage.cropping(to: crop) else {
+            return nil
+        }
+        return NativeWindowCapture(
+            image: croppedImage,
+            bounds: bounds,
+            ownerName: "Google Chrome",
+            windowTitle: title
         )
     }
 

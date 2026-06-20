@@ -28,7 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
-    "Jarvis 0.1.483 cleans up Teams browser fallback honesty: if Chrome/Teams OCR only sees tab-strip or shell text with no assignment context, Jarvis reports that Teams page text is not reliably readable instead of saying it read tab junk as a summary.",
+    "Jarvis 0.1.484 improves Teams visible-screen recovery: if strict Chrome window capture fails after Teams is foregrounded, Jarvis can fall back to main-display Apple Vision OCR instead of stopping at a native capture failure.",
     "Jarvis 0.1.482 makes Music playback fail closed: the old LocalOS/Chrome playback fallback is disabled by default, requires explicit developer opt-in, and a disabled-bridge probe proves Jarvis returns `played_by: none` instead of opening mystery audio.",
     "Jarvis 0.1.481 makes the main app more inspectable: Jarvis Activity now shows a bounded scrollable history of up to 24 recent command, tool, browser, speech, reply, and error events instead of only the last six.",
     "Jarvis 0.1.480 tightens the polished summon popout: the capsule is smaller, the fallback surface now uses native SwiftUI material instead of a rectangular AppKit blur view, and the host panel masks transparent layers so fullscreen should not show a stray block behind the glass.",

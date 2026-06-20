@@ -4523,6 +4523,30 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(merged["response_status"], "native_capture_failed")
         self.assertIn("could not capture the Teams window", merged["visible_reply_preview"])
 
+    def test_voice_loop_qa_merge_follow_up_failures_prefers_focus_failure(self):
+        merged = voice_loop_qa.merge_follow_up_failures(
+            {
+                "status": "browser_permission_blocked",
+                "tool": "browser.read_page",
+                "response_status": "teams_page_text_unavailable",
+                "visible_reply_preview": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
+            },
+            {
+                "status": "browser_focus_not_verified",
+                "tool": "screen.visible_text",
+                "capture_status": "captured",
+                "response_status": "teams_page_text_unavailable",
+                "visible_reply_preview": (
+                    "Teams was opened in Chrome, but the visible screen OCR did not contain Teams content. "
+                    "I have not inspected the newest Music assignment yet."
+                ),
+            },
+        )
+
+        self.assertEqual(merged["status"], "browser_focus_not_verified")
+        self.assertEqual(merged["tool"], "screen.visible_text")
+        self.assertIn("did not contain Teams content", merged["visible_reply_preview"])
+
     def test_voice_loop_qa_run_speech_audit_uses_blocked_browser_followup_as_effective_reply(self):
         final_events = [
             {
@@ -5438,6 +5462,27 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(targets["teams_search"]["reason"], "browser_focus_not_verified")
         self.assertFalse(targets["teams_search_plan"]["planned"])
         self.assertEqual(targets["teams_search_plan"]["reason"], "browser_focus_not_verified")
+
+    def test_voice_loop_qa_visible_screen_followup_rejects_jarvis_window_ocr_after_teams_open(self):
+        self.assertTrue(
+            voice_loop_qa.visible_screen_attempt_mismatches_expected_teams(
+                command_text="Look in Teams for my newest Music assignment.",
+                browser_open={
+                    "browser_open_active_title": "Teams and Channels | General | Microsoft Teams",
+                    "browser_open_active_url": "https://teams.cloud.microsoft/",
+                    "browser_open_verification_url": "https://teams.cloud.microsoft/",
+                },
+                attempt_result={
+                    "status": "browser_permission_blocked",
+                    "capture_status": "captured",
+                    "captured_text_preview": (
+                        "Jarvis 0.1.484 Local assistant prototype. Type to Jarvis. "
+                        "Jarvis Activity: What Jarvis said and did."
+                    ),
+                    "visible_reply_preview": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
+                },
+            )
+        )
 
     def test_voice_loop_qa_parse_chrome_front_tab_output(self):
         title, active_url = voice_loop_qa.parse_chrome_front_tab_output("Microsoft Teams\nhttps://teams.microsoft.com/v2/\n")
@@ -6457,7 +6502,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
-        self.assertIn("0.1.483", shipped)
+        self.assertIn("0.1.484", shipped)
         self.assertIn("0.1.482", shipped)
         self.assertIn("0.1.481", shipped)
         self.assertIn("0.1.480", shipped)
@@ -11547,11 +11592,17 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn("candidates.max(by:", native_source)
         self.assertIn("preferredWindowTitleContains", native_source)
         self.assertIn("candidate.windowTitle.localizedCaseInsensitiveContains(preferredTitle)", native_source)
-        self.assertIn("else if preferredTitle?.isEmpty == false", native_source)
-        self.assertIn("if initialWindowCapture == nil, cleanPreferredWindowTitle?.isEmpty == false", native_source)
+        self.assertIn("} else if preferredTitle?.isEmpty == false {\n            selected = candidates.first", native_source)
+        self.assertIn('initialWindowCapture == nil ? "native_vision_ocr_screen_display_fallback"', native_source)
+        self.assertNotIn("if initialWindowCapture == nil, cleanPreferredWindowTitle?.isEmpty == false", native_source)
         self.assertIn("let windowTitle = window[kCGWindowName as String] as? String ?? \"\"", native_source)
         self.assertIn("windowTitle: selected.windowTitle", native_source)
         self.assertIn("windowTitle: windowCapture?.windowTitle ?? \"\"", native_source)
+        self.assertIn("captureChromeFrontWindowViaAppleScript", native_source)
+        self.assertIn('process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")', native_source)
+        self.assertIn("bounds of front window", native_source)
+        self.assertIn("title of active tab of front window", native_source)
+        self.assertIn("displayImage.cropping(to: crop)", native_source)
 
     def test_status_helper_exits_when_parent_app_disappears(self):
         app_source = (
@@ -15133,8 +15184,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.483}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-483}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.484}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-484}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
