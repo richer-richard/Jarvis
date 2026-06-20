@@ -3120,6 +3120,97 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(execute_mock.call_args.args[0]["point"], {"x": 257.0, "y": 322.5})
         self.assertEqual(result["visible_navigation_execution"]["status"], "live_navigation_not_unlocked")
 
+    def test_voice_loop_qa_visible_screen_followup_can_continue_after_all_teams_click(self):
+        command_response = {"tool": "teams.assignment", "result": {}}
+        blocked_browser = {"status": "browser_permission_blocked", "tool": "browser.read_page"}
+        current_class_attempt = {
+            "used": False,
+            "status": "assignment_subject_mismatch",
+            "tool": "screen.visible_text",
+            "visible_navigation_targets": {
+                "requested_class_plan": {"planned": False, "will_click": False},
+                "all_teams_plan": {
+                    "planned": True,
+                    "will_click": False,
+                    "point": {"x": 257.0, "y": 322.5},
+                },
+                "assignments_plan": {
+                    "planned": True,
+                    "will_click": False,
+                    "point": {"x": 68.0, "y": 577.0},
+                },
+                "sequence": [
+                    {
+                        "key": "all_teams",
+                        "plan": {"planned": True, "will_click": False, "point": {"x": 257.0, "y": 322.5}},
+                    },
+                    {
+                        "key": "requested_class_after_all_teams",
+                        "plan": {"planned": False, "will_click": False, "reason": "requires_previous_step"},
+                    },
+                    {
+                        "key": "assignments",
+                        "plan": {"planned": True, "will_click": False, "point": {"x": 68.0, "y": 577.0}},
+                    },
+                ],
+            },
+        }
+        all_teams_attempt = {
+            "used": False,
+            "status": "assignment_subject_mismatch",
+            "tool": "screen.visible_text",
+            "visible_navigation_targets": {
+                "requested_class_plan": {
+                    "planned": True,
+                    "will_click": False,
+                    "point": {"x": 214.0, "y": 344.0},
+                },
+                "all_teams_plan": {"planned": False, "will_click": False},
+                "assignments_plan": {"planned": False, "will_click": False},
+                "sequence": [
+                    {
+                        "key": "requested_class",
+                        "plan": {"planned": True, "will_click": False, "point": {"x": 214.0, "y": 344.0}},
+                    },
+                ],
+            },
+        }
+        completed_attempt = {
+            "used": True,
+            "status": "completed",
+            "tool": "screen.visible_text",
+            "visible_reply_preview": "I found assignment-related text for Music. Questions I need answered: theme, style, and deadline.",
+        }
+        clicked_all_teams = {"attempted": True, "executed": True, "status": "clicked", "point": {"x": 257.0, "y": 322.5}}
+        clicked_music_class = {"attempted": True, "executed": True, "status": "clicked", "point": {"x": 214.0, "y": 344.0}}
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.VISIBLE_SCREEN_PROBE", Path("/tmp/fake-probe")), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("scripts.voice_loop_qa.run_browser_page_follow_up", return_value=blocked_browser), \
+             patch(
+                 "scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt",
+                 side_effect=[current_class_attempt, all_teams_attempt, completed_attempt],
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.execute_visible_navigation_plan",
+                 side_effect=[clicked_all_teams, clicked_music_class],
+             ) as execute_mock, \
+             patch("scripts.voice_loop_qa.time.sleep"):
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response=command_response,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+                exercise_visible_navigation=True,
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(execute_mock.call_count, 2)
+        self.assertEqual(execute_mock.call_args_list[0].args[0]["point"], {"x": 257.0, "y": 322.5})
+        self.assertEqual(execute_mock.call_args_list[1].args[0]["point"], {"x": 214.0, "y": 344.0})
+        self.assertEqual(result["visible_navigation_execution_steps"], [clicked_all_teams, clicked_music_class])
+
     def test_full_loop_visible_navigation_flag_is_teams_only(self):
         source = (PROJECT_ROOT / "scripts" / "full_loop_regression.py").read_text(encoding="utf-8")
         music_branch = source.split('if case["id"] == MUSIC_WAVING_CASE["id"]:', 1)[1].split(

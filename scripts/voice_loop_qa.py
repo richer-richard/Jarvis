@@ -1983,54 +1983,57 @@ def run_native_visible_screen_follow_up(
             }
         latest_failure = attempt_result
 
-    navigation_result: dict[str, Any] = {}
+    navigation_steps: list[dict[str, Any]] = []
     if exercise_visible_navigation and isinstance(latest_failure, dict):
-        targets = latest_failure.get("visible_navigation_targets")
-        if isinstance(targets, dict):
-            sequence = targets.get("sequence") if isinstance(targets.get("sequence"), list) else []
-            plan = next(
-                (
-                    step.get("plan")
-                    for step in sequence
-                    if isinstance(step, dict)
-                    and isinstance(step.get("plan"), dict)
-                    and step["plan"].get("planned")
-                ),
-                None,
+        seen_navigation_points: set[tuple[float, float]] = set()
+        for navigation_attempt in range(1, 4):
+            plan = next_visible_navigation_plan(latest_failure)
+            if not isinstance(plan, dict) or not plan.get("planned"):
+                break
+            point = plan.get("point") if isinstance(plan.get("point"), dict) else {}
+            try:
+                point_key = (round(float(point.get("x")), 2), round(float(point.get("y")), 2))
+            except (TypeError, ValueError):
+                point_key = (float(navigation_attempt), -1.0)
+            if point_key in seen_navigation_points:
+                latest_failure["visible_navigation_execution"] = {
+                    "attempted": False,
+                    "executed": False,
+                    "status": "navigation_loop_prevented",
+                    "point": {"x": point_key[0], "y": point_key[1]},
+                }
+                break
+            seen_navigation_points.add(point_key)
+            navigation_result = execute_visible_navigation_plan(
+                plan,
+                target_app_name=target["target_app_name"],
+                timeout=timeout,
             )
-            if not isinstance(plan, dict):
-                plan = targets.get("requested_class_plan")
-            if not (isinstance(plan, dict) and plan.get("planned")):
-                plan = targets.get("all_teams_plan")
-            if not (isinstance(plan, dict) and plan.get("planned")):
-                plan = targets.get("assignments_plan")
-            if isinstance(plan, dict) and plan.get("planned"):
-                navigation_result = execute_visible_navigation_plan(
-                    plan,
-                    target_app_name=target["target_app_name"],
-                    timeout=timeout,
-                )
-                latest_failure["visible_navigation_execution"] = navigation_result
-                if navigation_result.get("executed"):
-                    time.sleep(VISIBLE_SCREEN_FOLLOW_UP_RETRY_DELAY_SECONDS)
-                    after_navigation = run_native_visible_screen_follow_up_attempt(
-                        command_text=command_text,
-                        base_url=base_url,
-                        follow_up_dir=follow_up_dir,
-                        timeout=timeout,
-                        target_app_name=target["target_app_name"],
-                        target_bundle_identifier=target["target_bundle_identifier"],
-                        attempt=max_attempts + 1,
-                    )
-                    after_navigation["visible_navigation_execution"] = navigation_result
-                    if after_navigation.get("status") == "completed":
-                        return {
-                            **result,
-                            **after_navigation,
-                            "attempts": max_attempts + 1,
-                            "duration_seconds": round(time.monotonic() - started, 3),
-                        }
-                    latest_failure = after_navigation
+            navigation_steps.append(navigation_result)
+            latest_failure["visible_navigation_execution"] = navigation_result
+            latest_failure["visible_navigation_execution_steps"] = list(navigation_steps)
+            if not navigation_result.get("executed"):
+                break
+            time.sleep(VISIBLE_SCREEN_FOLLOW_UP_RETRY_DELAY_SECONDS)
+            after_navigation = run_native_visible_screen_follow_up_attempt(
+                command_text=command_text,
+                base_url=base_url,
+                follow_up_dir=follow_up_dir,
+                timeout=timeout,
+                target_app_name=target["target_app_name"],
+                target_bundle_identifier=target["target_bundle_identifier"],
+                attempt=max_attempts + navigation_attempt,
+            )
+            after_navigation["visible_navigation_execution"] = navigation_result
+            after_navigation["visible_navigation_execution_steps"] = list(navigation_steps)
+            if after_navigation.get("status") == "completed":
+                return {
+                    **result,
+                    **after_navigation,
+                    "attempts": max_attempts + navigation_attempt,
+                    "duration_seconds": round(time.monotonic() - started, 3),
+                }
+            latest_failure = after_navigation
 
     return {
         **result,
@@ -2365,6 +2368,30 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
         ]
 
     return _visible_navigation_sequence_tail(navigation_targets)
+
+
+def next_visible_navigation_plan(follow_up: dict[str, Any]) -> dict[str, Any] | None:
+    targets = follow_up.get("visible_navigation_targets")
+    if not isinstance(targets, dict):
+        return None
+    sequence = targets.get("sequence") if isinstance(targets.get("sequence"), list) else []
+    plan = next(
+        (
+            step.get("plan")
+            for step in sequence
+            if isinstance(step, dict)
+            and isinstance(step.get("plan"), dict)
+            and step["plan"].get("planned")
+        ),
+        None,
+    )
+    if isinstance(plan, dict):
+        return plan
+    for key in ("requested_class_plan", "all_teams_plan", "assignments_plan"):
+        plan = targets.get(key)
+        if isinstance(plan, dict) and plan.get("planned"):
+            return plan
+    return None
 
 
 def _visible_navigation_sequence_step(
