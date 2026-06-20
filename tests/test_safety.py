@@ -8115,7 +8115,8 @@ class PlannerTests(unittest.TestCase):
                     }
                 ],
             }
-            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
+            with patch.dict(os.environ, {"JARVIS_LEGACY_LOCALOS_MUSIC_FALLBACK": "1"}), \
+                 patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
                  patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path):
                 store_localos_music_snapshot(payload)
                 result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
@@ -8133,6 +8134,44 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["playback_confirmation"], "unconfirmed")
         self.assertIn("Local OS has not started playback yet", result["reply"])
         self.assertNotIn("Playing Waving Through A Window", result["reply"])
+
+    def test_music_play_fails_closed_when_native_bridge_disabled_without_legacy_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "localos_music_snapshot.json"
+            control_path = Path(tmpdir) / "localos_music_control.json"
+            payload = {
+                "source": "localos-music-player",
+                "jarvisControlBridgeVersion": 2,
+                "jarvisControlPollingActive": True,
+                "library": [
+                    {
+                        "id": "track-2",
+                        "title": "Waving Through A Window",
+                        "artist": "Dear Evan Hansen",
+                        "relativePath": "localFiles/mp3/Dear Evan Hansen - Waving Through A Window.mp3",
+                    }
+                ],
+            }
+            with patch.object(jarvis_tools, "LOCALOS_MUSIC_SNAPSHOT_PATH", snapshot_path), \
+                 patch.object(jarvis_tools, "LOCALOS_MUSIC_CONTROL_PATH", control_path), \
+                 patch("jarvis.tools._legacy_localos_music_fallback_allowed", return_value=False), \
+                 patch("jarvis.tools.localos_music_search") as search_mock, \
+                 patch("jarvis.tools._localos_music_play_via_chrome") as chrome_mock:
+                store_localos_music_snapshot(payload)
+                result = localos_music_play("Waving Through A Window", user_request="play Waving Through A Window", limit=5)
+                pending = localos_music_pending_control()
+
+        self.assertEqual(result["status"], "not_queued")
+        self.assertEqual(result["played_by"], "none")
+        self.assertEqual(result["preferred_playback_owner"], "music_app")
+        self.assertFalse(result["native_music_bridge_enabled"])
+        self.assertFalse(result["legacy_localos_fallback_allowed"])
+        self.assertEqual(result["control_lane"], "music_app_bridge_required")
+        self.assertEqual(result["playback_confirmation"], "legacy_localos_fallback_disabled")
+        self.assertIn("did not open LocalOS or start hidden audio", result["reply"])
+        self.assertEqual(pending["status"], "empty")
+        search_mock.assert_not_called()
+        chrome_mock.assert_not_called()
 
     def test_music_play_prefers_confirmed_music_app_bridge(self):
         music_result = {

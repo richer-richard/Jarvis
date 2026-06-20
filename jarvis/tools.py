@@ -744,7 +744,7 @@ def tool_registry() -> dict[str, Any]:
                 "mode": "safe_execute",
                 "risk": "local_audio_playback",
                 "available": _music_play_tool_available(),
-                "description": "Plays a selected track through the native Music app bridge when available. Legacy LocalOS/Chrome control is only a fallback when the Music bridge is explicitly unavailable; Jarvis does not start hidden players.",
+                "description": "Plays a selected track through the native Music app bridge. Legacy LocalOS/Chrome playback is disabled by default and requires explicit developer opt-in; Jarvis does not start hidden players.",
             },
             {
                 "id": "localos.music_stop",
@@ -3579,6 +3579,18 @@ def _music_app_bridge_enabled_for_live_path() -> bool:
     )
 
 
+def _legacy_localos_music_fallback_allowed() -> bool:
+    explicit = os.environ.get("JARVIS_LEGACY_LOCALOS_MUSIC_FALLBACK")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+    # Unit tests patch these paths to temp files for deterministic legacy-bridge coverage.
+    return (
+        LOCALOS_MUSIC_SNAPSHOT_PATH != DEFAULT_LOCALOS_MUSIC_SNAPSHOT_PATH
+        or LOCALOS_MUSIC_CONTROL_PATH != DEFAULT_LOCALOS_MUSIC_CONTROL_PATH
+        or LOCALOS_NATIVE_MUSIC_STATE_PATH != DEFAULT_LOCALOS_NATIVE_MUSIC_STATE_PATH
+    )
+
+
 def _music_app_bridge_token() -> str:
     try:
         return MUSIC_APP_BRIDGE_TOKEN_FILE.read_text(encoding="utf-8").strip()
@@ -4225,6 +4237,10 @@ def localos_music_play(
     started_at = time.monotonic()
     parsed_limit = _bounded_localos_music_limit(limit)
     native_bridge_enabled = _music_app_bridge_enabled_for_live_path()
+    legacy_localos_fallback_allowed = (
+        not native_bridge_enabled
+        and _legacy_localos_music_fallback_allowed()
+    )
     base = {
         "tool": "localos.music_play",
         "executed": True,
@@ -4232,10 +4248,10 @@ def localos_music_play(
         "snapshot_path": str(LOCALOS_MUSIC_SNAPSHOT_PATH),
         "control_path": str(LOCALOS_MUSIC_CONTROL_PATH),
         "localos_root": str(LOCALOS_ROOT),
-        "played_by": "localos",
-        "preferred_playback_owner": "music_app" if native_bridge_enabled else "localos",
+        "played_by": "none" if not legacy_localos_fallback_allowed else "localos",
+        "preferred_playback_owner": "localos" if legacy_localos_fallback_allowed else "music_app",
         "native_music_bridge_enabled": native_bridge_enabled,
-        "legacy_localos_fallback_allowed": not native_bridge_enabled,
+        "legacy_localos_fallback_allowed": legacy_localos_fallback_allowed,
         "jarvis_played_audio": False,
         "read_private_audio_or_artwork": False,
     }
@@ -4263,6 +4279,25 @@ def localos_music_play(
                 or "I tried Music, but it did not confirm playback. I did not start another hidden music player."
             ),
             **failure_details,
+            **_duration_fields(started_at),
+        }
+    if not native_bridge_enabled and not legacy_localos_fallback_allowed:
+        return {
+            **base,
+            "status": "not_queued",
+            "available": False,
+            "control_lane": "music_app_bridge_required",
+            "playback_confirmation": "legacy_localos_fallback_disabled",
+            "requires_user_action": False,
+            "next_steps": [
+                "Start the native Music app bridge if music playback is needed.",
+                "Use JARVIS_LEGACY_LOCALOS_MUSIC_FALLBACK=1 only for deliberate developer testing of the old LocalOS path.",
+            ],
+            "spoken_summary": "Music playback is restricted to the native Music app bridge, so Jarvis did not open LocalOS or start hidden audio.",
+            "reply": (
+                "Music playback is only allowed through the native Music app bridge right now. "
+                "I did not open LocalOS or start hidden audio."
+            ),
             **_duration_fields(started_at),
         }
     selected: dict[str, Any] | None = None
@@ -6349,7 +6384,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "calendar.today_schedule", "kind": "private_read", "description": "Read today's Calendar schedule without creating, changing, accepting, or deleting events."},
         {"id": "diagnostics.memory_usage", "kind": "read_only", "description": "Report Activity Monitor-style RAM and memory-pressure status without opening Activity Monitor."},
         {"id": "models.test_plan", "kind": "read_only_plan", "description": "Plan a safe AI model test, preferring the MacBook Air for heavy models before touching this 16 GB Mac."},
-        {"id": "localos.music_play", "kind": "safe_execute", "description": "Play a named or chosen song through the native Music app bridge when available. Legacy LocalOS/Chrome playback is only a fallback when the Music bridge is explicitly unavailable; never start hidden playback."},
+        {"id": "localos.music_play", "kind": "safe_execute", "description": "Play a named or chosen song through the native Music app bridge. Legacy LocalOS/Chrome playback is disabled by default and requires explicit developer opt-in; never start hidden playback."},
         {"id": "localos.music_stop", "kind": "safe_execute", "description": "Stop LocalOS music commands and emergency-stop old Jarvis-owned audio leftovers without starting new playback."},
         {"id": "localos.music_recommendations", "kind": "read_only", "description": "Read the Local OS Music Player Your Pick recommendation snapshot after the music page publishes it to Jarvis."},
         {"id": "localos.music_choose_from_your_pick", "kind": "read_only_model_choice", "description": "Feed the Your Pick candidate list to Jarvis's fast model so it can choose one track naturally."},
