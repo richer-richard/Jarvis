@@ -263,7 +263,9 @@ BROWSER_FIELD_DELIMITER = "\n---JARVIS_BROWSER_FIELD---\n"
 BROWSER_PAGE_TEXT_LIMIT = 6000
 CHROME_USER_DATA_DIR = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
 CHROME_BOOKMARKS_SNAPSHOT_PATH = RUNTIME_DIR / "integrations" / "chrome_bookmarks.json"
+CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH = RUNTIME_DIR / "integrations" / "chrome_teams_deeplinks.json"
 CHROME_BOOKMARKS_MAX_MATCHES = 25
+CHROME_TEAMS_DEEPLINKS_MAX_ROWS = 200
 CHROME_BOOKMARK_QUERY_STOPWORDS = {
     "a",
     "an",
@@ -1193,6 +1195,14 @@ def tool_registry() -> dict[str, Any]:
                 "risk": "external_navigation_possible",
                 "available": True,
                 "description": "Finds an imported Chrome bookmark and returns the URL for the Jarvis in-app browser surface to open visibly.",
+            },
+            {
+                "id": "browser.teams_deeplinks_inventory",
+                "label": "Teams Deep Links",
+                "mode": "private_read_local_write",
+                "risk": "private_browser_history_metadata",
+                "available": CHROME_USER_DATA_DIR.exists(),
+                "description": "Inventories Teams classroom and assignment deep links from Chrome History SQLite only; does not read cookies, local storage, cache files, or arbitrary Chrome profile blobs.",
             },
             {
                 "id": "outlook.visible_summary",
@@ -6334,6 +6344,7 @@ def _middle_tool_catalog() -> list[dict[str, str]]:
         {"id": "browser.bookmarks_status", "kind": "read_only", "description": "Report imported Chrome bookmark counts and source profiles without listing URLs."},
         {"id": "browser.bookmarks_search", "kind": "private_read", "description": "Search imported Chrome bookmarks locally by title, domain, URL, folder, or profile."},
         {"id": "browser.bookmark_open", "kind": "plan_only", "description": "Choose an imported Chrome bookmark and return its URL for the visible Jarvis browser."},
+        {"id": "browser.teams_deeplinks_inventory", "kind": "private_read_local_write", "description": "Inventory Teams classroom and assignment deep links from Chrome History SQLite only, without reading cookies, local storage, cache files, or arbitrary Chrome profile blobs."},
         {"id": "files.search", "kind": "read_only", "description": "Search project filenames."},
         {"id": "screenshot.capability", "kind": "read_only", "description": "Report screenshot/OCR readiness."},
         {"id": "screen.ocr", "kind": "planned_private_read", "description": "Future permission-gated screen OCR/find-text route; do not capture or read the screen until enabled."},
@@ -13017,6 +13028,94 @@ def chrome_bookmark_open_plan(query: str, limit: int | str | None = None) -> dic
     }
 
 
+def chrome_teams_deeplinks_inventory(limit: int | str | None = None) -> dict[str, Any]:
+    """Inventory Teams classroom/assignment deep links from Chrome History only.
+
+    This deliberately avoids Chrome cookies, local storage, LevelDB, cache, and
+    arbitrary binary files. It is meant to support Teams routing without the
+    broad profile scans that can expose unrelated private tokens.
+    """
+    bounded_limit = max(1, min(_safe_int(limit) or CHROME_TEAMS_DEEPLINKS_MAX_ROWS, CHROME_TEAMS_DEEPLINKS_MAX_ROWS))
+    collected_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    rows: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for profile_name, history_path in _chrome_history_profile_paths():
+        try:
+            connection = sqlite3.connect(f"file:{history_path}?mode=ro&immutable=1", uri=True, timeout=2)
+            raw_rows = connection.execute(
+                """
+                select title, url, last_visit_time
+                from urls
+                where lower(url) like '%teams.microsoft.com/l/entity/66aeee93-507d-479a-a3ef-8f494af43945/classroom%'
+                   or lower(url) like '%assignments.onenote.com/%'
+                order by last_visit_time desc
+                limit ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+            connection.close()
+        except (OSError, sqlite3.Error) as error:
+            errors.append({"profile": profile_name, "path": str(history_path), "error": str(error)})
+            continue
+        for title, url, last_visit_time in raw_rows:
+            parsed = _parse_chrome_teams_deeplink(str(url or ""))
+            if not parsed:
+                continue
+            rows.append(
+                {
+                    **parsed,
+                    "profile": profile_name,
+                    "title": str(title or "")[:180],
+                    "last_visit_time": last_visit_time,
+                }
+            )
+    rows.sort(key=lambda item: str(item.get("last_visit_time") or ""), reverse=True)
+    unique_class_ids = sorted({str(item.get("class_id") or "") for item in rows if item.get("class_id")})
+    unique_assignment_ids = sorted(
+        {
+            assignment_id
+            for item in rows
+            for assignment_id in (item.get("assignment_ids") if isinstance(item.get("assignment_ids"), list) else [])
+            if isinstance(assignment_id, str) and assignment_id
+        }
+    )
+    snapshot = {
+        "schema": "jarvis.chrome_teams_deeplinks.v1",
+        "collected_at": collected_at,
+        "source_root": str(CHROME_USER_DATA_DIR),
+        "profile_count": len(_chrome_history_profile_paths()),
+        "row_count": len(rows),
+        "class_count": len(unique_class_ids),
+        "assignment_count": len(unique_assignment_ids),
+        "errors": errors,
+        "links": rows[:bounded_limit],
+    }
+    CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH.with_suffix(".json.tmp")
+    temp_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path.replace(CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH)
+    return {
+        "tool": "browser.teams_deeplinks_inventory",
+        "executed": True,
+        "status": "collected",
+        "read_private_content": True,
+        "changed_local_jarvis_data": True,
+        "opened_app": False,
+        "opened_browser": False,
+        "snapshot_path": str(CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH),
+        "row_count": len(rows),
+        "class_count": len(unique_class_ids),
+        "assignment_count": len(unique_assignment_ids),
+        "profile_count": snapshot["profile_count"],
+        "error_count": len(errors),
+        "links": rows[: min(10, bounded_limit)],
+        "reply": (
+            f"Found {len(rows)} Teams classroom history link{'s' if len(rows) != 1 else ''}, "
+            f"covering {len(unique_class_ids)} class id{'s' if len(unique_class_ids) != 1 else ''}."
+        ),
+    }
+
+
 def browser_open_url_plan(url: str) -> dict[str, Any]:
     clean_url = url.strip()
     open_lane = _browser_lane_for_url(clean_url)
@@ -13381,6 +13480,84 @@ def _chrome_bookmark_profile_paths() -> list[tuple[str, Path]]:
             candidates.append((directory.name, bookmarks_path))
     preferred = {"Default": 0}
     return sorted(candidates, key=lambda item: (preferred.get(item[0], 1), item[0].casefold()))
+
+
+def _chrome_history_profile_paths() -> list[tuple[str, Path]]:
+    if not CHROME_USER_DATA_DIR.exists():
+        return []
+    candidates: list[tuple[str, Path]] = []
+    for directory in sorted(CHROME_USER_DATA_DIR.iterdir(), key=lambda path: path.name.casefold()):
+        if not directory.is_dir():
+            continue
+        history_path = directory / "History"
+        if history_path.exists() and history_path.is_file():
+            candidates.append((directory.name, history_path))
+    preferred = {"Default": 0}
+    return sorted(candidates, key=lambda item: (preferred.get(item[0], 1), item[0].casefold()))
+
+
+def _parse_chrome_teams_deeplink(url: str) -> dict[str, Any] | None:
+    clean_url = str(url or "").strip()
+    if not clean_url:
+        return None
+    parsed = urllib.parse.urlparse(clean_url)
+    host = parsed.netloc.casefold()
+    if host == "assignments.onenote.com":
+        query = urllib.parse.parse_qs(parsed.query)
+        class_id = str((query.get("groupId") or [""])[0] or "").strip()
+        assignment_ids = [
+            str(value or "").strip()
+            for key in ("assignmentId", "assignmentIds")
+            for value in query.get(key, [])
+            if str(value or "").strip()
+        ]
+        if not class_id:
+            return None
+        return {
+            "source": "assignments.onenote",
+            "class_id": class_id,
+            "assignment_ids": assignment_ids,
+            "channel_id": "",
+            "url": clean_url,
+        }
+    if host != "teams.microsoft.com" or "/l/entity/66aeee93-507d-479a-a3ef-8f494af43945/classroom" not in parsed.path:
+        return None
+    query = urllib.parse.parse_qs(parsed.query)
+    context_text = str((query.get("context") or [""])[0] or "")
+    if not context_text:
+        return None
+    try:
+        context = json.loads(context_text)
+    except json.JSONDecodeError:
+        return None
+    sub_entity: Any = context.get("subEntityId")
+    if isinstance(sub_entity, str):
+        try:
+            sub_entity = json.loads(sub_entity)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(sub_entity, dict):
+        return None
+    classes = sub_entity.get("config", {}).get("classes") if isinstance(sub_entity.get("config"), dict) else []
+    first_class = classes[0] if isinstance(classes, list) and classes and isinstance(classes[0], dict) else {}
+    class_id = str(first_class.get("id") or "").strip()
+    assignment_ids = [
+        str(value or "").strip()
+        for value in (first_class.get("assignmentIds") if isinstance(first_class.get("assignmentIds"), list) else [])
+        if str(value or "").strip()
+    ]
+    if not class_id:
+        return None
+    return {
+        "source": "teams.classroom_entity",
+        "class_id": class_id,
+        "assignment_ids": assignment_ids,
+        "channel_id": str(context.get("channelId") or "").strip(),
+        "view": str(sub_entity.get("view") or "").strip(),
+        "action": str(sub_entity.get("action") or "").strip(),
+        "deeplink_type": sub_entity.get("deeplinkType"),
+        "url": clean_url,
+    }
 
 
 def _flatten_chrome_bookmark_roots(raw: dict[str, Any], *, profile_name: str, output: list[dict[str, Any]]) -> int:

@@ -34,6 +34,7 @@ from .tools import (
     chrome_bookmarks_import,
     chrome_bookmarks_search,
     chrome_bookmarks_status,
+    chrome_teams_deeplinks_inventory,
     capabilities_status,
     codex_activity_snapshot,
     codex_chat_plan,
@@ -447,6 +448,11 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "tool": "browser.bookmark_open",
         "description": "Find an imported Chrome bookmark and prepare its URL for the visible Jarvis in-app browser. Use when the user asks to open or go to a bookmark.",
         "entities": ["query", "limit"],
+    },
+    {
+        "tool": "browser.teams_deeplinks_inventory",
+        "description": "Safely inventory Teams classroom and assignment deep links from Chrome History SQLite only. Use when Jarvis needs a direct route to a Teams class or assignment and UI navigation is stuck. Do not read Chrome cookies, local storage, cache files, or arbitrary Chrome profile blobs.",
+        "entities": ["limit"],
     },
     {
         "tool": "app.open",
@@ -2054,6 +2060,24 @@ class Planner:
             if not execute:
                 return self._preview_result(text, "browser.bookmark_open", assessment, False, plan={"intent": intent, "query": query, "limit": limit})
             return self._result(text, "browser.bookmark_open", "Prepared imported Chrome bookmark route.", assessment, chrome_bookmark_open_plan(query, limit=limit), False)
+        if selected_tool == "browser.teams_deeplinks_inventory":
+            limit = _positive_entity_int(entities.get("limit"))
+            if not execute:
+                return self._preview_result(
+                    text,
+                    "browser.teams_deeplinks_inventory",
+                    assessment,
+                    True,
+                    plan={"intent": intent, "reads": "chrome_history_sqlite_teams_urls_only", "limit": limit},
+                )
+            return self._result(
+                text,
+                "browser.teams_deeplinks_inventory",
+                "Checked Teams deep links in Chrome history.",
+                assessment,
+                chrome_teams_deeplinks_inventory(limit=limit),
+                True,
+            )
         if selected_tool == "browser.open_url":
             url = _clean_optional_entity(entities.get("url")) or _extract_url(text)
             if not execute:
@@ -4147,6 +4171,7 @@ def _voice_loop_status_text_for_tool(tool: str) -> str:
         "browser.bookmarks_status": "Checking Chrome bookmarks now.",
         "browser.bookmarks_search": "Searching Chrome bookmarks now.",
         "browser.bookmark_open": "Opening that bookmark now.",
+        "browser.teams_deeplinks_inventory": "Checking Teams links now.",
         "terminal.read_only": "Checking that locally now.",
         "shell.read_only": "Checking that locally now.",
         "teams.assignment": "Opening Teams now.",

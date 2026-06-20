@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
@@ -84,6 +85,7 @@ from jarvis.tools import (
     chrome_bookmarks_import,
     chrome_bookmarks_search,
     chrome_bookmarks_status,
+    chrome_teams_deeplinks_inventory,
     capabilities_status,
     codex_chat_plan,
     codex_chat_status,
@@ -1178,6 +1180,61 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
 
         self.assertEqual(summary["source_commit"], "abc1234")
+
+    def test_chrome_teams_deeplinks_inventory_reads_history_sqlite_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            profile = root / "Default"
+            profile.mkdir()
+            history = profile / "History"
+            connection = sqlite3.connect(history)
+            connection.execute("create table urls (title text, url text, last_visit_time integer)")
+            context = {
+                "subEntityId": json.dumps(
+                    {
+                        "version": "1.0",
+                        "config": {
+                            "classes": [
+                                {
+                                    "id": "class-music",
+                                    "assignmentIds": ["assignment-newest"],
+                                }
+                            ]
+                        },
+                        "action": "navigate",
+                        "view": "assignment-viewer",
+                        "deeplinkType": 1,
+                    }
+                ),
+                "channelId": "19:music@thread.tacv2",
+            }
+            teams_url = (
+                "https://teams.microsoft.com/l/entity/66aeee93-507d-479a-a3ef-8f494af43945/classroom"
+                f"?context={urllib.parse.quote(json.dumps(context))}"
+            )
+            onenote_url = "https://assignments.onenote.com/?groupId=class-world-history&assignmentId=assignment-history"
+            connection.execute("insert into urls values (?, ?, ?)", ("Music assignment", teams_url, 200))
+            connection.execute("insert into urls values (?, ?, ?)", ("World History assignment", onenote_url, 100))
+            connection.execute("insert into urls values (?, ?, ?)", ("Cookie-looking page", "https://example.com/?token=secret", 300))
+            connection.commit()
+            connection.close()
+
+            snapshot_path = root / "runtime" / "chrome_teams_deeplinks.json"
+            with patch("jarvis.tools.CHROME_USER_DATA_DIR", root), \
+                 patch("jarvis.tools.CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH", snapshot_path):
+                result = chrome_teams_deeplinks_inventory()
+
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "collected")
+        self.assertEqual(result["row_count"], 2)
+        self.assertEqual(result["class_count"], 2)
+        self.assertEqual(result["assignment_count"], 2)
+        self.assertEqual(snapshot["links"][0]["class_id"], "class-music")
+        self.assertEqual(snapshot["links"][0]["assignment_ids"], ["assignment-newest"])
+        self.assertEqual(snapshot["links"][0]["channel_id"], "19:music@thread.tacv2")
+        self.assertEqual(snapshot["links"][1]["source"], "assignments.onenote")
+        self.assertNotIn("example.com", json.dumps(snapshot))
 
     def test_pre_build_gate_uses_step_specific_timeout_when_present(self):
         calls = []
@@ -9389,6 +9446,7 @@ class PlannerTests(unittest.TestCase):
             "browser.bookmarks_status",
             "browser.bookmarks_search",
             "browser.bookmark_open",
+            "browser.teams_deeplinks_inventory",
         }:
             self.assertIn(tool_id, catalog)
             self.assertIn(tool_id, middle_ids)
@@ -10321,6 +10379,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(_stream_status_text({"tool": "browser.built_in_plan"}), "Planning the built-in browser now.")
         self.assertEqual(_stream_status_text({"tool": "browser.session_strategy"}), "Checking browser session options now.")
         self.assertEqual(_stream_status_text({"tool": "browser.bookmarks_import"}), "Importing Chrome bookmarks now.")
+        self.assertEqual(_stream_status_text({"tool": "browser.teams_deeplinks_inventory"}), "Checking Teams links now.")
 
     def test_bookmark_audit_redacts_titles_urls_and_matches(self):
         safe = _audit_safe_result(
@@ -10343,6 +10402,39 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn("matches", safe)
         self.assertNotIn("url", safe)
         self.assertNotIn("title", safe)
+
+    def test_teams_deeplink_audit_redacts_private_links(self):
+        safe = _audit_safe_result(
+            "browser.teams_deeplinks_inventory",
+            {
+                "tool": "browser.teams_deeplinks_inventory",
+                "status": "collected",
+                "links": [
+                    {
+                        "title": "Private Teams Class",
+                        "url": "https://teams.microsoft.com/l/entity/private",
+                        "class_id": "private-class",
+                        "assignment_ids": ["private-assignment"],
+                    }
+                ],
+                "reply": "Found 1 Teams classroom history link.",
+                "row_count": 1,
+                "class_count": 1,
+                "assignment_count": 1,
+                "profile_count": 1,
+                "errors": [{"profile": "Default", "error": "private path"}],
+            },
+        )
+
+        self.assertTrue(safe["teams_deeplink_private_details_omitted"])
+        self.assertEqual(safe["row_count"], 1)
+        self.assertEqual(safe["class_count"], 1)
+        self.assertEqual(safe["assignment_count"], 1)
+        self.assertEqual(safe["profile_count"], 1)
+        self.assertEqual(safe["error_count"], 1)
+        self.assertNotIn("links", safe)
+        self.assertNotIn("reply", safe)
+        self.assertNotIn("errors", safe)
 
     def test_calendar_and_contact_audit_redacts_private_details(self):
         calendar_safe = _audit_safe_result(
@@ -17801,6 +17893,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("browser.bookmarks_status", tool_ids)
         self.assertIn("browser.bookmarks_search", tool_ids)
         self.assertIn("browser.bookmark_open", tool_ids)
+        self.assertIn("browser.teams_deeplinks_inventory", tool_ids)
         self.assertIn("control.pause", tool_ids)
         self.assertIn("control.resume", tool_ids)
         self.assertIn("policy.pause", tool_ids)

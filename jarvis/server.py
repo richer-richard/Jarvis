@@ -1000,6 +1000,7 @@ def _stream_status_text(preview: dict[str, Any]) -> str:
         "browser.bookmarks_status": "Checking Chrome bookmarks now.",
         "browser.bookmarks_search": "Searching Chrome bookmarks now.",
         "browser.bookmark_open": "Opening that bookmark now.",
+        "browser.teams_deeplinks_inventory": "Checking Teams links now.",
         "calendar.today_schedule": "Checking your calendar now.",
         "contacts.status": "Checking contact data now.",
         "contacts.lookup": "Checking contact data now.",
@@ -2078,6 +2079,20 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
         safe["bookmark_count"] = int(result.get("bookmark_count") or 0)
         safe["match_count"] = len(result.get("matches") or []) if isinstance(result.get("matches"), list) else int(result.get("match_count") or 0)
         safe["profile_count"] = int(result.get("profile_count") or 0)
+        return safe
+
+    if tool == "browser.teams_deeplinks_inventory":
+        safe = {
+            key: value
+            for key, value in result.items()
+            if key not in {"links", "reply", "url", "title", "errors"}
+        }
+        safe["teams_deeplink_private_details_omitted"] = True
+        safe["row_count"] = int(result.get("row_count") or 0)
+        safe["class_count"] = int(result.get("class_count") or 0)
+        safe["assignment_count"] = int(result.get("assignment_count") or 0)
+        safe["profile_count"] = int(result.get("profile_count") or 0)
+        safe["error_count"] = len(result.get("errors") or []) if isinstance(result.get("errors"), list) else int(result.get("error_count") or 0)
         return safe
 
     if tool == "teams.assignment":

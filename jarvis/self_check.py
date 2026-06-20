@@ -194,6 +194,7 @@ def run_self_checks() -> dict[str, Any]:
         "tools.handoff_plan",
         "workflow.app_task_plan",
         "teams.assignment",
+        "browser.teams_deeplinks_inventory",
         "files.search",
         "app.availability",
         "app.list",
