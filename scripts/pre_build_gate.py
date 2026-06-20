@@ -33,9 +33,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--exercise-live-speech", action="store_true")
     parser.add_argument(
+        "--exercise-visible-navigation",
+        action="store_true",
+        help="Pass the explicit Teams visible-navigation exercise flag through to the full-loop regression.",
+    )
+    parser.add_argument(
         "--require-live-speech",
         action="store_true",
         help="Fail closed unless --exercise-live-speech is also set, so a build cannot be reported as live-speech tested by accident.",
+    )
+    parser.add_argument(
+        "--require-visible-navigation",
+        action="store_true",
+        help="Fail closed unless --exercise-visible-navigation is also set, so Teams navigation cannot be implied by a no-click plan.",
     )
     parser.add_argument(
         "--require-physical-capture",
@@ -58,7 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=Path(args.output_dir).resolve(),
         timeout=args.timeout,
         exercise_live_speech=args.exercise_live_speech,
+        exercise_visible_navigation=args.exercise_visible_navigation,
         require_live_speech=args.require_live_speech,
+        require_visible_navigation=args.require_visible_navigation,
         require_physical_capture=args.require_physical_capture,
         skip_python_tests=args.skip_python_tests,
         skip_full_loop=args.skip_full_loop,
@@ -87,7 +99,9 @@ def run_gate(
     output_dir: Path = REPORT_DIR,
     timeout: float = 180.0,
     exercise_live_speech: bool = False,
+    exercise_visible_navigation: bool = False,
     require_live_speech: bool = False,
+    require_visible_navigation: bool = False,
     require_physical_capture: bool = False,
     skip_python_tests: bool = False,
     skip_full_loop: bool = False,
@@ -100,11 +114,14 @@ def run_gate(
     update_latest = should_update_latest_gate(
         require_live_speech=require_live_speech,
         exercise_live_speech=exercise_live_speech,
+        require_visible_navigation=require_visible_navigation,
+        exercise_visible_navigation=exercise_visible_navigation,
         require_physical_capture=require_physical_capture,
     )
     steps = build_steps(
         base_url=base_url,
         exercise_live_speech=exercise_live_speech,
+        exercise_visible_navigation=exercise_visible_navigation,
         skip_python_tests=skip_python_tests,
         skip_full_loop=skip_full_loop,
         skip_cleanup=skip_cleanup,
@@ -114,6 +131,8 @@ def run_gate(
         results.append(physical_capture_requirement_failure(exercise_live_speech=exercise_live_speech))
     if require_live_speech and not exercise_live_speech:
         results.append(live_speech_requirement_failure())
+    if require_visible_navigation and not exercise_visible_navigation:
+        results.append(visible_navigation_requirement_failure())
     for step in steps:
         if results and any(not item.get("ok") for item in results) and not step.get("always_run_next"):
             continue
@@ -126,7 +145,9 @@ def run_gate(
                 results=results,
                 started=started,
                 exercise_live_speech=exercise_live_speech,
+                exercise_visible_navigation=exercise_visible_navigation,
                 require_live_speech=require_live_speech,
+                require_visible_navigation=require_visible_navigation,
                 require_physical_capture=require_physical_capture,
                 complete=False,
             ),
@@ -150,7 +171,9 @@ def run_gate(
         results=results,
         started=started,
         exercise_live_speech=exercise_live_speech,
+        exercise_visible_navigation=exercise_visible_navigation,
         require_live_speech=require_live_speech,
+        require_visible_navigation=require_visible_navigation,
         require_physical_capture=require_physical_capture,
         complete=True,
     )
@@ -162,11 +185,15 @@ def should_update_latest_gate(
     *,
     require_live_speech: bool,
     exercise_live_speech: bool,
+    require_visible_navigation: bool,
+    exercise_visible_navigation: bool,
     require_physical_capture: bool,
 ) -> bool:
     if require_physical_capture:
         return False
     if require_live_speech and not exercise_live_speech:
+        return False
+    if require_visible_navigation and not exercise_visible_navigation:
         return False
     return True
 
@@ -175,6 +202,7 @@ def build_steps(
     *,
     base_url: str,
     exercise_live_speech: bool,
+    exercise_visible_navigation: bool,
     skip_python_tests: bool,
     skip_full_loop: bool,
     skip_cleanup: bool,
@@ -201,13 +229,18 @@ def build_steps(
         ]
         if exercise_live_speech:
             full_loop_command.append("--exercise-live-speech")
+        if exercise_visible_navigation:
+            full_loop_command.append("--exercise-visible-navigation")
         steps.append(
             {
                 "id": "full_loop_regression",
                 "label": "Full-loop spoken-command regression",
                 "command": full_loop_command,
                 "timeout_seconds": FULL_LOOP_GATE_TIMEOUT_SECONDS,
-                "proof_contract": speech_proof_contract(exercise_live_speech=exercise_live_speech),
+                "proof_contract": speech_proof_contract(
+                    exercise_live_speech=exercise_live_speech,
+                    exercise_visible_navigation=exercise_visible_navigation,
+                ),
             }
         )
     steps.append(
@@ -245,10 +278,11 @@ def cleanup_chrome_step() -> dict[str, Any]:
     }
 
 
-def speech_proof_contract(*, exercise_live_speech: bool) -> dict[str, Any]:
+def speech_proof_contract(*, exercise_live_speech: bool, exercise_visible_navigation: bool = False) -> dict[str, Any]:
     return {
         "speech_mode": "live_playback_exercised" if exercise_live_speech else "suppressed_for_probe",
         "live_playback_exercised": bool(exercise_live_speech),
+        "visible_navigation_exercised": bool(exercise_visible_navigation),
         "physical_speaker_capture": False,
         "physical_microphone_capture": False,
         "notes": (
@@ -271,6 +305,24 @@ def live_speech_requirement_failure() -> dict[str, Any]:
         "stdout_tail": "",
         "stderr_tail": "Refused to pass: --require-live-speech was set without --exercise-live-speech.",
         "proof_contract": speech_proof_contract(exercise_live_speech=False),
+    }
+
+
+def visible_navigation_requirement_failure() -> dict[str, Any]:
+    return {
+        "id": "visible_navigation_requirement",
+        "label": "Visible navigation requirement",
+        "ok": False,
+        "returncode": "not-run",
+        "seconds": 0.0,
+        "timeout_seconds": 0.0,
+        "command": [],
+        "stdout_tail": "",
+        "stderr_tail": "Refused to pass: --require-visible-navigation was set without --exercise-visible-navigation.",
+        "proof_contract": {
+            "visible_navigation_exercised": False,
+            "requires_live_ui_navigation_unlock": True,
+        },
     }
 
 
@@ -344,7 +396,9 @@ def make_summary(
     results: list[dict[str, Any]],
     started: float,
     exercise_live_speech: bool,
+    exercise_visible_navigation: bool,
     require_live_speech: bool,
+    require_visible_navigation: bool,
     require_physical_capture: bool,
     complete: bool,
 ) -> dict[str, Any]:
@@ -373,11 +427,18 @@ def make_summary(
         "canonical_latest": should_update_latest_gate(
             require_live_speech=require_live_speech,
             exercise_live_speech=exercise_live_speech,
+            require_visible_navigation=require_visible_navigation,
+            exercise_visible_navigation=exercise_visible_navigation,
             require_physical_capture=require_physical_capture,
         ),
         "duration_seconds": round(time.monotonic() - started, 3),
-        "speech_proof_contract": speech_proof_contract(exercise_live_speech=exercise_live_speech),
+        "speech_proof_contract": speech_proof_contract(
+            exercise_live_speech=exercise_live_speech,
+            exercise_visible_navigation=exercise_visible_navigation,
+        ),
         "require_live_speech": bool(require_live_speech),
+        "require_visible_navigation": bool(require_visible_navigation),
+        "exercise_visible_navigation": bool(exercise_visible_navigation),
         "require_physical_capture": bool(require_physical_capture),
         "results": results,
     }
@@ -425,6 +486,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"- Run dir: {summary.get('run_dir')}",
         f"- Speech proof: {summary.get('speech_proof_contract', {}).get('speech_mode')}",
         f"- Live speech required: {summary.get('require_live_speech')}",
+        f"- Visible navigation required: {summary.get('require_visible_navigation')}",
+        f"- Visible navigation exercised: {summary.get('exercise_visible_navigation')}",
         f"- Physical capture required: {summary.get('require_physical_capture')}",
     ]
     for result in summary.get("results", []):
@@ -446,6 +509,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
         if isinstance(proof, dict):
             lines.append(f"- Speech proof: `{proof.get('speech_mode')}`")
             lines.append(f"- Live playback exercised: `{proof.get('live_playback_exercised')}`")
+            if "visible_navigation_exercised" in proof:
+                lines.append(f"- Visible navigation exercised: `{proof.get('visible_navigation_exercised')}`")
     return "\n".join(lines).rstrip() + "\n"
 
 
