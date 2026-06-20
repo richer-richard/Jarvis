@@ -358,7 +358,21 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             active_title = str(proof.get("browser_open_active_title") or "").strip()
             active_url = str(proof.get("browser_open_active_url") or "").strip()
             detail = active_title or active_url
-            parts.append(f"Chrome did not foreground Teams before OCR{f' (active: {detail})' if detail else ''}")
+            capture_status = str(proof.get("capture_status") or "").strip()
+            capture_response_status = str(proof.get("capture_response_status") or "").strip()
+            capture_window_title = str(proof.get("capture_window_title") or "").strip()
+            if capture_status == "failed" or capture_response_status == "native_capture_failed":
+                parts.append(
+                    "Expected Teams window was not capturable before OCR"
+                    f"{f' (active: {detail})' if detail else ''}"
+                )
+            elif capture_window_title:
+                parts.append(
+                    "OCR captured a different Chrome window before Teams inspection"
+                    f" (captured: {capture_window_title}; active: {detail})"
+                )
+            else:
+                parts.append(f"Chrome did not foreground Teams before OCR{f' (active: {detail})' if detail else ''}")
         execution = proof.get("visible_navigation_execution")
         if isinstance(execution, dict) and execution:
             status = str(execution.get("status") or "unknown").strip() or "unknown"
