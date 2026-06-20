@@ -12,6 +12,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from voice_loop_qa import transcribe_with_local_stt
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 JARVIS_APP = PROJECT_ROOT / "output" / "Jarvis.app"
@@ -24,13 +26,14 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--text", default=DEFAULT_TEXT, help="Reference text to synthesize and transcribe.")
     parser.add_argument("--output-dir", type=Path, default=None, help="Optional output directory under the project.")
     parser.add_argument("--timeout", type=float, default=45.0)
+    parser.add_argument("--skip-local-compare", action="store_true", help="Skip local faster-whisper comparison.")
     args = parser.parse_args(argv)
 
     output_dir = args.output_dir or RUNTIME_ROOT / datetime.now().strftime("%Y%m%d-%H%M%S")
     output_dir = output_dir if output_dir.is_absolute() else PROJECT_ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    report = run_probe(text=args.text, output_dir=output_dir, timeout=args.timeout)
+    report = run_probe(text=args.text, output_dir=output_dir, timeout=args.timeout, compare_local=not args.skip_local_compare)
     report_path = output_dir / "summary.json"
     report["report_path"] = str(report_path)
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -44,7 +47,7 @@ def run(argv: list[str] | None = None) -> int:
     return 0 if report.get("status") in {"completed", "not_authorized", "recognizer_unavailable"} else 1
 
 
-def run_probe(*, text: str, output_dir: Path, timeout: float) -> dict[str, object]:
+def run_probe(*, text: str, output_dir: Path, timeout: float, compare_local: bool) -> dict[str, object]:
     started = time.monotonic()
     aiff_path = output_dir / "reference.aiff"
     wav_path = output_dir / "reference.wav"
@@ -61,6 +64,7 @@ def run_probe(*, text: str, output_dir: Path, timeout: float) -> dict[str, objec
         "jarvis_app_path": str(JARVIS_APP),
         "audio_path": str(wav_path),
         "apple_output_path": str(apple_json),
+        "local_compare_requested": compare_local,
     }
     if not JARVIS_APP.exists():
         return {**report, "status": "jarvis_app_missing", "duration_seconds": elapsed(started)}
@@ -133,7 +137,7 @@ def run_probe(*, text: str, output_dir: Path, timeout: float) -> dict[str, objec
 
     apple = json.loads(apple_json.read_text(encoding="utf-8"))
     transcript = str(apple.get("transcript") or "")
-    return {
+    result = {
         **report,
         "status": apple.get("status"),
         "authorized": apple.get("authorized"),
@@ -145,6 +149,27 @@ def run_probe(*, text: str, output_dir: Path, timeout: float) -> dict[str, objec
         "open_returncode": opened.returncode,
         "duration_seconds": elapsed(started),
     }
+    if compare_local:
+        local_json = output_dir / "local-faster-whisper.json"
+        try:
+            local = transcribe_with_local_stt(wav_path, local_json, timeout=timeout)
+        except Exception as error:
+            local = {
+                "status": "local_compare_failed",
+                "provider": "faster_whisper",
+                "error": f"{type(error).__name__}: {error}",
+                "transcript": "",
+            }
+            local_json.write_text(json.dumps(local, indent=2, ensure_ascii=False), encoding="utf-8")
+        result["local_compare"] = {
+            "path": str(local_json),
+            "status": local.get("status"),
+            "provider": local.get("provider"),
+            "duration_seconds": local.get("duration_seconds"),
+            "transcript": local.get("transcript"),
+            "word_match": normalize(text) == normalize(str(local.get("transcript") or "")),
+        }
+    return result
 
 
 def normalize(value: str) -> str:

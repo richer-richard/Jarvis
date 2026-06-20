@@ -8767,6 +8767,7 @@ def _latest_apple_speech_probe() -> dict[str, Any]:
         "requested_microphone_permission": data.get("requested_microphone_permission"),
         "requested_speech_permission": data.get("requested_speech_permission"),
         "sent_audio": data.get("sent_audio"),
+        "local_compare": data.get("local_compare") if isinstance(data.get("local_compare"), dict) else None,
     }
 
 

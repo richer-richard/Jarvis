@@ -15466,6 +15466,13 @@ Pages occupied by compressor:             10.
                     "requested_microphone_permission": False,
                     "requested_speech_permission": False,
                     "sent_audio": False,
+                    "local_compare": {
+                        "status": "completed",
+                        "provider": "faster_whisper",
+                        "duration_seconds": 1.2,
+                        "transcript": "Hey Jarvis check my calendar",
+                        "word_match": True,
+                    },
                 }),
                 encoding="utf-8",
             )
@@ -15500,6 +15507,8 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["latest_apple_speech_probe"]["status"], "completed")
         self.assertTrue(result["latest_apple_speech_probe"]["word_match"])
         self.assertEqual(result["latest_apple_speech_probe"]["apple_duration_seconds"], 0.4)
+        self.assertEqual(result["latest_apple_speech_probe"]["local_compare"]["duration_seconds"], 1.2)
+        self.assertTrue(result["latest_apple_speech_probe"]["local_compare"]["word_match"])
         self.assertFalse(result["latest_apple_speech_probe"]["requested_speech_permission"])
         self.assertFalse(result["latest_apple_speech_probe"]["sent_audio"])
         self.assertEqual(result["live_stt_policy"]["permission_prompt_safe_default"], "local")
@@ -19260,6 +19269,10 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("--stt-file-self-test", script_source)
         self.assertIn("runtime\" / \"stt_apple_probe", script_source)
         self.assertIn("latest.json", script_source)
+        self.assertIn("--skip-local-compare", script_source)
+        self.assertIn("transcribe_with_local_stt", script_source)
+        self.assertIn('"local_compare_requested": compare_local', script_source)
+        self.assertIn('"local_compare"', script_source)
         self.assertIn('"requested_microphone_permission": False', script_source)
         self.assertIn('"requested_speech_permission": False', script_source)
         self.assertIn('"sent_audio": False', script_source)
