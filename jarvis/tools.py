@@ -14681,6 +14681,23 @@ def _assignment_subject_mismatch_item(subject: str, assignment_items: list[str])
     return ""
 
 
+def _visible_assignment_line_is_browser_chrome(line: str) -> bool:
+    normalized = str(line or "").casefold().strip()
+    if not normalized:
+        return True
+    if re.match(r"^[•·q×x]?\s*\(\d+\)\s+", normalized):
+        return True
+    if re.search(r"\b(?:google search|youtube|ask gemini)\b", normalized):
+        return True
+    if re.search(r"\b(?:chrome|file edit view history bookmarks|profiles tab window help)\b", normalized):
+        return True
+    if re.search(r"\b(?:https?://|teams\.cloud\.microsoft|chrome-extension://)\b", normalized):
+        return True
+    if "|" in line and re.search(r"\b(?:microsoft teams|google chrome|teams and channels)\b", normalized):
+        return True
+    return False
+
+
 def _visible_assignment_digest_items(text: str, *, max_items: int = 6, max_chars: int = 190) -> list[str]:
     """Pull assignment-looking lines from OCR text without calling a model."""
     keywords = {
@@ -14742,6 +14759,8 @@ def _visible_assignment_digest_items(text: str, *, max_items: int = 6, max_chars
         ).strip(" -\t")
         line = re.sub(r"^(?:[o0]llow the link)", "Follow the link", line, flags=re.IGNORECASE)
         if len(line) < 4:
+            continue
+        if _visible_assignment_line_is_browser_chrome(line):
             continue
         normalized = line.casefold()
         nav_key = re.sub(r"[^a-z0-9 ]+", "", normalized).strip()

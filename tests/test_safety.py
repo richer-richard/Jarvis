@@ -10253,7 +10253,11 @@ class PlannerTests(unittest.TestCase):
                 "Chrome File Edit View History Bookmarks Profiles Tab Window Help Mon Jun 15 3:19:10 AM",
                 "can you make me something x Justin Bieber - Beauty And A x Ask Gemini",
                 "Teams and Channels | General | Microsoft Teams",
+                "Q• (1) Teams and Channels | General | Microsoft Teams",
                 "(289) Hamilton - Full Musical",
+                "• (293) Hamilton - Full Musical",
+                "what'd i miss - Google Search",
+                "teams.cloud.microsoft",
                 "Lesson 2: The Geography of Greece Group Assignment",
                 "Assignments 7 WORLD HISTORY 世界历史 7H 2025...",
                 "Instructions:",
@@ -10279,7 +10283,9 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Group Assignment", digest)
         self.assertIn("Instructions", digest)
         self.assertIn("Word document", digest)
-        self.assertIn("Hamilton", digest)
+        self.assertNotIn("Hamilton", digest)
+        self.assertNotIn("Google Search", digest)
+        self.assertNotIn("teams.cloud.microsoft", digest)
         self.assertNotIn("Justin Bieber", digest)
         self.assertNotIn("Mon Jun", digest)
         self.assertNotIn("WORLD HISTORY", digest)
