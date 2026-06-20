@@ -626,6 +626,8 @@ def build_context(base_url: str) -> dict[str, Any]:
     regression_matrix = latest_regression_prompt_matrix()
     voice_loop = latest_voice_loop_qa()
     full_loop = latest_full_loop_regression()
+    pre_build_gate = latest_pre_build_gate()
+    physical_audio = latest_physical_audio_preflight()
     crash = latest_jarvis_crash_report()
     now = datetime.now(BEIJING)
     version = str(app.get("version") or "unknown")
@@ -667,6 +669,8 @@ def build_context(base_url: str) -> dict[str, Any]:
         "regression_matrix": regression_matrix,
         "voice_loop": voice_loop,
         "full_loop": full_loop,
+        "pre_build_gate": pre_build_gate,
+        "physical_audio": physical_audio,
         "worker_source_kind": app.get("worker_source_kind") or "unknown",
         "launch_mode": app.get("launch_mode") or "unknown",
         "runtime_pid": runtime.get("pid") or "unknown",
@@ -1391,6 +1395,87 @@ def latest_full_loop_regression() -> dict[str, Any]:
     }
 
 
+def latest_pre_build_gate() -> dict[str, Any]:
+    latest = PROJECT_ROOT / "runtime" / "pre_build_gate" / "latest.json"
+    if not latest.exists():
+        return {"ok": False, "path": "", "label": "not generated"}
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"ok": False, "path": str(latest), "label": "unreadable"}
+    passed = int(data.get("passed") or 0)
+    total = int(data.get("total") or 0)
+    status = str(data.get("status") or ("passed" if data.get("ok") else "failed"))
+    path = str(latest.relative_to(PROJECT_ROOT)) if latest.is_relative_to(PROJECT_ROOT) else str(latest)
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    return {
+        "ok": bool(data.get("ok")) and status == "passed",
+        "path": path,
+        "label": f"{status}, {passed}/{total} passed" if total else status or "empty",
+        "status": status,
+        "passed": passed,
+        "total": total,
+        "source_commit": str(data.get("source_commit") or ""),
+        "warnings": [str(item) for item in warnings if str(item).strip()],
+        "teams_blocker": latest_pre_build_gate_teams_blocker(data),
+    }
+
+
+def latest_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
+    try:
+        from scripts.morning_status import pre_build_gate_teams_blocker
+    except Exception:
+        return ""
+    try:
+        return str(pre_build_gate_teams_blocker(data) or "").strip()
+    except Exception:
+        return ""
+
+
+def latest_physical_audio_preflight() -> dict[str, Any]:
+    try:
+        from scripts.physical_audio_preflight import physical_audio_preflight
+
+        result = physical_audio_preflight()
+    except Exception as error:
+        return {
+            "ok": False,
+            "status": "unavailable",
+            "ready_for_physical_capture": False,
+            "label": f"unavailable ({type(error).__name__})",
+            "virtual_duplex_devices": [],
+        }
+    if not isinstance(result, dict):
+        return {
+            "ok": False,
+            "status": "unavailable",
+            "ready_for_physical_capture": False,
+            "label": "unavailable",
+            "virtual_duplex_devices": [],
+        }
+    ready = bool(result.get("ready_for_physical_capture"))
+    status = str(result.get("status") or ("ready" if ready else "unknown"))
+    virtual = result.get("virtual_duplex_devices") if isinstance(result.get("virtual_duplex_devices"), list) else []
+    virtual_names = [
+        str(item.get("name") or "").strip()
+        for item in virtual
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    if ready:
+        label = "physical capture ready"
+    elif virtual_names:
+        label = f"{status}; virtual duplex candidate(s): {', '.join(virtual_names)}"
+    else:
+        label = f"{status}; strict speaker/microphone proof fails closed"
+    return {
+        **result,
+        "ready_for_physical_capture": ready,
+        "status": status,
+        "label": label,
+        "virtual_duplex_names": virtual_names,
+    }
+
+
 def latest_teams_live_navigation_diagnostic() -> str:
     reports = sorted(
         (path for path in (PROJECT_ROOT / "runtime" / "full_loop_regression").glob("*/summary.json") if path.is_file()),
@@ -1923,7 +2008,7 @@ def headline_section(context: dict[str, Any]) -> str:
         ),
         (
             "Caveat",
-            "Teams still depends on signed-in Chrome permissions, and older LocalOS/Chrome browser-audio fallback paths may still need one real player click; the new proof keeps those limits honest instead of claiming the wrong thing worked.",
+            current_limit_text(context),
         ),
     ]
     body = '<div class="grid headline">' + "".join(
@@ -1955,11 +2040,17 @@ def spotlight_section(context: dict[str, Any]) -> str:
         ),
         (
             "Best Proof",
-            f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, closed-loop voice QA, and post-patch behavior proof.{full_loop_text}{latency_text} {matrix_text}".strip(),
+            current_best_proof_text(
+                context,
+                python_tests=python_tests,
+                full_loop_text=full_loop_text,
+                latency_text=latency_text,
+                matrix_text=matrix_text,
+            ),
         ),
         (
             "Honest Limit",
-            "Teams page reading still depends on Chrome Automation permission; older LocalOS/Chrome fallback playback may still need one real player click, but native Music bridge playback is proven in the full-loop gate.",
+            current_limit_text(context),
         ),
     ]
     body = '<div class="grid spotlight">' + "".join(
@@ -1967,6 +2058,48 @@ def spotlight_section(context: dict[str, Any]) -> str:
         for title, text in cards
     ) + "</div>"
     return f"<section><h2>Morning Snapshot</h2>{body}</section>"
+
+
+def current_best_proof_text(
+    context: dict[str, Any],
+    *,
+    python_tests: str,
+    full_loop_text: str,
+    latency_text: str,
+    matrix_text: str,
+) -> str:
+    pre_build = context.get("pre_build_gate") if isinstance(context.get("pre_build_gate"), dict) else {}
+    gate_text = ""
+    if pre_build.get("path"):
+        gate_text = f" Current pre-build gate: {pre_build.get('label')}."
+    physical = context.get("physical_audio") if isinstance(context.get("physical_audio"), dict) else {}
+    physical_text = ""
+    if physical.get("label"):
+        physical_text = f" Physical audio loop: {physical.get('label')}."
+    return (
+        f"{context['verification']['label']} verifier, {python_tests} Python tests, Swift self-tests, "
+        f"closed-loop voice QA, and post-patch behavior proof.{gate_text}{full_loop_text}"
+        f"{latency_text} {matrix_text}{physical_text}"
+    ).strip()
+
+
+def current_limit_text(context: dict[str, Any]) -> str:
+    parts: list[str] = []
+    pre_build = context.get("pre_build_gate") if isinstance(context.get("pre_build_gate"), dict) else {}
+    teams_blocker = str(pre_build.get("teams_blocker") or "").strip()
+    if teams_blocker:
+        parts.append(teams_blocker)
+    else:
+        parts.append("Teams page reading still depends on signed-in Chrome and verified visible-page access.")
+    physical = context.get("physical_audio") if isinstance(context.get("physical_audio"), dict) else {}
+    if physical.get("ready_for_physical_capture"):
+        parts.append("Physical speaker/microphone loopback proof is ready.")
+    elif physical.get("label"):
+        parts.append(f"Physical speaker/microphone proof is not ready: {physical.get('label')}.")
+    parts.append(
+        "Native Music bridge playback is proven in the full-loop gate; older LocalOS/Chrome fallback paths stay honest instead of claiming success."
+    )
+    return " ".join(str(part).strip() for part in parts if str(part).strip())
 
 
 def latest_python_tests_label(context: dict[str, Any]) -> str:

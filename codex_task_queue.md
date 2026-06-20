@@ -47,6 +47,7 @@
 
 ## Completed This Turn
 
+- [x] Fixed stale top-of-report wording: the master HTML report now derives its Morning Snapshot/Caveat text from the latest pre-build gate, Teams blocker, and physical audio preflight, so it surfaces the Microsoft sign-in blocker and loopback-device gap instead of old Chrome Automation wording. Focused report tests passed, full `tests.test_safety` passed `1066/1066`, and live report refresh confirmed the new phrases are present.
 - [x] Fixed a false Magic Keyboard latency failure: full-loop latency budgets now use user-facing voice-loop stages when available, excluding synthetic command TTS and offline speech-audit proof generation. Live `--case magic` passed at `runtime/full_loop_regression/20260620-191328/summary.json` with `latency_measure_seconds: 12.396`, `total_seconds: 21.793`, `route_source: model_tool_call`, and `converted: 672 yuan`.
 - [x] Made Apple Speech/Dictation status explicit: `voice.stt_candidates` now reports `current_live_listener_engine: apple-speech-native` for the Hey Jarvis macOS listener, keeps `faster-whisper-tiny-en-local` as the unattended fallback, and `scripts/morning_status.py` prints the live listener engine without recording audio or requesting permissions. Focused tests passed.
 - [x] Started the official macOS UI upgrade: the app now has a visible `Jarvis Activity` panel for commands, tool use, browser opens, speech state, replies, and errors; Copy Chat JSON includes `action_events`; the summon popout is smaller and clipped to reduce the rectangular gradient artifact.

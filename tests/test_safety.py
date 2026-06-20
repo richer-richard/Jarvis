@@ -5717,6 +5717,15 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "slowest_case_seconds": 45.327,
                 "duration_seconds": 132.456,
             },
+            "pre_build_gate": {
+                "path": "runtime/pre_build_gate/latest.json",
+                "label": "failed, 3/4 passed",
+                "teams_blocker": "Teams assignment is not_inspected; Microsoft sign-in gate is visible in Chrome.",
+            },
+            "physical_audio": {
+                "ready_for_physical_capture": False,
+                "label": "loopback_device_missing; virtual duplex candidate(s): Microsoft Teams Audio",
+            },
             "worker_source_kind": "bundled app resources",
             "launch_mode": "regular Dock app",
             "runtime_pid": 123,
@@ -5773,6 +5782,11 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn(str(PROJECT_ROOT / "runtime" / "pre_build_gate" / "latest.json"), report)
         self.assertIn(str(PROJECT_ROOT / "runtime" / "pre_build_gate" / "latest.md"), report)
         self.assertIn("Current fast smoke max first visible 1.234s", report)
+        self.assertIn("Current pre-build gate: failed, 3/4 passed", report)
+        self.assertIn("Microsoft sign-in gate is visible in Chrome", report)
+        self.assertIn("Physical audio loop: loopback_device_missing; virtual duplex candidate(s): Microsoft Teams Audio", report)
+        self.assertIn("Physical speaker/microphone proof is not ready", report)
+        self.assertNotIn("Teams page reading still depends on Chrome Automation permission", report)
         self.assertIn(str(PROJECT_ROOT / "output" / "playwright"), report)
         self.assertIn('href="../../output/playwright/"', report)
         self.assertIn("not generated yet", render_overnight_status.supporting_section({"supporting": [("runtime/definitely_missing_latest.json", "Missing proof")]}))
@@ -5786,8 +5800,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertLess(report.index("Tonight&#x27;s Shipped Highlights"), report.index("Full Shipped Archive"))
         self.assertIn("Live Jarvis 0.1.test build 999", report)
         self.assertIn("music playback is proven through the native Music app bridge", report)
-        self.assertIn("older LocalOS/Chrome browser-audio fallback paths may still need one real player click", report)
-        self.assertIn("native Music bridge playback is proven in the full-loop gate", report)
+        self.assertIn("older LocalOS/Chrome fallback paths stay honest instead of claiming success", report)
+        self.assertIn("Native Music bridge playback is proven in the full-loop gate", report)
         self.assertIn("live-launched proof now matches 0.1.439", report)
         self.assertIn("scripts/report_refresh.py", report)
         self.assertIn("scripts/pre_build_gate.py", report)
