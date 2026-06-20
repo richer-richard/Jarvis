@@ -20,8 +20,29 @@ JARVIS_FILE_MARKERS = (
     "/developer/Jarvis/runtime/overnight_status/report.html",
     "/developer/Jarvis/runtime/overnight_status/index.html",
 )
-CHROME_CLEANUP_TIMEOUT_SECONDS = 5
+CHROME_CLEANUP_TIMEOUT_SECONDS = 8
 CHROME_CLEANUP_ATTEMPTS = 2
+CHROME_CLEANUP_WARMUP_TIMEOUT_SECONDS = 8
+
+
+def _chrome_warmup() -> dict[str, Any]:
+    script = 'Application("Google Chrome").windows.length'
+    try:
+        completed = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=CHROME_CLEANUP_WARMUP_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        return {"status": "timeout", "timeout_seconds": error.timeout}
+    return {
+        "status": "completed" if completed.returncode == 0 else "failed",
+        "returncode": completed.returncode,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
 
 
 def is_cleanup_target(url: str) -> bool:
@@ -73,6 +94,22 @@ JSON.stringify(targets);
 
 def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
     script = _cleanup_jxa(close_targets=execute)
+    warmup = _chrome_warmup()
+    if warmup.get("status") == "timeout":
+        return {
+            "ok": False,
+            "executed": execute,
+            "closed_count": 0,
+            "target_count": 0,
+            "targets": [],
+            "attempts": [],
+            "warmup": warmup,
+            "error": (
+                f"Chrome cleanup warm-up timed out after {CHROME_CLEANUP_WARMUP_TIMEOUT_SECONDS:g}s "
+                "while reading Chrome windows."
+            ),
+            "timeout_seconds": CHROME_CLEANUP_WARMUP_TIMEOUT_SECONDS,
+        }
     attempts: list[dict[str, Any]] = []
     completed: subprocess.CompletedProcess[str] | None = None
     for attempt in range(1, CHROME_CLEANUP_ATTEMPTS + 1):
@@ -97,6 +134,7 @@ def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
             "target_count": 0,
             "targets": [],
             "attempts": attempts,
+            "warmup": warmup,
             "error": (
                 f"Chrome cleanup timed out after {CHROME_CLEANUP_ATTEMPTS} "
                 f"attempts of {CHROME_CLEANUP_TIMEOUT_SECONDS:g}s while reading tab URLs."
@@ -110,6 +148,7 @@ def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
             "closed_count": 0,
             "targets": [],
             "attempts": attempts,
+            "warmup": warmup,
             "error": completed.stderr.strip() or completed.stdout.strip(),
         }
     try:
@@ -122,6 +161,7 @@ def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
             "target_count": 0,
             "targets": [],
             "attempts": attempts,
+            "warmup": warmup,
             "error": f"Chrome cleanup returned invalid JSON: {error}",
         }
     targets = [
@@ -136,6 +176,7 @@ def cleanup_chrome_test_tabs(*, execute: bool) -> dict[str, Any]:
         "target_count": len(targets),
         "targets": targets,
         "attempts": attempts,
+        "warmup": warmup,
     }
 
 
