@@ -58,6 +58,7 @@ from .tools import (
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 OVERNIGHT_STATUS_DIR = PROJECT_ROOT / "runtime" / "overnight_status"
+FULL_LOOP_REGRESSION_DIR = PROJECT_ROOT / "runtime" / "full_loop_regression"
 MAX_VERIFICATION_AGE_SECONDS = 12 * 60 * 60
 MAX_WAKE_SAMPLE_BYTES = 8 * 1024 * 1024
 MAX_LOCALOS_MUSIC_SNAPSHOT_BYTES = 256 * 1024
@@ -626,9 +627,11 @@ class JarvisServer:
                     "GET /overnight-report/",
                     "GET /overnight-workboard/",
                     "GET /capability-questions/",
+                    "GET /full-loop-regression/latest.json",
                     "HEAD /overnight-report/",
                     "HEAD /overnight-workboard/",
                     "HEAD /capability-questions/",
+                    "HEAD /full-loop-regression/latest.json",
                     "POST /api/mode",
                     "POST /api/plan",
                     "POST /api/speech/mute",
@@ -1250,6 +1253,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         if route.path in {"/capability-questions", "/capability-questions/"}:
             self._send_runtime_file(OVERNIGHT_STATUS_DIR / "capability_questions.html", root=OVERNIGHT_STATUS_DIR, head_only=head_only)
+            return
+        if route.path == "/full-loop-regression/latest.json":
+            self._send_runtime_file(FULL_LOOP_REGRESSION_DIR / "latest.json", root=FULL_LOOP_REGRESSION_DIR, head_only=head_only)
             return
         if route.path.startswith("/static/"):
             self._send_file(STATIC_DIR / route.path.removeprefix("/static/"), head_only=head_only)

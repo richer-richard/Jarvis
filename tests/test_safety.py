@@ -6630,6 +6630,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.488", shipped)
+        self.assertIn("loopback-served latest full-loop JSON", shipped)
         self.assertIn("0.1.487", shipped)
         self.assertIn("capabilities status", shipped)
         self.assertIn("Capability Questions proof board", shipped)
@@ -7274,7 +7276,7 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         def fake_http_response(_base_url, path, **kwargs):
             if kwargs.get("method") == "HEAD":
-                if path in {"/overnight-report/", "/overnight-workboard/", "/capability-questions/"}:
+                if path in {"/overnight-report/", "/overnight-workboard/", "/capability-questions/", "/full-loop-regression/latest.json"}:
                     return 200, "", headers
                 return 404, "", {}
             if path == "/overnight-report/":
@@ -7283,12 +7285,14 @@ class VerifySafeScriptTests(unittest.TestCase):
                 return 200, "<!doctype html><title>Jarvis Overnight Workboard</title>", headers
             if path == "/capability-questions/":
                 return 200, "<!doctype html><title>Jarvis Capability Questions</title><p>Magic Keyboard</p><p>Ms. Sharpay</p>", headers
+            if path == "/full-loop-regression/latest.json":
+                return 200, '{"schema":"jarvis.full_loop_regression.v1"}', headers
             return 404, "", {}
 
         with patch("scripts.verify_safe.http_response", side_effect=fake_http_response):
             detail = verify_safe.check_endpoint_overnight_report_routes("http://127.0.0.1:8765")
 
-        self.assertEqual(detail, "report, workboard, and capability questions GET/HEAD HTML routes available")
+        self.assertEqual(detail, "report, workboard, capability questions, and full-loop latest GET/HEAD routes available")
 
     def test_render_capability_questions_page_contains_hard_prompts(self):
         context = {
@@ -7362,6 +7366,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("honest warning", page)
         self.assertIn("Jarvis did not inspect the requested Music assignment.", page)
         self.assertIn("latest full-loop JSON", page)
+        self.assertIn('href="/full-loop-regression/latest.json"', page)
 
     def test_verify_safe_checks_wake_audition_corpus_route(self):
         def fake_http_response(_base_url, path, **_kwargs):
@@ -15450,8 +15455,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.487}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-487}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.488}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-488}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
@@ -26866,9 +26871,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("GET /overnight-report/", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /overnight-workboard/", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /capability-questions/", readiness["mode"]["allowed_while_paused"])
+        self.assertIn("GET /full-loop-regression/latest.json", readiness["mode"]["allowed_while_paused"])
         self.assertIn("HEAD /overnight-report/", readiness["mode"]["allowed_while_paused"])
         self.assertIn("HEAD /overnight-workboard/", readiness["mode"]["allowed_while_paused"])
         self.assertIn("HEAD /capability-questions/", readiness["mode"]["allowed_while_paused"])
+        self.assertIn("HEAD /full-loop-regression/latest.json", readiness["mode"]["allowed_while_paused"])
         self.assertIn("POST /api/integrations/localos/music/snapshot", readiness["mode"]["allowed_while_paused"])
         self.assertIn("GET /api/integrations/localos/music/control", readiness["mode"]["allowed_while_paused"])
         self.assertTrue(readiness["mode"]["paused"])

@@ -1549,6 +1549,7 @@ def check_endpoint_overnight_report_routes(base_url: str) -> str:
     report_status, report_body, report_headers = http_response(base_url, "/overnight-report/")
     workboard_status, workboard_body, workboard_headers = http_response(base_url, "/overnight-workboard/")
     capability_status, capability_body, capability_headers = http_response(base_url, "/capability-questions/")
+    full_loop_status, full_loop_body, full_loop_headers = http_response(base_url, "/full-loop-regression/latest.json")
     report_head_status, report_head_body, report_head_headers = http_response(
         base_url,
         "/overnight-report/",
@@ -1564,18 +1565,27 @@ def check_endpoint_overnight_report_routes(base_url: str) -> str:
         "/capability-questions/",
         method="HEAD",
     )
+    full_loop_head_status, full_loop_head_body, full_loop_head_headers = http_response(
+        base_url,
+        "/full-loop-regression/latest.json",
+        method="HEAD",
+    )
     require(report_status == 200, f"report status={report_status}")
     require(workboard_status == 200, f"workboard status={workboard_status}")
     require(capability_status == 200, f"capability questions status={capability_status}")
+    require(full_loop_status == 200, f"full-loop latest status={full_loop_status}")
     require(report_head_status == 200, f"report HEAD status={report_head_status}")
     require(workboard_head_status == 200, f"workboard HEAD status={workboard_head_status}")
     require(capability_head_status == 200, f"capability questions HEAD status={capability_head_status}")
+    require(full_loop_head_status == 200, f"full-loop latest HEAD status={full_loop_head_status}")
     require(report_head_body == "", "report HEAD returned a body")
     require(workboard_head_body == "", "workboard HEAD returned a body")
     require(capability_head_body == "", "capability questions HEAD returned a body")
+    require(full_loop_head_body == "", "full-loop latest HEAD returned a body")
     require("Jarvis Master Report" in report_body, "report title missing")
     require("Jarvis Overnight Workboard" in workboard_body, "workboard title missing")
     require("Jarvis Capability Questions" in capability_body, "capability questions title missing")
+    require('"schema"' in full_loop_body and "jarvis.full_loop_regression" in full_loop_body, "full-loop latest JSON body missing schema")
     require("Magic Keyboard" in capability_body, "capability questions web/search prompt missing")
     require("Ms. Sharpay" in capability_body, "capability questions email prompt missing")
     require("'unsafe-inline'" in report_headers.get("content-security-policy", ""), "report inline styles blocked")
@@ -1593,7 +1603,11 @@ def check_endpoint_overnight_report_routes(base_url: str) -> str:
         capability_head_headers.get("content-length") == capability_headers.get("content-length"),
         "capability questions HEAD content length mismatch",
     )
-    return "report, workboard, and capability questions GET/HEAD HTML routes available"
+    require(
+        full_loop_head_headers.get("content-length") == full_loop_headers.get("content-length"),
+        "full-loop latest HEAD content length mismatch",
+    )
+    return "report, workboard, capability questions, and full-loop latest GET/HEAD routes available"
 
 
 def check_endpoint_speech_mute(base_url: str) -> str:

@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.488 fixes the proof-board artifact link: the Capability Questions page now links to a loopback-served latest full-loop JSON route, and the safe verifier checks that route with GET and HEAD.",
     "Jarvis 0.1.487 makes `capabilities status` match the new proof surfaces: Jarvis now reports the Capability Questions proof board as a prepared local surface instead of only mentioning STT and Wake audition pages.",
     "Jarvis 0.1.486 makes the proof board reachable from the menu-bar head too: both the normal status item and emergency helper now include `Open Questions` beside the report and wake-test links.",
     "Jarvis 0.1.485 makes the show-off prompt list easier to use: the Jarvis window now has a Questions button, and the Capability Questions page shows proof badges from the latest full-loop run so Leo can see what is proved, warning, or not covered.",
@@ -1800,7 +1801,7 @@ def render_capability_questions(context: dict[str, Any]) -> str:
 """
         )
     proof_link = (
-        f'<a class="link-pill" href="../full_loop_regression/latest.json">latest full-loop JSON</a>'
+        f'<a class="link-pill" href="/full-loop-regression/latest.json">latest full-loop JSON</a>'
         if full_loop_path
         else '<span class="link-pill muted">latest full-loop JSON not generated</span>'
     )
