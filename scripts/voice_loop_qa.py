@@ -2029,6 +2029,39 @@ def run_native_visible_screen_follow_up(
             "duration_seconds": round(time.monotonic() - started, 3),
         }
 
+    if browser_open.get("browser_open_verification_source") == "active_title_url":
+        browser_settle = read_chrome_front_tab_state(
+            target_host=(urlparse(str(browser_open.get("browser_url") or "")).hostname or "").lower(),
+            timeout=timeout,
+        )
+        if browser_settle.get("browser_open_attempted"):
+            browser_open.update(browser_settle)
+            result.update(browser_settle)
+        if browser_open.get("browser_open_login_gate"):
+            return {
+                **result,
+                "status": "login_gate_visible",
+                "used": False,
+                "attempts": 0,
+                "visible_reply_preview": (
+                    "Teams opened in Chrome, but Microsoft is showing a sign-in gate. "
+                    "I have not inspected the newest Music assignment yet."
+                ),
+                "duration_seconds": round(time.monotonic() - started, 3),
+            }
+        if (
+            browser_open.get("browser_open_returncode") == 0
+            and browser_open.get("browser_open_target_host_verified") is False
+            and browser_open.get("browser_open_verification_source") != "active_title_url"
+        ):
+            return {
+                **result,
+                "status": "browser_focus_not_verified",
+                "used": False,
+                "attempts": 0,
+                "duration_seconds": round(time.monotonic() - started, 3),
+            }
+
     latest_failure: dict[str, Any] | None = None
     max_attempts = max(
         1,
@@ -2999,6 +3032,58 @@ return frontTitle & linefeed & frontURL
         return {
             "browser_open_attempted": True,
             "browser_url": url,
+            "browser_open_error": f"{type(error).__name__}: {error}",
+        }
+
+
+def read_chrome_front_tab_state(*, target_host: str, timeout: float) -> dict[str, Any]:
+    applescript = """
+tell application "Google Chrome"
+    set frontURL to ""
+    set frontTitle to ""
+    try
+        set frontURL to URL of active tab of front window
+        set frontTitle to title of active tab of front window
+    end try
+end tell
+return frontTitle & linefeed & frontURL
+"""
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", applescript],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=min(5.0, max(2.0, timeout)),
+            check=False,
+        )
+        stdout = completed.stdout.strip()
+        title, active_url = parse_chrome_front_tab_output(stdout)
+        verification_url, verification_source = chrome_front_tab_verification_url(title, active_url)
+        active_host = (urlparse(verification_url).hostname or "").lower()
+        login_gate = chrome_front_tab_login_gate(title=title, active_url=active_url)
+        target_host_verified = chrome_front_tab_host_verified(
+            target_host=target_host,
+            active_host=active_host,
+            verification_source=verification_source,
+        )
+        return {
+            "browser_open_attempted": True,
+            "browser_open_settle_check": True,
+            "browser_open_returncode": completed.returncode,
+            "browser_open_stdout_tail": stdout[-500:],
+            "browser_open_stderr_tail": completed.stderr.strip()[-500:],
+            "browser_open_active_title": title,
+            "browser_open_active_url": active_url,
+            "browser_open_verification_url": verification_url,
+            "browser_open_verification_source": verification_source,
+            "browser_open_login_gate": login_gate,
+            "browser_open_target_host_verified": bool(completed.returncode == 0 and target_host_verified),
+        }
+    except Exception as error:
+        return {
+            "browser_open_attempted": True,
+            "browser_open_settle_check": True,
             "browser_open_error": f"{type(error).__name__}: {error}",
         }
 
