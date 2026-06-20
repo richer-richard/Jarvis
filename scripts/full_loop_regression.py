@@ -34,6 +34,7 @@ from scripts.render_overnight_status import normalize_base_url  # noqa: E402
 REPORT_DIR = PROJECT_ROOT / "runtime" / "full_loop_regression"
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
 DEFAULT_MUSIC_BRIDGE_URL = "http://127.0.0.1:47879"
+DEFAULT_MUSIC_APP_BUNDLE_PATH = PROJECT_ROOT.parent / "Music App" / "dist" / "Music.app"
 
 
 MUSIC_WAVING_CASE = {
@@ -363,7 +364,7 @@ def run_music_waving_case(
     write_json(run_dir / "afplay-before.json", {"processes": before_afplay})
     write_json(run_dir / "media-surfaces-before.json", before_media_surfaces)
     try:
-        preflight = music_bridge_request(music_bridge_url, "GET", "/health", timeout=3.5, auth=False)
+        preflight = ensure_music_bridge_ready(music_bridge_url)
 
         voice_report = voice_loop_qa.run_voice_loop(
             command_text=case["command"],
@@ -614,6 +615,53 @@ def wait_for_music_playback(music_bridge_url: str, *, timeout: float) -> dict[st
             return state
         if time.monotonic() >= deadline:
             return last_state
+        time.sleep(0.25)
+
+
+def ensure_music_bridge_ready(music_bridge_url: str, *, timeout: float = 6.0) -> dict[str, Any]:
+    health = music_bridge_request(music_bridge_url, "GET", "/health", timeout=2.0, auth=False)
+    if health.get("ok") is True:
+        return health
+    startup: dict[str, Any] = {
+        "attempted": False,
+        "app_path": str(DEFAULT_MUSIC_APP_BUNDLE_PATH),
+        "initial_health": health,
+    }
+    if not DEFAULT_MUSIC_APP_BUNDLE_PATH.exists():
+        return {
+            "ok": False,
+            "error": "music_app_bundle_missing",
+            "startup": startup,
+        }
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/open", str(DEFAULT_MUSIC_APP_BUNDLE_PATH)],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+        startup.update({
+            "attempted": True,
+            "returncode": completed.returncode,
+            "stderr": (completed.stderr or "").strip()[-500:],
+        })
+    except subprocess.TimeoutExpired:
+        startup.update({"attempted": True, "error": "open_timeout"})
+        return {"ok": False, "error": "music_app_open_timeout", "startup": startup}
+    except OSError as error:
+        startup.update({"attempted": True, "error": str(error)})
+        return {"ok": False, "error": "music_app_open_failed", "startup": startup}
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    last_health = health
+    while True:
+        last_health = music_bridge_request(music_bridge_url, "GET", "/health", timeout=1.0, auth=False)
+        if last_health.get("ok") is True:
+            return {**last_health, "startup": startup}
+        if time.monotonic() >= deadline:
+            return {"ok": False, "error": "music_bridge_unreachable_after_open", "health": last_health, "startup": startup}
         time.sleep(0.25)
 
 

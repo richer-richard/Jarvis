@@ -303,19 +303,27 @@ class VerifySafeScriptTests(unittest.TestCase):
 
     def test_full_loop_music_case_exercises_autostart_when_preflight_down(self):
         calls = []
+        health_calls = 0
 
         def fake_music_bridge_request(_base_url, method, path, **_kwargs):
+            nonlocal health_calls
             calls.append((method, path))
             if method == "GET" and path == "/health":
-                return {"ok": False, "error": {"code": "music_bridge_unreachable"}}
+                health_calls += 1
+                if health_calls == 1:
+                    return {"ok": False, "error": {"code": "music_bridge_unreachable"}}
+                return {"ok": True, "status": "running"}
             return {"ok": True}
 
         with tempfile.TemporaryDirectory() as tmpdir, \
+             patch.object(full_loop_regression, "DEFAULT_MUSIC_APP_BUNDLE_PATH", Path(tmpdir) / "Music.app"), \
              patch("scripts.full_loop_regression.music_bridge_request", side_effect=fake_music_bridge_request), \
+             patch("scripts.full_loop_regression.subprocess.run", return_value=subprocess.CompletedProcess(["open"], 0, "", "")) as open_mock, \
              patch("scripts.full_loop_regression.afplay_process_snapshot", return_value=[]), \
              patch("scripts.full_loop_regression.media_playback_surface_snapshot", return_value={"surfaces": [], "blocked": []}), \
              patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop, \
              patch("scripts.full_loop_regression.wait_for_music_playback") as wait_for_music_playback:
+            (Path(tmpdir) / "Music.app").mkdir()
             run_voice_loop.return_value = {"result": {"status": "passed"}}
             wait_for_music_playback.return_value = {
                 "ok": True,
@@ -337,10 +345,27 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "passed")
-        self.assertFalse(result["preflight"]["ok"])
+        self.assertTrue(result["preflight"]["ok"])
+        self.assertTrue(result["preflight"]["startup"]["attempted"])
+        open_mock.assert_called_once()
         self.assertTrue(run_voice_loop.called)
         self.assertIn(("POST", "/stop"), calls)
         self.assertTrue(result["cleanup"]["verified_stopped"])
+
+    def test_full_loop_music_bridge_ready_reports_missing_app_when_down(self):
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch.object(full_loop_regression, "DEFAULT_MUSIC_APP_BUNDLE_PATH", Path(tmpdir) / "Missing.app"), \
+             patch(
+                 "scripts.full_loop_regression.music_bridge_request",
+                 return_value={"ok": False, "error": "connection refused"},
+             ), \
+             patch("scripts.full_loop_regression.subprocess.run") as open_mock:
+            result = full_loop_regression.ensure_music_bridge_ready("http://127.0.0.1:47879")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "music_app_bundle_missing")
+        self.assertFalse(result["startup"]["attempted"])
+        open_mock.assert_not_called()
 
     def test_full_loop_music_case_fails_when_cleanup_does_not_stop_playback(self):
         def fake_music_bridge_request(_base_url, method, path, **_kwargs):
