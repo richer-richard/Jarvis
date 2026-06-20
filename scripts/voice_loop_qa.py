@@ -2012,6 +2012,8 @@ def run_native_visible_screen_follow_up(
                     "executed": False,
                     "status": "navigation_loop_prevented",
                     "point": {"x": point_key[0], "y": point_key[1]},
+                    "action": str(plan.get("action") or "click"),
+                    "coordinate_space": str(plan.get("coordinate_space") or "unknown"),
                 }
                 break
             seen_navigation_points.add(point_key)

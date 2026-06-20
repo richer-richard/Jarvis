@@ -1445,7 +1445,9 @@ def teams_live_navigation_diagnostic(data: dict[str, Any], report_path: Path | N
         if report_path is not None:
             path = str(report_path.relative_to(PROJECT_ROOT)) if report_path.is_relative_to(PROJECT_ROOT) else str(report_path)
             path_text = f"; {path}"
-        verb = "clicked" if status == "clicked" else f"stopped as {status}"
+        action_name = str(execution.get("action") or "").strip()
+        action_prefix = f"{action_name} " if action_name else ""
+        verb = f"{action_prefix}clicked" if status == "clicked" else f"stopped as {action_prefix}{status}"
         return f"latest live Teams navigation {verb}{point_text}{coordinate_text}{step_text}{path_text}"
     return ""
 

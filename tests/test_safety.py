@@ -3323,6 +3323,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                 },
                 "all_teams_plan": {
                     "planned": True,
+                    "action": "browser_back",
+                    "coordinate_space": "screen_points",
                     "will_click": False,
                     "point": {"x": 257.0, "y": 322.5},
                 },
@@ -3401,6 +3403,59 @@ class VerifySafeScriptTests(unittest.TestCase):
         execute_mock.assert_called_once()
         self.assertEqual(execute_mock.call_args.args[0]["point"], {"x": 257.0, "y": 322.5})
         self.assertEqual(result["visible_navigation_execution"]["status"], "live_navigation_not_unlocked")
+
+    def test_voice_loop_qa_navigation_loop_prevented_preserves_action_metadata(self):
+        command_response = {"tool": "teams.assignment", "result": {}}
+        blocked_browser = {"status": "browser_permission_blocked", "tool": "browser.read_page"}
+        mismatch_attempt = {
+            "used": False,
+            "status": "assignment_subject_mismatch",
+            "tool": "screen.visible_text",
+            "visible_navigation_targets": {
+                "all_teams_plan": {
+                    "planned": True,
+                    "action": "browser_back",
+                    "coordinate_space": "screen_points",
+                    "will_click": False,
+                    "point": {"x": 107.39, "y": 274.0},
+                },
+                "sequence": [
+                    {
+                        "key": "all_teams",
+                        "plan": {
+                            "planned": True,
+                            "action": "browser_back",
+                            "coordinate_space": "screen_points",
+                            "will_click": False,
+                            "point": {"x": 107.39, "y": 274.0},
+                        },
+                    }
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.VISIBLE_SCREEN_PROBE", Path("/tmp/fake-probe")), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("scripts.voice_loop_qa.run_browser_page_follow_up", return_value=blocked_browser), \
+             patch("scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt", return_value=mismatch_attempt), \
+             patch("scripts.voice_loop_qa.execute_visible_navigation_plan", return_value={
+                 "attempted": True,
+                 "executed": True,
+                 "status": "browser_back",
+             }), \
+             patch("scripts.voice_loop_qa.time.sleep"):
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response=command_response,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+                exercise_visible_navigation=True,
+            )
+
+        self.assertEqual(result["visible_navigation_execution"]["status"], "navigation_loop_prevented")
+        self.assertEqual(result["visible_navigation_execution"]["action"], "browser_back")
+        self.assertEqual(result["visible_navigation_execution"]["coordinate_space"], "screen_points")
 
     def test_voice_loop_qa_visible_screen_followup_can_continue_after_all_teams_click(self):
         command_response = {"tool": "teams.assignment", "result": {}}
@@ -25136,6 +25191,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                     "visible_navigation_execution": {
                                         "attempted": False,
                                         "executed": False,
+                                        "action": "browser_back",
                                         "status": "navigation_loop_prevented",
                                         "point": {"x": 257.0, "y": 322.5},
                                         "coordinate_space": "image_pixels",
@@ -25166,7 +25222,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn("Teams assignment is wrong_subject", blocker)
         self.assertIn("Chrome page-read is blocked", blocker)
-        self.assertIn("latest live navigation stopped as navigation_loop_prevented at (257.0, 322.5) in screenshot pixels", blocker)
+        self.assertIn("latest live navigation stopped as browser_back navigation_loop_prevented at (257.0, 322.5) in screenshot pixels", blocker)
         self.assertIn("next no-click sequence: requested class -> Assignments", blocker)
         self.assertIn("Music Class no-click navigation plan is ready at (214.0, 344.0) in screen points", blocker)
         self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5) in screenshot pixels", blocker)
@@ -25227,6 +25283,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                     "visible_navigation_execution": {
                                         "attempted": False,
                                         "executed": False,
+                                        "action": "browser_back",
                                         "status": "navigation_loop_prevented",
                                         "point": {"x": 257.13, "y": 323.04},
                                         "coordinate_space": "screen_points",
@@ -25245,7 +25302,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
             with patch("scripts.morning_status.PROJECT_ROOT", root):
                 diagnostic = latest_teams_live_navigation_diagnostic()
 
-        self.assertIn("stopped as navigation_loop_prevented at (257.13, 323.04) in screen points", diagnostic)
+        self.assertIn("stopped as browser_back navigation_loop_prevented at (257.13, 323.04) in screen points", diagnostic)
         self.assertIn("1 step(s)", diagnostic)
         self.assertIn("runtime/full_loop_regression/20260620-095114/summary.json", diagnostic)
 

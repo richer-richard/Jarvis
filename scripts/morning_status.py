@@ -359,12 +359,14 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             point = execution.get("point") if isinstance(execution.get("point"), dict) else {}
             point_text = f" at ({point.get('x')}, {point.get('y')})" if point else ""
             coordinate_text = coordinate_space_status_text(execution)
+            action_name = str(execution.get("action") or "").strip()
+            action_prefix = f"{action_name} " if action_name else ""
             if execution.get("executed"):
-                parts.append(f"latest live navigation step {status}{point_text}{coordinate_text}")
+                parts.append(f"latest live navigation step {action_prefix}{status}{point_text}{coordinate_text}")
             elif execution.get("attempted"):
-                parts.append(f"latest live navigation step failed as {status}{point_text}{coordinate_text}")
+                parts.append(f"latest live navigation step failed as {action_prefix}{status}{point_text}{coordinate_text}")
             else:
-                parts.append(f"latest live navigation stopped as {status}{point_text}{coordinate_text}")
+                parts.append(f"latest live navigation stopped as {action_prefix}{status}{point_text}{coordinate_text}")
         sequence = proof.get("visible_navigation_sequence")
         if isinstance(sequence, list) and sequence:
             labels = [
@@ -485,12 +487,14 @@ def latest_teams_live_navigation_diagnostic() -> str:
             point = execution.get("point") if isinstance(execution.get("point"), dict) else {}
             point_text = f" at ({point.get('x')}, {point.get('y')})" if point else ""
             coordinate_text = coordinate_space_status_text(execution)
+            action_name = str(execution.get("action") or "").strip()
+            action_prefix = f"{action_name} " if action_name else ""
             if execution.get("executed"):
-                action = f"executed {status}{point_text}{coordinate_text}"
+                action = f"executed {action_prefix}{status}{point_text}{coordinate_text}"
             elif execution.get("attempted"):
-                action = f"attempted and got {status}{point_text}{coordinate_text}"
+                action = f"attempted {action_prefix}and got {status}{point_text}{coordinate_text}"
             else:
-                action = f"stopped as {status}{point_text}{coordinate_text}"
+                action = f"stopped as {action_prefix}{status}{point_text}{coordinate_text}"
             step_count = len(steps) if isinstance(steps, list) else 0
             return f"{action}; {step_count} step(s); {report.relative_to(PROJECT_ROOT)}, age {age}"
     return ""
