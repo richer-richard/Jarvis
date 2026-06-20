@@ -24998,10 +24998,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                     "requested_class_navigation_plan": {
                                         "target_text": "Music Class",
                                         "point": {"x": 214.0, "y": 344.0},
+                                        "coordinate_space": "screen_points",
                                     },
                                     "all_teams_navigation_plan_ready": True,
                                     "all_teams_navigation_plan": {
                                         "point": {"x": 257.0, "y": 322.5},
+                                        "coordinate_space": "image_pixels",
                                     },
                                     "assignments_navigation_plan_ready": True,
                                     "assignments_navigation_plan": {
@@ -25012,6 +25014,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                         "executed": False,
                                         "status": "navigation_loop_prevented",
                                         "point": {"x": 257.0, "y": 322.5},
+                                        "coordinate_space": "image_pixels",
                                     },
                                     "visible_navigation_sequence": [
                                         {"key": "requested_class", "label": "requested class"},
@@ -25039,11 +25042,11 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         self.assertIn("Teams assignment is wrong_subject", blocker)
         self.assertIn("Chrome page-read is blocked", blocker)
-        self.assertIn("latest live navigation stopped as navigation_loop_prevented at (257.0, 322.5)", blocker)
+        self.assertIn("latest live navigation stopped as navigation_loop_prevented at (257.0, 322.5) in screenshot pixels", blocker)
         self.assertIn("next no-click sequence: requested class -> Assignments", blocker)
-        self.assertIn("Music Class no-click navigation plan is ready at (214.0, 344.0)", blocker)
-        self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5)", blocker)
-        self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17)", blocker)
+        self.assertIn("Music Class no-click navigation plan is ready at (214.0, 344.0) in screen points", blocker)
+        self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5) in screenshot pixels", blocker)
+        self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17) in legacy coordinate space", blocker)
 
     def test_morning_status_pre_build_gate_teams_blocker_reports_focus_failure(self):
         with tempfile.TemporaryDirectory() as temp_dir:

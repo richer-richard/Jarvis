@@ -329,12 +329,13 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             status = str(execution.get("status") or "unknown").strip() or "unknown"
             point = execution.get("point") if isinstance(execution.get("point"), dict) else {}
             point_text = f" at ({point.get('x')}, {point.get('y')})" if point else ""
+            coordinate_text = coordinate_space_status_text(execution)
             if execution.get("executed"):
-                parts.append(f"latest live navigation step {status}{point_text}")
+                parts.append(f"latest live navigation step {status}{point_text}{coordinate_text}")
             elif execution.get("attempted"):
-                parts.append(f"latest live navigation step failed as {status}{point_text}")
+                parts.append(f"latest live navigation step failed as {status}{point_text}{coordinate_text}")
             else:
-                parts.append(f"latest live navigation stopped as {status}{point_text}")
+                parts.append(f"latest live navigation stopped as {status}{point_text}{coordinate_text}")
         sequence = proof.get("visible_navigation_sequence")
         if isinstance(sequence, list) and sequence:
             labels = [
@@ -355,7 +356,7 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             point_text = ""
             if point:
                 point_text = f" at ({point.get('x')}, {point.get('y')})"
-            parts.append(f"{target_text} no-click navigation plan is ready{point_text}")
+            parts.append(f"{target_text} no-click navigation plan is ready{point_text}{coordinate_space_status_text(plan)}")
         if proof.get("all_teams_navigation_plan_ready"):
             plan = (
                 proof.get("all_teams_navigation_plan")
@@ -366,18 +367,29 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             point_text = ""
             if point:
                 point_text = f" at ({point.get('x')}, {point.get('y')})"
-            parts.append(f"All teams no-click navigation plan is ready{point_text}")
+            parts.append(f"All teams no-click navigation plan is ready{point_text}{coordinate_space_status_text(plan)}")
         if proof.get("assignments_navigation_plan_ready"):
             plan = proof.get("assignments_navigation_plan") if isinstance(proof.get("assignments_navigation_plan"), dict) else {}
             point = plan.get("point") if isinstance(plan.get("point"), dict) else {}
             point_text = ""
             if point:
                 point_text = f" at ({point.get('x')}, {point.get('y')})"
-            parts.append(f"Assignments no-click navigation plan is ready{point_text}")
+            parts.append(f"Assignments no-click navigation plan is ready{point_text}{coordinate_space_status_text(plan)}")
         elif proof.get("assignments_target_found"):
             parts.append("Assignments OCR target was found")
         return "; ".join(parts) + "."
     return ""
+
+
+def coordinate_space_status_text(payload: dict[str, Any]) -> str:
+    coordinate_space = str(payload.get("coordinate_space") or "").strip()
+    if coordinate_space == "screen_points":
+        return " in screen points"
+    if coordinate_space == "image_pixels":
+        return " in screenshot pixels"
+    if coordinate_space:
+        return f" in {coordinate_space}"
+    return " in legacy coordinate space"
 
 
 def pre_build_gate_cleanup_warning(data: dict[str, Any]) -> str:
