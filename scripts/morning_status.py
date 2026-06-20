@@ -363,10 +363,16 @@ def pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             capture_status = str(proof.get("capture_status") or "").strip()
             capture_response_status = str(proof.get("capture_response_status") or "").strip()
             capture_window_title = str(proof.get("capture_window_title") or "").strip()
+            capture_method = str(proof.get("capture_method") or "").strip()
             if capture_status == "failed" or capture_response_status == "native_capture_failed":
                 parts.append(
                     "Expected Teams window was not capturable before OCR"
                     f"{f' (active: {detail})' if detail else ''}"
+                )
+            elif capture_method in {"chrome_applescript_display_crop", "cg_screen_bounds_fallback"}:
+                parts.append(
+                    "Chrome reports Teams, but native OCR used a screen-bounds crop and saw a different visible Space"
+                    f"{f' (method: {capture_method}; active: {detail})' if detail else f' (method: {capture_method})'}"
                 )
             elif capture_window_title:
                 parts.append(

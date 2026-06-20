@@ -27576,6 +27576,51 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("captured: Music for macOS", blocker)
         self.assertIn("active: Microsoft Teams", blocker)
 
+    def test_morning_status_pre_build_gate_teams_blocker_reports_wrong_visible_space_crop(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "summary.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {
+                                    "completion_status": "not_inspected",
+                                    "browser_focus_not_verified": True,
+                                    "browser_open_active_title": "Teams and Channels | General | Microsoft Teams",
+                                    "browser_open_active_url": "https://teams.cloud.microsoft/",
+                                    "capture_status": "captured",
+                                    "capture_response_status": "checked",
+                                    "capture_window_title": "Teams and Channels | General | Microsoft Teams",
+                                    "capture_method": "chrome_applescript_display_crop",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            blocker = pre_build_gate_teams_blocker(
+                {
+                    "results": [
+                        {
+                            "id": "full_loop_regression",
+                            "ok": False,
+                            "stdout_tail": f"Report: {report_path}\nteams_music_assignment_honesty: warning",
+                        }
+                    ]
+                }
+            )
+
+        self.assertIn("Chrome reports Teams, but native OCR used a screen-bounds crop", blocker)
+        self.assertIn("different visible Space", blocker)
+        self.assertIn("method: chrome_applescript_display_crop", blocker)
+        self.assertIn("active: Teams and Channels", blocker)
+        self.assertNotIn("OCR captured a different Chrome window", blocker)
+
     def test_morning_status_latest_teams_live_navigation_diagnostic(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
