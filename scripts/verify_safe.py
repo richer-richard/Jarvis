@@ -1897,6 +1897,8 @@ def main(argv: list[str] | None = None) -> int:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = REPORT_DIR / f"verify-safe-{time.strftime('%Y%m%d-%H%M%S')}.json"
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    latest_path = REPORT_DIR / "latest.json"
+    latest_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     passed = sum(1 for result in report["results"] if result["passed"])
     total = len(report["results"])

@@ -2236,6 +2236,42 @@ class VerifySafeScriptTests(unittest.TestCase):
         run_checks.assert_not_called()
         self.assertIn("Unknown argument: --what", stderr.getvalue())
 
+    def test_verify_safe_writes_stable_latest_report(self):
+        fake_report = {
+            "ok": True,
+            "base_url": "http://127.0.0.1:8765",
+            "project_root": str(PROJECT_ROOT),
+            "generated_at": 1,
+            "completed_at": 2,
+            "duration_seconds": 1.0,
+            "results": [
+                {
+                    "name": "fake_check",
+                    "passed": True,
+                    "summary": "passed",
+                    "returncode": 0,
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "duration_seconds": 0.0,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch.object(verify_safe, "REPORT_DIR", Path(tmpdir)), \
+             patch("scripts.verify_safe.run_checks", return_value=fake_report), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            code = verify_safe.main([])
+            report_dir = Path(tmpdir)
+            latest = report_dir / "latest.json"
+            timestamped = list(report_dir.glob("verify-safe-*.json"))
+            latest_exists = latest.exists()
+            latest_payload = json.loads(latest.read_text(encoding="utf-8")) if latest_exists else {}
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(timestamped), 1)
+        self.assertTrue(latest_exists)
+        self.assertEqual(latest_payload, fake_report)
+
     def test_verify_safe_post_json_suppresses_command_speech_by_default(self):
         captured_payloads = []
 
