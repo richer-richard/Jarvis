@@ -3304,7 +3304,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         )
 
         self.assertEqual(target["screen_center"], {"x": 117.0, "y": 274.0})
-        self.assertEqual(plan["action"], "browser_back")
+        self.assertEqual(plan["action"], "click")
         self.assertLess(plan["point"]["x"], target["screen_center"]["x"])
         self.assertEqual(plan["point"], {"x": 107.39, "y": 274.0})
         self.assertEqual(plan["coordinate_space"], "screen_points")

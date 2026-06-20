@@ -2386,8 +2386,6 @@ def visible_navigation_plan(
         }
     target_text = str(target.get("text") or "")
     is_back_target = target_text.lstrip().startswith(("‹", "<"))
-    if is_back_target and action == "click":
-        action = "browser_back"
     preferred_point = "screen_leading" if is_back_target else "screen_center"
     center = target.get(preferred_point) if isinstance(target.get(preferred_point), dict) else {}
     if not center and preferred_point != "screen_center":
