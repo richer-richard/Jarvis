@@ -25742,6 +25742,44 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("2 step(s) (clicked -> type_search Music)", diagnostic)
         self.assertIn("runtime/full_loop_regression/20260620-095114/summary.json", diagnostic)
 
+    def test_morning_status_latest_teams_diagnostic_reports_exhausted_safe_plans(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report_dir = root / "runtime" / "full_loop_regression" / "20260620-130307"
+            report_dir.mkdir(parents=True)
+            (report_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {
+                                    "visible_navigation_execution": {
+                                        "attempted": False,
+                                        "executed": False,
+                                        "status": "navigation_loop_prevented",
+                                        "reason": "no_untried_navigation_plan",
+                                    },
+                                    "visible_navigation_execution_steps": [
+                                        {"attempted": True, "executed": True, "status": "clicked"},
+                                        {"attempted": True, "executed": True, "status": "type_search", "query": "Music"},
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root):
+                diagnostic = latest_teams_live_navigation_diagnostic()
+
+        self.assertIn("stopped after exhausting safe navigation plans as navigation_loop_prevented", diagnostic)
+        self.assertNotIn("legacy coordinate space", diagnostic)
+        self.assertIn("2 step(s) (clicked -> type_search Music)", diagnostic)
+
     def test_morning_status_latest_teams_diagnostic_prefers_fresh_not_exercised_artifact(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

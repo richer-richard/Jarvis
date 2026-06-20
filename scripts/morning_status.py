@@ -527,6 +527,8 @@ def latest_teams_live_navigation_diagnostic() -> str:
                 action = f"executed {action_prefix}{status}{point_text}{coordinate_text}"
             elif execution.get("attempted"):
                 action = f"attempted {action_prefix}and got {status}{point_text}{coordinate_text}"
+            elif str(execution.get("reason") or "") == "no_untried_navigation_plan":
+                action = f"stopped after exhausting safe navigation plans as {status}"
             else:
                 action = f"stopped as {action_prefix}{status}{point_text}{coordinate_text}"
             step_count = len(steps) if isinstance(steps, list) else 0
