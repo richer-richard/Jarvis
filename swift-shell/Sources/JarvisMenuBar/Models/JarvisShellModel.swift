@@ -146,6 +146,10 @@ final class JarvisShellModel: ObservableObject {
         client.baseURL.appendingPathComponent("overnight-report/")
     }
 
+    var capabilityQuestionsURL: URL {
+        client.baseURL.appendingPathComponent("capability-questions/")
+    }
+
     var appVersionText: String {
         let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         return "Jarvis \(bundleVersion)"

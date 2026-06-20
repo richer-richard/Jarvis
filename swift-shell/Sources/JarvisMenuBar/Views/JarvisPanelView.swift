@@ -108,6 +108,11 @@ struct JarvisPanelView: View {
             QuickActionButton("Status", command: "status", model: model)
             QuickActionButton("Report", command: "overnight status", model: model)
             QuickActionButton("Wake Lab", command: "Hey Jarvis wake audition status", model: model)
+            Button("Questions") {
+                NSWorkspace.shared.open(model.capabilityQuestionsURL)
+            }
+            .frame(maxWidth: .infinity)
+            .help("Open the local Jarvis capability question and proof board.")
             WakeToggleButton(model: model)
             Button("Popout") {
                 model.previewSummonSurface()

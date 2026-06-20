@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.485 makes the show-off prompt list easier to use: the Jarvis window now has a Questions button, and the Capability Questions page shows proof badges from the latest full-loop run so Leo can see what is proved, warning, or not covered.",
     "Jarvis 0.1.484 improves Teams visible-screen recovery: if strict Chrome window capture fails after Teams is foregrounded, Jarvis can fall back to main-display Apple Vision OCR instead of stopping at a native capture failure.",
     "Jarvis 0.1.482 makes Music playback fail closed: the old LocalOS/Chrome playback fallback is disabled by default, requires explicit developer opt-in, and a disabled-bridge probe proves Jarvis returns `played_by: none` instead of opening mystery audio.",
     "Jarvis 0.1.481 makes the main app more inspectable: Jarvis Activity now shows a bounded scrollable history of up to 24 recent command, tool, browser, speech, reply, and error events instead of only the last six.",

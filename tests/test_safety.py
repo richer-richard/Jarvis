@@ -5604,7 +5604,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                     "status": "browser_permission_blocked",
                     "capture_status": "captured",
                     "captured_text_preview": (
-                        "Jarvis 0.1.484 Local assistant prototype. Type to Jarvis. "
+                        "Jarvis 0.1.485 Local assistant prototype. Type to Jarvis. "
                         "Jarvis Activity: What Jarvis said and did."
                     ),
                     "visible_reply_preview": "Teams is open in Chrome, but Jarvis cannot reliably read the Teams page text yet.",
@@ -6630,6 +6630,9 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.485", shipped)
+        self.assertIn("Questions button", shipped)
+        self.assertIn("proof badges", shipped)
         self.assertIn("0.1.484", shipped)
         self.assertIn("0.1.482", shipped)
         self.assertIn("0.1.481", shipped)
@@ -15436,8 +15439,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.484}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-484}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.485}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-485}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
@@ -18129,6 +18132,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("openOvernightReport", app_source)
         self.assertIn("overnightReportURL", model_source)
         self.assertIn('appendingPathComponent("overnight-report/")', model_source)
+        self.assertIn("capabilityQuestionsURL", model_source)
+        self.assertIn('appendingPathComponent("capability-questions/")', model_source)
         self.assertIn('"Open Wake Test"', helper_source)
         self.assertIn('"Start Hey Jarvis"', app_source)
         self.assertIn('"Stop Hey Jarvis"', app_source)
@@ -19656,6 +19661,8 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("model.wakeModeText", view_source)
         self.assertIn("StatusChip(label: model.speechMuteText)", view_source)
         self.assertIn('QuickActionButton("Wake Lab", command: "Hey Jarvis wake audition status"', view_source)
+        self.assertIn('Button("Questions")', view_source)
+        self.assertIn("NSWorkspace.shared.open(model.capabilityQuestionsURL)", view_source)
         self.assertIn('QuickActionButton("Perms", command: "permissions status"', view_source)
 
     def test_swift_streaming_status_does_not_overwrite_answer_text(self):
