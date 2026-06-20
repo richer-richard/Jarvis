@@ -133,6 +133,9 @@ def run_gate(
     if not skip_cleanup and not any(item["id"] == "cleanup_chrome_test_tabs" for item in results):
         cleanup_step = cleanup_chrome_step()
         results.append(run_step(cleanup_step, timeout=timeout, runner=runner))
+    for step in steps:
+        if step.get("always_run_next") and not any(item["id"] == step["id"] for item in results):
+            results.append(run_step(step, timeout=timeout, runner=runner))
 
     summary = make_summary(
         base_url=base_url,

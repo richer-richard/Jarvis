@@ -1115,7 +1115,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("stop-speaking command reported starting or playing audio", result["failures"])
         self.assertIn("visible summary does not match the stop-speaking tool reply", result["failures"])
 
-    def test_pre_build_gate_writes_latest_and_runs_cleanup_after_failure(self):
+    def test_pre_build_gate_writes_latest_and_runs_always_run_steps_after_failure(self):
         commands = []
 
         def fake_runner(command, timeout):
@@ -1149,6 +1149,11 @@ class VerifySafeScriptTests(unittest.TestCase):
                 any("cleanup_chrome_test_tabs.py" in str(part) for part in command)
                 for command in commands
             ))
+            self.assertTrue(any(
+                any("report_refresh.py" in str(part) for part in command)
+                for command in commands
+            ))
+            self.assertIn("report_refresh", [item["id"] for item in summary["results"]])
             self.assertTrue((Path(temp_dir) / "latest.json").exists())
             self.assertTrue((Path(temp_dir) / "latest.md").exists())
 
