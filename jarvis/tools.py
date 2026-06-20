@@ -1648,6 +1648,8 @@ def _sanitize_spoken_text(text: str) -> str:
     spoken = re.sub(r"(?i)\bhttps?://\S+|\bwww\.\S+", "a link", spoken)
     spoken = re.sub(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "an email address", spoken)
     spoken = _english_only_spoken_text(spoken)
+    spoken = re.sub(r"\b(20\d{2})\s*[\u2010-\u2015\-/]\s*(20\d{2})\b", r"\1 to \2", spoken)
+    spoken = re.sub(r"\b(20\d{2})(20\d{2})\b", r"\1 to \2", spoken)
     spoken = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", "", spoken)
     spoken = re.sub(r"(?im)^\s*(?:summary|answer|result|reply|action|actions|details?|link|subject|sender|from)\s*:\s*", "", spoken)
     spoken = re.sub(r"(?i)\b(?:selected[_\s-]*tool|entities|tool)\s*[:=]\s*[^\s,.!?;]+(?:\.[^\s,.!?;]+)*", " ", spoken)

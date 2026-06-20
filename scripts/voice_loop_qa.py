@@ -45,6 +45,7 @@ VISIBLE_SCREEN_FOLLOW_UP_RETRY_ATTEMPTS = 4
 VISIBLE_SCREEN_FOLLOW_UP_RETRY_DELAY_SECONDS = 1.6
 VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS = 1.2
 VISIBLE_SCREEN_FOLLOW_UP_OPEN_TIMEOUT_SECONDS = 4.0
+CHROME_WINDOW_CREATION_ENV = "JARVIS_ALLOW_CHROME_WINDOW_CREATION"
 SPEECH_AUDIT_MAX_WORKERS = 2
 LOCAL_STT_ROOT = PROJECT_ROOT / "runtime" / "stt_models" / "faster_whisper"
 LOCAL_STT_PYTHON = LOCAL_STT_ROOT / ".venv" / "bin" / "python"
@@ -1791,9 +1792,19 @@ def normalize_stt_noise_tokens(tokens: list[str]) -> list[str]:
             index += 5
             continue
         if (
+            index + 2 < len(tokens)
+            and tokens[index:index + 3] in (
+                ["sharp", "a", "cal"],
+                ["sharp", "a", "cao"],
+            )
+        ):
+            normalized.extend(["sharpay", "cao"])
+            index += 3
+            continue
+        if (
             index + 1 < len(tokens)
             and tokens[index] == "sharpay"
-            and tokens[index + 1] == "cows"
+            and tokens[index + 1] in {"cal", "cao", "cows"}
         ):
             normalized.extend(["sharpay", "cao"])
             index += 2
@@ -3257,12 +3268,15 @@ def open_visible_screen_follow_up_url(command_response: dict[str, Any], *, timeo
         return {"browser_open_attempted": False}
     target_host = (urlparse(url).hostname or "").lower()
     applescript = f"""
+if application "Google Chrome" is not running then
+    return "JARVIS_CHROME_NOT_RUNNING" & linefeed & ""
+end if
 set targetURL to "{escape_applescript_string(url)}"
 set targetHost to "{escape_applescript_string(target_host)}"
 tell application "Google Chrome"
     activate
     if (count of windows) = 0 then
-        make new window
+        return "JARVIS_NO_CHROME_WINDOWS" & linefeed & ""
     end if
     set frontURL to ""
     set frontTitle to ""
@@ -3306,6 +3320,22 @@ return frontTitle & linefeed & frontURL
         )
         stdout = completed.stdout.strip()
         title, active_url = parse_chrome_front_tab_output(stdout)
+        if title == "JARVIS_CHROME_NOT_RUNNING":
+            return {
+                "browser_open_attempted": False,
+                "browser_url": url,
+                "browser_open_method": "chrome_existing_session",
+                "browser_open_error": "chrome_not_running",
+                "browser_open_target_host_verified": False,
+            }
+        if title == "JARVIS_NO_CHROME_WINDOWS":
+            return {
+                "browser_open_attempted": False,
+                "browser_url": url,
+                "browser_open_method": "chrome_existing_session",
+                "browser_open_error": "chrome_no_existing_window",
+                "browser_open_target_host_verified": False,
+            }
         verification_url, verification_source = chrome_front_tab_verification_url(title, active_url)
         active_host = (urlparse(verification_url).hostname or "").lower()
         login_gate = chrome_front_tab_login_gate(title=title, active_url=active_url)
@@ -3357,6 +3387,15 @@ def open_chrome_follow_up_url_in_new_visible_window(*, url: str, timeout: float)
     url = str(url or "").strip()
     if not url or not re.match(r"^https?://", url, flags=re.IGNORECASE):
         return {"browser_open_attempted": False, "browser_open_visibility_recovery_attempted": False}
+    if os.environ.get(CHROME_WINDOW_CREATION_ENV) != "1":
+        return {
+            "browser_open_attempted": False,
+            "browser_url": url,
+            "browser_open_visibility_recovery_attempted": False,
+            "browser_open_visibility_recovery_skipped": True,
+            "browser_open_visibility_recovery_reason": "chrome_window_creation_disabled",
+            "required_env": CHROME_WINDOW_CREATION_ENV,
+        }
     target_host = (urlparse(url).hostname or "").lower()
     applescript = f"""
 set targetURL to "{escape_applescript_string(url)}"

@@ -5823,7 +5823,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             stdout="Teams and Channels | General | Microsoft Teams\nhttps://teams.cloud.microsoft/",
             stderr="",
         )
-        with patch("scripts.voice_loop_qa.subprocess.run", return_value=completed) as run_mock:
+        with patch.dict(os.environ, {"JARVIS_ALLOW_CHROME_WINDOW_CREATION": "1"}), \
+             patch("scripts.voice_loop_qa.subprocess.run", return_value=completed) as run_mock:
             result = voice_loop_qa.open_chrome_follow_up_url_in_new_visible_window(
                 url="https://teams.microsoft.com/v2/",
                 timeout=5.0,
@@ -5837,6 +5838,39 @@ class VerifySafeScriptTests(unittest.TestCase):
         script = run_mock.call_args.args[0][-1]
         self.assertIn("make new window", script)
         self.assertIn("set URL of active tab of newWindow to targetURL", script)
+
+    def test_voice_loop_qa_new_visible_chrome_window_recovery_disabled_by_default(self):
+        with patch.dict(os.environ, {}, clear=False), \
+             patch("scripts.voice_loop_qa.subprocess.run") as run_mock:
+            os.environ.pop("JARVIS_ALLOW_CHROME_WINDOW_CREATION", None)
+            result = voice_loop_qa.open_chrome_follow_up_url_in_new_visible_window(
+                url="https://teams.microsoft.com/v2/",
+                timeout=5.0,
+            )
+
+        run_mock.assert_not_called()
+        self.assertFalse(result["browser_open_attempted"])
+        self.assertTrue(result["browser_open_visibility_recovery_skipped"])
+        self.assertEqual(result["browser_open_visibility_recovery_reason"], "chrome_window_creation_disabled")
+
+    def test_voice_loop_qa_existing_chrome_handoff_does_not_create_window_when_none_exist(self):
+        completed = subprocess.CompletedProcess(
+            args=["osascript"],
+            returncode=0,
+            stdout="JARVIS_NO_CHROME_WINDOWS\n",
+            stderr="",
+        )
+        with patch("scripts.voice_loop_qa.subprocess.run", return_value=completed) as run_mock:
+            result = voice_loop_qa.open_visible_screen_follow_up_url(
+                {"result": {"url": "https://teams.microsoft.com/v2/"}},
+                timeout=5.0,
+            )
+
+        script = run_mock.call_args.args[0][-1]
+        self.assertNotIn("make new window", script)
+        self.assertEqual(result["browser_open_error"], "chrome_no_existing_window")
+        self.assertFalse(result["browser_open_attempted"])
+        self.assertFalse(result["browser_open_target_host_verified"])
 
     def test_voice_loop_qa_visible_screen_followup_rejects_jarvis_window_ocr_after_teams_open(self):
         self.assertTrue(
@@ -5924,7 +5958,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             "for Year7."
         )
         transcript = (
-            "Sharpay Cows shared the preliminary results of the 20 million, 262,27 student council "
+            "Sharp A-Cal shared the preliminary results of the 20 million, 262,27 student council "
             "applications for year 7."
         )
 
@@ -21705,6 +21739,21 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(spoken.isascii())
         self.assertNotIn("请", spoken)
         self.assertIn("important part", spoken)
+
+    def test_auto_speech_sanitizer_speaks_school_year_ranges_naturally(self):
+        unicode_hyphen = jarvis_tools._sanitize_spoken_text(
+            "Sharpay Cao sent the preliminary results of the 2026‑2027 student council applications."
+        )
+        collapsed = jarvis_tools._sanitize_spoken_text(
+            "Sharpay Cao sent the preliminary results of the 20262027 student council applications."
+        )
+
+        self.assertEqual(
+            unicode_hyphen,
+            "Sharpay Cao sent the preliminary results of the 2026 to 2027 student council applications.",
+        )
+        self.assertEqual(collapsed, unicode_hyphen)
+        self.assertNotIn("20262027", unicode_hyphen)
 
     def test_auto_speech_sanitizer_speaks_markdown_links_as_plain_labels(self):
         spoken = jarvis_tools._sanitize_spoken_text(
