@@ -14474,8 +14474,11 @@ Pages occupied by compressor:             10.
             "open_chrome_to_reuse_login": True,
             "read_private_content": True,
         }
-        with patch("jarvis.tools.chrome_bookmark_open_plan", return_value=fake_bookmark_plan):
-            result = teams_assignment_workflow_plan("Go to Teams, open Music class, and finish the newest Music assignment.")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_deeplinks = Path(tmpdir) / "missing-teams-deeplinks.json"
+            with patch("jarvis.tools.chrome_bookmark_open_plan", return_value=fake_bookmark_plan), \
+                 patch("jarvis.tools.CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH", missing_deeplinks):
+                result = teams_assignment_workflow_plan("Go to Teams, open Music class, and finish the newest Music assignment.")
 
         self.assertEqual(result["tool"], "teams.assignment")
         self.assertEqual(result["status"], "planned")
@@ -14495,6 +14498,8 @@ Pages occupied by compressor:             10.
         self.assertEqual(result["preferred_browser_lane"], "chrome_authenticated")
         self.assertEqual(result["visible_browser_lane"], "jarvis_webkit_panel")
         self.assertTrue(result["uses_imported_bookmark_first"])
+        self.assertFalse(result["uses_teams_deeplink_first"])
+        self.assertEqual(result["teams_deeplink_route_status"], "snapshot_missing")
         self.assertTrue(result["browser_target_available"])
         self.assertEqual(result["url"], "https://teams.microsoft.com/v2/")
         self.assertEqual(result["title"], "Teams")
@@ -14527,6 +14532,57 @@ Pages occupied by compressor:             10.
         self.assertNotIn("copy Chrome cookies", result["reply"])
         self.assertIn("No Teams assignment was inspected", result["user_facing_safety_summary"])
 
+    def test_teams_assignment_workflow_prefers_matching_deeplink_snapshot(self):
+        fake_bookmark_plan = {
+            "tool": "browser.bookmark_open",
+            "status": "planned",
+            "url": "https://teams.microsoft.com/v2/",
+            "read_private_content": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "chrome_teams_deeplinks.json"
+            music_url = "https://teams.microsoft.com/l/entity/66aeee93-507d-479a-a3ef-8f494af43945/classroom?context=music"
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "jarvis.chrome_teams_deeplinks.v1",
+                        "links": [
+                            {
+                                "source": "teams.classroom_entity",
+                                "title": "Music assignments",
+                                "url": music_url,
+                                "class_id": "music-class",
+                                "assignment_ids": ["music-assignment"],
+                                "channel_id": "music-channel",
+                                "view": "assignment-viewer",
+                            },
+                            {
+                                "source": "assignments.onenote",
+                                "title": "World History assignment",
+                                "url": "https://assignments.onenote.com/?groupId=history",
+                                "class_id": "history-class",
+                                "assignment_ids": ["history-assignment"],
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("jarvis.tools.chrome_bookmark_open_plan", return_value=fake_bookmark_plan), \
+                 patch("jarvis.tools.CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH", snapshot_path):
+                result = teams_assignment_workflow_plan("Look in Teams for my newest Music assignment.")
+
+        self.assertTrue(result["uses_teams_deeplink_first"])
+        self.assertFalse(result["uses_imported_bookmark_first"])
+        self.assertEqual(result["teams_deeplink_route_status"], "selected")
+        self.assertEqual(result["teams_deeplink_row_count"], 2)
+        self.assertEqual(result["url"], music_url)
+        self.assertEqual(result["teams_page_inspection_status"], "chrome_deeplink_then_native_visible_read")
+        self.assertEqual(result["recommended_next_safe_tool"], "screen.visible_text")
+        self.assertIn("browser.teams_deeplinks_inventory", {phase["tool"] for phase in result["phases"]})
+        self.assertIn("browser.open_url", {phase["tool"] for phase in result["phases"]})
+        self.assertIn("visible Teams page read succeeds", result["reply"])
+
     def test_teams_assignment_audit_redacts_bookmark_target(self):
         safe = _audit_safe_result(
             "teams.assignment",
@@ -14538,6 +14594,7 @@ Pages occupied by compressor:             10.
                 "selected_bookmark": {"title": "Teams", "url": "https://teams.microsoft.com/v2/"},
                 "reply": "Opening your Teams bookmark in signed-in Chrome now.",
                 "browser_target_available": True,
+                "selected_teams_deeplink": {"class_id": "private-class", "assignment_ids": ["private-assignment"]},
                 "read_private_browser_metadata": True,
                 "automatic_teams_page_inspection_supported": True,
                 "teams_page_inspection_status": "chrome_handoff_then_native_visible_read",
@@ -14552,6 +14609,7 @@ Pages occupied by compressor:             10.
         self.assertNotIn("url", safe)
         self.assertNotIn("title", safe)
         self.assertNotIn("selected_bookmark", safe)
+        self.assertNotIn("selected_teams_deeplink", safe)
         self.assertNotIn("reply", safe)
 
     def test_teams_assignment_selected_tool_keeps_original_prompt_when_goal_entity_is_too_short(self):

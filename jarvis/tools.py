@@ -9579,7 +9579,29 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
     base_phases = list(base.get("phases") or [])
     bookmark_plan = chrome_bookmark_open_plan("Teams", limit=8)
     bookmark_ready = bookmark_plan.get("status") == "planned" and bool(bookmark_plan.get("url"))
+    deep_link_route = _chrome_teams_deeplink_route_from_snapshot(goal)
+    deep_link_ready = deep_link_route.get("status") == "selected" and bool(deep_link_route.get("url"))
     browser_phases = [
+        {
+            "id": "refresh_teams_deeplinks",
+            "status": "ready" if deep_link_ready else "available",
+            "tool": "browser.teams_deeplinks_inventory",
+            "summary": (
+                "Use Jarvis's scoped Chrome History inventory to find Teams classroom/assignment deep links without reading cookies, local storage, cache files, or arbitrary Chrome profile blobs."
+            ),
+            "executes_now": False,
+        },
+        {
+            "id": "open_teams_deeplink",
+            "status": "ready" if deep_link_ready else "available_after_history_inventory",
+            "tool": "browser.open_url",
+            "summary": (
+                "Open the selected Teams classroom/assignment deep link in signed-in Chrome, then verify the visible page before claiming the assignment was inspected."
+                if deep_link_ready
+                else "Open a selected Teams classroom/assignment deep link after the scoped history inventory finds a matching class or assignment."
+            ),
+            "executes_now": False,
+        },
         {
             "id": "refresh_chrome_bookmarks",
             "status": "available",
@@ -9663,7 +9685,12 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
 
     clean_goal = str(base.get("goal") or goal or "").strip()
     assignment_label = "the newest Music assignment" if "music" in clean_goal.casefold() else "the assignment"
-    if bookmark_ready:
+    if deep_link_ready:
+        reply = (
+            "Opening the best Teams class or assignment link I found in signed-in Chrome now. "
+            f"I still have not inspected {assignment_label} until the visible Teams page read succeeds."
+        )
+    elif bookmark_ready:
         reply = (
             "Opening your Teams bookmark in signed-in Chrome now. "
             f"I can get you to Teams, but I have not inspected {assignment_label} until a later visible page or screen read succeeds."
@@ -9684,20 +9711,25 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "requested_target_app": "Microsoft Teams",
         "preferred_browser_lane": "chrome_authenticated",
         "visible_browser_lane": "jarvis_webkit_panel",
-        "uses_imported_bookmark_first": True,
-        "browser_target_available": bookmark_ready,
+        "uses_imported_bookmark_first": not deep_link_ready,
+        "uses_teams_deeplink_first": bool(deep_link_ready),
+        "teams_deeplink_route_status": deep_link_route.get("status"),
+        "teams_deeplink_snapshot_path": deep_link_route.get("snapshot_path") or str(CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH),
+        "teams_deeplink_row_count": int(deep_link_route.get("row_count") or 0),
+        "browser_target_available": bool(deep_link_ready or bookmark_ready),
         "browser_open_plan_status": bookmark_plan.get("status"),
-        "url": bookmark_plan.get("url") if bookmark_ready else "",
-        "title": bookmark_plan.get("title") if bookmark_ready else "",
+        "url": deep_link_route.get("url") if deep_link_ready else (bookmark_plan.get("url") if bookmark_ready else ""),
+        "title": deep_link_route.get("title") if deep_link_ready else (bookmark_plan.get("title") if bookmark_ready else ""),
         "selected_bookmark": selected_bookmark if bookmark_ready else None,
-        "open_chrome_to_reuse_login": bool(bookmark_plan.get("open_chrome_to_reuse_login")) if bookmark_ready else False,
-        "requires_chrome_login": bool(bookmark_plan.get("requires_chrome_login")) if bookmark_ready else False,
-        "read_private_browser_metadata": bool(bookmark_plan.get("read_private_content")),
-        "automatic_teams_page_inspection_supported": bool(bookmark_ready),
-        "defer_stream_final_speech": bool(bookmark_ready),
-        "teams_page_inspection_status": "chrome_handoff_then_native_visible_read" if bookmark_ready else "bookmark_needed",
+        "selected_teams_deeplink": deep_link_route.get("selected_link") if deep_link_ready else None,
+        "open_chrome_to_reuse_login": bool(deep_link_ready or (bookmark_plan.get("open_chrome_to_reuse_login") if bookmark_ready else False)),
+        "requires_chrome_login": bool(deep_link_ready or (bookmark_plan.get("requires_chrome_login") if bookmark_ready else False)),
+        "read_private_browser_metadata": bool(deep_link_ready or bookmark_plan.get("read_private_content")),
+        "automatic_teams_page_inspection_supported": bool(deep_link_ready or bookmark_ready),
+        "defer_stream_final_speech": bool(deep_link_ready or bookmark_ready),
+        "teams_page_inspection_status": "chrome_deeplink_then_native_visible_read" if deep_link_ready else ("chrome_handoff_then_native_visible_read" if bookmark_ready else "bookmark_needed"),
         "teams_page_inspection_note": (
-            "This build opens signed-in Teams in Chrome and the macOS app can attempt a read-only native visible-screen OCR follow-up; it still does not claim to read Teams assignments until that follow-up succeeds."
+            "This build opens signed-in Teams in Chrome and the macOS app can attempt a read-only native visible-screen OCR follow-up; it still does not claim to read Teams assignments until that follow-up succeeds. Direct Teams links come only from the scoped Chrome History inventory."
         ),
         "copied_chrome_cookies": False,
         "copied_chrome_passwords": False,
@@ -9717,8 +9749,90 @@ def teams_assignment_workflow_plan(goal: str) -> dict[str, Any]:
         "typed_text": False,
         "called_codex": False,
         "changed_state": False,
-        "recommended_next_safe_tool": "screen.visible_text" if bookmark_ready else "browser.bookmarks_search",
+        "recommended_next_safe_tool": "screen.visible_text" if (deep_link_ready or bookmark_ready) else "browser.teams_deeplinks_inventory",
         "reply": reply,
+    }
+
+
+def _chrome_teams_deeplink_route_from_snapshot(goal: str) -> dict[str, Any]:
+    snapshot_path = CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH
+    if not snapshot_path.exists():
+        return {
+            "status": "snapshot_missing",
+            "snapshot_path": str(snapshot_path),
+            "row_count": 0,
+        }
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {
+            "status": "snapshot_unreadable",
+            "snapshot_path": str(snapshot_path),
+            "row_count": 0,
+            "error": str(error),
+        }
+    links = snapshot.get("links") if isinstance(snapshot, dict) else []
+    if not isinstance(links, list) or not links:
+        return {
+            "status": "empty",
+            "snapshot_path": str(snapshot_path),
+            "row_count": 0,
+        }
+    goal_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(goal or "").casefold())
+        if token not in {"go", "to", "the", "my", "newest", "latest", "assignment", "assignments", "class", "classes", "teams", "for", "me", "and", "ask", "questions", "open", "look", "in"}
+    }
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, raw_link in enumerate(links):
+        if not isinstance(raw_link, dict):
+            continue
+        url = str(raw_link.get("url") or "").strip()
+        if not re.match(r"^https?://", url, flags=re.IGNORECASE):
+            continue
+        haystack = " ".join(
+            str(raw_link.get(key) or "")
+            for key in ("title", "source", "class_id", "channel_id", "view", "action")
+        ).casefold()
+        score = 0
+        if str(raw_link.get("assignment_ids") or "") not in {"", "[]"}:
+            score += 3
+        if str(raw_link.get("source") or "") == "teams.classroom_entity":
+            score += 2
+        if goal_tokens and any(token in haystack for token in goal_tokens):
+            score += 8
+        if "music" in goal_tokens and "music" in haystack:
+            score += 12
+        scored.append((score, -index, raw_link))
+    if not scored:
+        return {
+            "status": "no_usable_url",
+            "snapshot_path": str(snapshot_path),
+            "row_count": len(links),
+        }
+    scored.sort(reverse=True, key=lambda item: (item[0], item[1]))
+    best_score, _, selected = scored[0]
+    # Avoid silently opening an unrelated class when the user's prompt names a
+    # class/topic but no snapshot row appears to match it.
+    if goal_tokens and best_score < 8:
+        return {
+            "status": "no_prompt_match",
+            "snapshot_path": str(snapshot_path),
+            "row_count": len(links),
+        }
+    safe_selected = {
+        key: selected.get(key)
+        for key in ("source", "class_id", "assignment_ids", "channel_id", "view", "action")
+        if selected.get(key) not in (None, "")
+    }
+    return {
+        "status": "selected",
+        "snapshot_path": str(snapshot_path),
+        "row_count": len(links),
+        "score": best_score,
+        "url": str(selected.get("url") or "").strip(),
+        "title": str(selected.get("title") or "").strip(),
+        "selected_link": safe_selected,
     }
 
 

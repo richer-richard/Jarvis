@@ -2099,7 +2099,7 @@ def _audit_safe_result(tool: str, result: dict[str, Any]) -> dict[str, Any]:
         safe = {
             key: value
             for key, value in result.items()
-            if key not in {"selected_bookmark", "matches", "reply", "url", "title", "browser_open_plan"}
+            if key not in {"selected_bookmark", "selected_teams_deeplink", "matches", "reply", "url", "title", "browser_open_plan"}
         }
         safe["teams_browser_private_details_omitted"] = True
         safe["browser_target_available"] = bool(result.get("browser_target_available"))
