@@ -1778,6 +1778,43 @@ class VerifySafeScriptTests(unittest.TestCase):
             self.assertTrue((Path(temp_dir) / "latest.json").exists())
             self.assertTrue((Path(temp_dir) / "latest.md").exists())
 
+    def test_pre_build_gate_final_report_refresh_sees_completed_latest(self):
+        report_refresh_snapshots = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            def fake_runner(command, timeout):
+                is_report_refresh = any("report_refresh.py" in str(part) for part in command)
+                if is_report_refresh:
+                    latest_path = output_dir / "latest.json"
+                    report_refresh_snapshots.append(
+                        json.loads(latest_path.read_text(encoding="utf-8"))
+                        if latest_path.exists()
+                        else {"missing": True}
+                    )
+                return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+            summary = pre_build_gate.run_gate(
+                base_url="http://127.0.0.1:8765",
+                output_dir=output_dir,
+                skip_python_tests=True,
+                skip_full_loop=True,
+                skip_cleanup=True,
+                runner=fake_runner,
+                timeout=1,
+            )
+
+        self.assertTrue(summary["ok"])
+        self.assertGreaterEqual(len(report_refresh_snapshots), 2)
+        self.assertFalse(report_refresh_snapshots[0]["complete"])
+        self.assertTrue(report_refresh_snapshots[-1]["complete"])
+        self.assertEqual(report_refresh_snapshots[-1]["status"], "passed")
+        self.assertEqual(
+            [item["id"] for item in report_refresh_snapshots[-1]["results"]],
+            ["stop_speaking_probe", "report_refresh"],
+        )
+
     def test_full_loop_focused_summary_does_not_update_global_latest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

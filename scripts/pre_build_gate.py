@@ -179,6 +179,12 @@ def run_gate(
         complete=True,
     )
     write_summary(summary, run_dir, output_dir, update_latest=update_latest)
+    refresh_report_after_final_summary(
+        base_url=base_url,
+        timeout=timeout,
+        update_latest=update_latest,
+        runner=runner,
+    )
     return summary
 
 
@@ -262,15 +268,20 @@ def build_steps(
     )
     if not skip_cleanup:
         steps.append(cleanup_chrome_step())
-    steps.append(
-        {
-            "id": "report_refresh",
-            "label": "Refresh overnight report",
-            "command": [sys.executable, "scripts/report_refresh.py", "--base-url", base_url],
-            "always_run_next": True,
-        }
-    )
+    steps.append(report_refresh_step(base_url))
     return steps
+
+
+def refresh_report_after_final_summary(
+    *,
+    base_url: str,
+    timeout: float,
+    update_latest: bool,
+    runner: CommandRunner,
+) -> dict[str, Any] | None:
+    if not update_latest:
+        return None
+    return run_step(report_refresh_step(base_url), timeout=timeout, runner=runner)
 
 
 def cleanup_chrome_step() -> dict[str, Any]:
@@ -280,6 +291,15 @@ def cleanup_chrome_step() -> dict[str, Any]:
         "command": [sys.executable, "scripts/cleanup_chrome_test_tabs.py", "--execute", "--json"],
         "always_run_next": True,
         "fatal": False,
+    }
+
+
+def report_refresh_step(base_url: str) -> dict[str, Any]:
+    return {
+        "id": "report_refresh",
+        "label": "Refresh overnight report",
+        "command": [sys.executable, "scripts/report_refresh.py", "--base-url", base_url],
+        "always_run_next": True,
     }
 
 
