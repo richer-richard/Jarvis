@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -231,11 +232,15 @@ def build_steps(
             full_loop_command.append("--exercise-live-speech")
         if exercise_visible_navigation:
             full_loop_command.append("--exercise-visible-navigation")
+        full_loop_env = {}
+        if exercise_visible_navigation:
+            full_loop_env["JARVIS_ALLOW_LIVE_UI_NAVIGATION"] = "1"
         steps.append(
             {
                 "id": "full_loop_regression",
                 "label": "Full-loop spoken-command regression",
                 "command": full_loop_command,
+                "env": full_loop_env,
                 "timeout_seconds": FULL_LOOP_GATE_TIMEOUT_SECONDS,
                 "proof_contract": speech_proof_contract(
                     exercise_live_speech=exercise_live_speech,
@@ -358,7 +363,13 @@ def physical_capture_requirement_failure(*, exercise_live_speech: bool) -> dict[
 def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> dict[str, Any]:
     started = time.monotonic()
     step_timeout = float(step.get("timeout_seconds") or timeout)
+    env_overrides = step.get("env") if isinstance(step.get("env"), dict) else {}
+    previous_env: dict[str, str | None] = {}
     try:
+        for key, value in env_overrides.items():
+            env_key = str(key)
+            previous_env[env_key] = os.environ.get(env_key)
+            os.environ[env_key] = str(value)
         completed = runner(list(step["command"]), step_timeout)
         return {
             "id": step["id"],
@@ -387,6 +398,12 @@ def run_step(step: dict[str, Any], *, timeout: float, runner: CommandRunner) -> 
             "proof_contract": step.get("proof_contract"),
             "fatal": bool(step.get("fatal", True)),
         }
+    finally:
+        for key, previous_value in previous_env.items():
+            if previous_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous_value
 
 
 def make_summary(

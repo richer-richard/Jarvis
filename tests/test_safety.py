@@ -1082,6 +1082,7 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual([step["id"] for step in steps], ["full_loop_regression", "stop_speaking_probe", "report_refresh"])
         self.assertIn("--exercise-visible-navigation", steps[0]["command"])
+        self.assertEqual(steps[0]["env"], {"JARVIS_ALLOW_LIVE_UI_NAVIGATION": "1"})
         self.assertTrue(steps[0]["proof_contract"]["visible_navigation_exercised"])
 
     def test_pre_build_gate_default_report_marks_live_speech_suppressed(self):
@@ -1309,6 +1310,36 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["timeout_seconds"], 42.0)
         self.assertEqual(calls[0][1], 42.0)
+
+    def test_pre_build_gate_run_step_applies_and_restores_env(self):
+        calls = []
+        original_value = os.environ.get("JARVIS_ALLOW_LIVE_UI_NAVIGATION")
+        os.environ["JARVIS_ALLOW_LIVE_UI_NAVIGATION"] = "outer"
+
+        def fake_runner(command, timeout):
+            calls.append(os.environ.get("JARVIS_ALLOW_LIVE_UI_NAVIGATION"))
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        try:
+            result = pre_build_gate.run_step(
+                {
+                    "id": "x",
+                    "label": "X",
+                    "command": ["echo", "x"],
+                    "env": {"JARVIS_ALLOW_LIVE_UI_NAVIGATION": "1"},
+                },
+                timeout=1.0,
+                runner=fake_runner,
+            )
+        finally:
+            if original_value is None:
+                os.environ.pop("JARVIS_ALLOW_LIVE_UI_NAVIGATION", None)
+            else:
+                os.environ["JARVIS_ALLOW_LIVE_UI_NAVIGATION"] = original_value
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls, ["1"])
+        self.assertEqual(os.environ.get("JARVIS_ALLOW_LIVE_UI_NAVIGATION"), original_value)
 
     def test_pre_build_gate_cleanup_warning_does_not_fail_gate_by_itself(self):
         calls = []
