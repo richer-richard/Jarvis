@@ -199,6 +199,7 @@ from scripts.morning_status import (
     print_process_status,
     report_surfaces,
     requirement_audit_summary,
+    speech_input_policy_summary,
     time_since,
     verification_action,
     verification_highlights,
@@ -26357,6 +26358,52 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Latest wake threshold: passed 10/10", printed)
         self.assertIn("closest reject below-threshold charvis 0.857", printed)
         self.assertIn("runtime/wake_threshold/latest.json", printed)
+
+    def test_morning_status_speech_input_policy_summary(self):
+        summary = speech_input_policy_summary({
+            "result": {
+                "preferred_live_candidate_id": "apple-speech-native",
+                "unattended_fallback_candidate_id": "faster-whisper-tiny-en-local",
+                "live_stt_policy": {
+                    "permission_prompt_safe_default": "local",
+                    "apple_speech_requires_explicit_opt_in": True,
+                    "apple_speech_request_permissions_during_status": False,
+                },
+            },
+        })
+
+        self.assertIn("preferred apple-speech-native", summary)
+        self.assertIn("fallback faster-whisper-tiny-en-local", summary)
+        self.assertIn("permission-safe default local", summary)
+        self.assertIn("Apple Speech opt-in", summary)
+        self.assertIn("status check does not request permissions", summary)
+
+    def test_morning_status_prints_speech_input_policy_without_speech(self):
+        from scripts.morning_status import print_speech_input_policy
+
+        with patch(
+            "scripts.morning_status.post_json",
+            return_value={
+                "result": {
+                    "preferred_live_candidate_id": "apple-speech-native",
+                    "unattended_fallback_candidate_id": "faster-whisper-tiny-en-local",
+                    "live_stt_policy": {
+                        "permission_prompt_safe_default": "local",
+                        "apple_speech_requires_explicit_opt_in": True,
+                        "apple_speech_request_permissions_during_status": False,
+                    },
+                },
+            },
+        ) as post_mock, patch("builtins.print") as print_mock:
+            print_speech_input_policy("http://127.0.0.1:8765")
+
+        post_mock.assert_called_once()
+        self.assertEqual(post_mock.call_args.args[1]["command"], "speech recognition candidates")
+        self.assertTrue(post_mock.call_args.args[1]["suppress_speech"])
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Speech input: preferred apple-speech-native", printed)
+        self.assertIn("fallback faster-whisper-tiny-en-local", printed)
+        self.assertIn("status check does not request permissions", printed)
 
     def test_morning_status_prints_physical_capture_contract(self):
         with patch("scripts.physical_audio_preflight.physical_audio_preflight", return_value={

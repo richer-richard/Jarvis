@@ -109,6 +109,7 @@ def main() -> int:
     print_latest_teams_live_navigation_diagnostic()
     print_latest_context_smoke()
     print_latest_wake_threshold()
+    print_speech_input_policy(base_url)
     print_physical_capture_contract()
     print_requirement_audit()
     print_latest_latency_smoke()
@@ -623,6 +624,46 @@ def print_latest_wake_threshold() -> None:
     )
 
 
+def speech_input_policy_summary(command_payload: dict[str, Any]) -> str:
+    result = command_payload.get("result") if isinstance(command_payload, dict) else None
+    if not isinstance(result, dict):
+        return ""
+    policy = result.get("live_stt_policy")
+    if not isinstance(policy, dict):
+        return ""
+    preferred = str(result.get("preferred_live_candidate_id") or policy.get("preferred") or "").strip()
+    fallback = str(result.get("unattended_fallback_candidate_id") or policy.get("fallback") or "").strip()
+    safe_default = str(policy.get("permission_prompt_safe_default") or "").strip()
+    opt_in = bool(policy.get("apple_speech_requires_explicit_opt_in"))
+    no_status_prompt = policy.get("apple_speech_request_permissions_during_status") is False
+    parts: list[str] = []
+    if preferred:
+        parts.append(f"preferred {preferred}")
+    if fallback:
+        parts.append(f"fallback {fallback}")
+    if safe_default:
+        parts.append(f"permission-safe default {safe_default}")
+    if opt_in:
+        parts.append("Apple Speech opt-in")
+    if no_status_prompt:
+        parts.append("status check does not request permissions")
+    return "; ".join(parts)
+
+
+def print_speech_input_policy(base_url: str) -> None:
+    try:
+        data = post_json(
+            f"{base_url.rstrip('/')}/api/command",
+            {"command": "speech recognition candidates", "suppress_speech": True},
+            timeout=4,
+        )
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+        return
+    summary = speech_input_policy_summary(data)
+    if summary:
+        print(f"Speech input: {summary}")
+
+
 def print_physical_capture_contract() -> None:
     try:
         project_root_text = str(PROJECT_ROOT)
@@ -970,6 +1011,18 @@ def display_path(raw_path: str) -> str:
 
 def get_json(url: str, *, timeout: int) -> Any:
     with urllib.request.urlopen(url, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def post_json(url: str, payload: dict[str, Any], *, timeout: int) -> Any:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
