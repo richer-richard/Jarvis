@@ -44,6 +44,7 @@ VISIBLE_SCREEN_PROBE = JARVIS_APP / "Contents" / "MacOS" / "jarvis-visible-scree
 VISIBLE_SCREEN_FOLLOW_UP_RETRY_ATTEMPTS = 4
 VISIBLE_SCREEN_FOLLOW_UP_RETRY_DELAY_SECONDS = 1.6
 VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS = 1.2
+VISIBLE_SCREEN_FOLLOW_UP_OPEN_TIMEOUT_SECONDS = 15.0
 SPEECH_AUDIT_MAX_WORKERS = 2
 LOCAL_STT_ROOT = PROJECT_ROOT / "runtime" / "stt_models" / "faster_whisper"
 LOCAL_STT_PYTHON = LOCAL_STT_ROOT / ".venv" / "bin" / "python"
@@ -1970,10 +1971,31 @@ def run_native_visible_screen_follow_up(
     browser_page_follow_up = initial_browser_page_follow_up
     browser_open = open_visible_screen_follow_up_url(command_response, timeout=timeout)
     result.update(browser_open)
+    if browser_open.get("browser_open_login_gate"):
+        return {
+            **result,
+            "status": "login_gate_visible",
+            "used": False,
+            "attempts": 0,
+            "visible_reply_preview": (
+                "Teams opened in Chrome, but Microsoft is showing a sign-in gate. "
+                "I have not inspected the newest Music assignment yet."
+            ),
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+    if browser_open.get("browser_open_error"):
+        return {
+            **result,
+            "status": "browser_focus_not_verified",
+            "used": False,
+            "attempts": 0,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
     if (
         browser_open.get("browser_open_attempted")
         and browser_open.get("browser_open_returncode") == 0
         and browser_open.get("browser_open_target_host_verified") is False
+        and browser_open.get("browser_open_verification_source") != "active_title_url"
     ):
         return {
             **result,
@@ -2909,7 +2931,7 @@ tell application "Google Chrome"
     end if
     set frontURL to ""
     set frontTitle to ""
-    repeat 25 times
+    repeat 60 times
         delay 0.2
         try
             set frontURL to URL of active tab of front window
@@ -2928,13 +2950,14 @@ return frontTitle & linefeed & frontURL
             cwd=PROJECT_ROOT,
             text=True,
             capture_output=True,
-            timeout=max(10.0, timeout),
+            timeout=min(VISIBLE_SCREEN_FOLLOW_UP_OPEN_TIMEOUT_SECONDS, max(5.0, timeout)),
             check=False,
         )
         stdout = completed.stdout.strip()
         title, active_url = parse_chrome_front_tab_output(stdout)
         verification_url, verification_source = chrome_front_tab_verification_url(title, active_url)
         active_host = (urlparse(verification_url).hostname or "").lower()
+        login_gate = chrome_front_tab_login_gate(title=title, active_url=active_url)
         target_host_verified = chrome_front_tab_host_verified(
             target_host=target_host,
             active_host=active_host,
@@ -2951,6 +2974,7 @@ return frontTitle & linefeed & frontURL
             "browser_open_active_url": active_url,
             "browser_open_verification_url": verification_url,
             "browser_open_verification_source": verification_source,
+            "browser_open_login_gate": login_gate,
             "browser_open_target_host_verified": bool(completed.returncode == 0 and target_host_verified),
         }
     except Exception as error:
@@ -2989,6 +3013,14 @@ def chrome_front_tab_host_verified(*, target_host: str, active_host: str, verifi
     if target in {"teams.microsoft.com", "teams.cloud.microsoft"}:
         return source == "active_url" and active in {"teams.microsoft.com", "teams.cloud.microsoft"}
     return bool(active and (active == target))
+
+
+def chrome_front_tab_login_gate(*, title: str, active_url: str) -> bool:
+    host = (urlparse(str(active_url or "").strip()).hostname or "").lower()
+    if host in {"login.microsoftonline.com", "login.live.com"}:
+        return True
+    title_text = str(title or "").casefold()
+    return "sign in to your account" in title_text and "microsoft" in title_text
 
 
 def browser_page_follow_up_response_looks_useful(response: dict[str, Any], *, command_text: str = "") -> bool:

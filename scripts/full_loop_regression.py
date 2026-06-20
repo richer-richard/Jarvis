@@ -1384,6 +1384,7 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "honest_permission_blocked": honest_permission_blocked,
         "chrome_page_read_blocked": chrome_page_read_blocked,
         "browser_focus_not_verified": browser_focus_not_verified,
+        "browser_open_login_gate": bool(follow_up.get("browser_open_login_gate")),
         "browser_open_active_url": str(follow_up.get("browser_open_active_url") or ""),
         "browser_open_active_title": str(follow_up.get("browser_open_active_title") or ""),
         "browser_open_verification_url": str(follow_up.get("browser_open_verification_url") or ""),

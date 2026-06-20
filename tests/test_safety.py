@@ -4509,6 +4509,136 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["attempts"], 0)
         self.assertFalse(result["browser_open_attempted"])
 
+    def test_voice_loop_qa_visible_screen_followup_stops_when_chrome_open_hits_microsoft_login(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 return_value={
+                     "used": False,
+                     "status": "response_not_useful",
+                     "tool": "browser.read_page",
+                     "response_status": "no_page_text",
+                     "visible_reply_preview": "I need a visible page before I can summarize it.",
+                 },
+             ), \
+             patch(
+                 "scripts.voice_loop_qa.open_visible_screen_follow_up_url",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+                     "browser_open_active_title": "Sign in to your account",
+                     "browser_open_login_gate": True,
+                     "browser_open_target_host_verified": False,
+                 },
+             ) as open_mock, \
+             patch("scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt") as attempt_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+            )
+
+        open_mock.assert_called_once()
+        attempt_mock.assert_not_called()
+        self.assertEqual(result["status"], "login_gate_visible")
+        self.assertEqual(result["attempts"], 0)
+        self.assertFalse(result["used"])
+        self.assertTrue(result["browser_open_login_gate"])
+        self.assertIn("sign-in gate", result["visible_reply_preview"])
+
+    def test_voice_loop_qa_visible_screen_followup_rechecks_after_title_only_teams_url(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 side_effect=[
+                     {
+                         "used": False,
+                         "status": "response_not_useful",
+                         "tool": "browser.read_page",
+                         "response_status": "no_page_text",
+                         "visible_reply_preview": "I need a visible page before I can summarize it.",
+                     },
+                     {
+                         "used": False,
+                         "status": "login_gate_visible",
+                         "tool": "browser.read_page",
+                         "response_status": "visible_screen_login_gate",
+                         "visible_reply_preview": "I read Google Chrome, but it is showing a Microsoft sign-in gate.",
+                     },
+                 ],
+             ) as browser_mock, \
+             patch(
+                 "scripts.voice_loop_qa.open_visible_screen_follow_up_url",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_open_returncode": 0,
+                     "browser_open_active_url": "",
+                     "browser_open_active_title": "https://teams.microsoft.com/v2/?clientexperience=t3",
+                     "browser_open_verification_source": "active_title_url",
+                     "browser_open_target_host_verified": False,
+                     "browser_open_login_gate": False,
+                 },
+             ) as open_mock, \
+             patch("scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt") as attempt_mock, \
+             patch("scripts.voice_loop_qa.time.sleep") as sleep_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=5.0,
+            )
+
+        self.assertEqual(browser_mock.call_count, 2)
+        open_mock.assert_called_once()
+        attempt_mock.assert_not_called()
+        self.assertEqual(result["status"], "login_gate_visible")
+        self.assertEqual(result["attempts"], 0)
+        self.assertFalse(result["used"])
+        self.assertEqual(result["browser_open_verification_source"], "active_title_url")
+        sleep_mock.assert_any_call(voice_loop_qa.VISIBLE_SCREEN_FOLLOW_UP_INITIAL_OPEN_DELAY_SECONDS)
+
+    def test_voice_loop_qa_visible_screen_followup_stops_when_chrome_open_times_out(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch(
+                 "scripts.voice_loop_qa.run_browser_page_follow_up",
+                 return_value={
+                     "used": False,
+                     "status": "response_not_useful",
+                     "tool": "browser.read_page",
+                     "response_status": "no_page_text",
+                     "visible_reply_preview": "I need a visible page before I can summarize it.",
+                 },
+             ) as browser_mock, \
+             patch(
+                 "scripts.voice_loop_qa.open_visible_screen_follow_up_url",
+                 return_value={
+                     "browser_open_attempted": True,
+                     "browser_open_error": "TimeoutExpired: osascript timed out after 15 seconds",
+                 },
+             ) as open_mock, \
+             patch("scripts.voice_loop_qa.run_native_visible_screen_follow_up_attempt") as attempt_mock, \
+             patch("scripts.voice_loop_qa.time.sleep") as sleep_mock:
+            result = voice_loop_qa.run_native_visible_screen_follow_up(
+                command_text="Look in Teams for my newest Music assignment.",
+                command_response={"tool": "teams.assignment", "result": {"url": "https://teams.microsoft.com/v2/"}},
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                timeout=90.0,
+            )
+
+        self.assertEqual(browser_mock.call_count, 1)
+        open_mock.assert_called_once()
+        attempt_mock.assert_not_called()
+        sleep_mock.assert_not_called()
+        self.assertEqual(result["status"], "browser_focus_not_verified")
+        self.assertEqual(result["attempts"], 0)
+        self.assertFalse(result["used"])
+        self.assertIn("TimeoutExpired", result["browser_open_error"])
+
     def test_voice_loop_qa_visible_screen_followup_opens_browser_only_after_initial_page_read_is_not_useful(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch(
@@ -4696,6 +4826,20 @@ class VerifySafeScriptTests(unittest.TestCase):
                 target_host="teams.microsoft.com",
                 active_host="teams.cloud.microsoft",
                 verification_source="active_title_url",
+            )
+        )
+
+    def test_voice_loop_qa_chrome_front_tab_detects_microsoft_login_gate(self):
+        self.assertTrue(
+            voice_loop_qa.chrome_front_tab_login_gate(
+                title="Sign in to your account",
+                active_url="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+            )
+        )
+        self.assertFalse(
+            voice_loop_qa.chrome_front_tab_login_gate(
+                title="https://teams.microsoft.com/v2/?clientexperience=t3",
+                active_url="",
             )
         )
 
@@ -18194,6 +18338,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("run_browser_page_follow_up", script_source)
         self.assertIn("/api/browser/read-page", script_source)
         self.assertIn("browser_permission_blocked", script_source)
+        self.assertIn("VISIBLE_SCREEN_FOLLOW_UP_OPEN_TIMEOUT_SECONDS = 15.0", script_source)
+        self.assertIn("timeout=min(VISIBLE_SCREEN_FOLLOW_UP_OPEN_TIMEOUT_SECONDS, max(5.0, timeout))", script_source)
+        self.assertIn('if browser_open.get("browser_open_error"):', script_source)
         self.assertIn("audit_spoken_payloads", script_source)
         self.assertIn("detect_internal_speech_leaks", script_source)
         self.assertIn("INTERNAL_SPEECH_LEAK_PATTERNS", script_source)
@@ -18228,10 +18375,12 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn('["/usr/bin/osascript", "-e", applescript]', script_source)
         self.assertIn('"browser_open_method": "chrome_existing_session"', script_source)
         self.assertIn("if tabURL is targetURL then", script_source)
-        self.assertIn("repeat 25 times", script_source)
+        self.assertIn("repeat 60 times", script_source)
         self.assertIn('if frontURL is not "" then', script_source)
         self.assertIn("chrome_front_tab_verification_url(title, active_url)", script_source)
         self.assertIn("chrome_front_tab_host_verified(", script_source)
+        self.assertIn("chrome_front_tab_login_gate(", script_source)
+        self.assertIn('"browser_open_login_gate": login_gate', script_source)
         self.assertIn('source == "active_url" and active in {"teams.microsoft.com", "teams.cloud.microsoft"}', script_source)
         self.assertIn('"browser_open_verification_source": verification_source', script_source)
         self.assertIn('return title_text, "active_title_url"', script_source)
