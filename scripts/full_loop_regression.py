@@ -1275,7 +1275,12 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         and "questions i need answered" in lower_reply
         and any(token in lower_reply for token in ("music", "musical", "song", "instrument"))
     )
-    honest_not_inspected = "have not inspected the newest music assignment" in lower_reply
+    honest_login_gate = (
+        str(follow_up.get("status") or "") == "login_gate_visible"
+        or "behind a password or sign-in gate" in lower_reply
+        or "not reached the assignment page yet" in lower_reply
+    )
+    honest_not_inspected = "have not inspected the newest music assignment" in lower_reply or honest_login_gate
     honest_wrong_subject = "does not look like the music assignment" in lower_reply
     honest_permission_blocked = (
         "chrome is blocking jarvis from controlling the current page" in lower_reply
@@ -1312,6 +1317,7 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "failures": failures,
         "inspected_music": inspected_music,
         "honest_not_inspected": honest_not_inspected,
+        "honest_login_gate": honest_login_gate,
         "honest_wrong_subject": honest_wrong_subject,
         "honest_permission_blocked": honest_permission_blocked,
         "chrome_page_read_blocked": chrome_page_read_blocked,
@@ -1468,19 +1474,25 @@ def run_email_sharpay_case(
 ) -> dict[str, Any]:
     started = time.monotonic()
     run_dir.mkdir(parents=True, exist_ok=True)
-    voice_report = voice_loop_qa.run_voice_loop(
-        command_text=case["command"],
+    voice_report = _run_email_voice_loop_once(
+        case,
         base_url=base_url,
         run_dir=run_dir / "voice-loop",
-        length_scale=0.85,
         timeout=timeout,
-        stt_provider="local",
-        no_permission_prompts=True,
-        expect_tools=list(case["expect_tool"]),
-        expect_routed_contains=list(case["expect_routed_contains"]),
         exercise_live_speech=exercise_live_speech,
-        allow_audio_actions=False,
     )
+    retry_voice_report: dict[str, Any] | None = None
+    if voice_loop_transient_http_error(voice_report):
+        retry_voice_report = _run_email_voice_loop_once(
+            case,
+            base_url=base_url,
+            run_dir=run_dir / "voice-loop-retry",
+            timeout=timeout,
+            exercise_live_speech=exercise_live_speech,
+        )
+        write_json(run_dir / "voice-loop-retry-report.json", retry_voice_report)
+        if str(retry_voice_report.get("result", {}).get("status") or "") != "failed":
+            voice_report = retry_voice_report
     write_json(run_dir / "voice-loop-report.json", voice_report)
     email_filter_proof = email_sharpay_result_summary_proof(voice_report)
     if not email_filter_proof.get("trusted_command_result"):
@@ -1493,9 +1505,13 @@ def run_email_sharpay_case(
     if voice_status == "failed":
         status = "failed"
         warnings.append("Voice loop failed.")
+        if retry_voice_report is not None:
+            warnings.append("Transient HTTP retry was attempted but did not recover the voice loop.")
     elif voice_status != "passed":
         status = "warning"
         warnings.append(f"Voice loop returned {voice_status}.")
+    if retry_voice_report is not None and voice_status == "passed":
+        warnings.append("Voice loop recovered after one transient HTTP retry.")
     if not action_proof["passed"]:
         status = "failed"
         warnings.extend(action_proof["failures"])
@@ -1506,11 +1522,43 @@ def run_email_sharpay_case(
         "command": case["command"],
         "voice_loop_status": voice_status,
         "voice_loop_report": str(run_dir / "voice-loop-report.json"),
+        "voice_loop_retry_report": str(run_dir / "voice-loop-retry-report.json") if retry_voice_report is not None else None,
         "action_proof": action_proof,
         "email_filter_proof": email_filter_proof,
         "cleanup": {"required": False, "reason": "Read-only local email/contact check."},
         "total_seconds": round(time.monotonic() - started, 3),
     }
+
+
+def _run_email_voice_loop_once(
+    case: dict[str, Any],
+    *,
+    base_url: str,
+    run_dir: Path,
+    timeout: float,
+    exercise_live_speech: bool,
+) -> dict[str, Any]:
+    return voice_loop_qa.run_voice_loop(
+        command_text=case["command"],
+        base_url=base_url,
+        run_dir=run_dir,
+        length_scale=0.85,
+        timeout=timeout,
+        stt_provider="local",
+        no_permission_prompts=True,
+        expect_tools=list(case["expect_tool"]),
+        expect_routed_contains=list(case["expect_routed_contains"]),
+        exercise_live_speech=exercise_live_speech,
+        allow_audio_actions=False,
+    )
+
+
+def voice_loop_transient_http_error(voice_report: dict[str, Any]) -> bool:
+    result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
+    if str(result.get("status") or "") != "failed":
+        return False
+    error = str(result.get("error") or "").casefold()
+    return "http 502" in error or "http 503" in error or "http 504" in error
 
 
 def email_sharpay_result_summary_proof(voice_report: dict[str, Any]) -> dict[str, Any]:

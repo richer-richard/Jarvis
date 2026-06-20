@@ -40,11 +40,16 @@
 - [x] Add a Hey Jarvis self-test probe proving Stop cancels a pending delayed restart and leaves the listener Off.
 - [x] Add a model-route guardrail so clear RAM/Activity Monitor requests execute the safe memory tool if the first model punts to chat.
 - [x] Rebuild and launch Jarvis `0.1.474` build `474` so the normal bundled app contains the current model-route guardrails.
-- [ ] Start the official Jarvis macOS UI upgrade: redesign the main app toward native SwiftUI/macOS Liquid Glass patterns, show every user-visible Jarvis utterance and every meaningful Jarvis action/tool step, and remove the ugly rectangular gradient/color block behind the summon popout.
+- [x] Start the official Jarvis macOS UI upgrade: redesign the main app toward native SwiftUI/macOS Liquid Glass patterns, show every user-visible Jarvis utterance and every meaningful Jarvis action/tool step, and remove the ugly rectangular gradient/color block behind the summon popout.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 
 ## Completed This Turn
 
+- [x] Started the official macOS UI upgrade: the app now has a visible `Jarvis Activity` panel for commands, tool use, browser opens, speech state, replies, and errors; Copy Chat JSON includes `action_events`; the summon popout is smaller and clipped to reduce the rectangular gradient artifact.
+- [x] Fixed the model-test plan latency regression: Jarvis now uses a short MacBook Air reachability probe for `models.test_plan` and gives a shorter spoken reply when the Air is unreachable. Live Gemma case passed in `15.571s` at `runtime/full_loop_regression/20260620-160125/summary.json`, and later passed in `11.298s` in the full gate.
+- [x] Added a bounded retry for transient HTTP 502/503/504 voice-loop failures in the Sharpay email full-loop case. Live Sharpay case passed at `runtime/full_loop_regression/20260620-160202/summary.json`; in the refreshed full gate it passed in `34.052s`.
+- [x] Fixed Teams honesty verification for login/password gates: if Jarvis says Teams is behind a sign-in gate and it has not reached the assignment page, the proof is honest/incomplete instead of a false hard failure.
+- [x] Full `tests.test_safety` passed `1037/1037`; refreshed pre-build gate `runtime/pre_build_gate/20260620-161319/summary.json` is still red `3/4` only because Teams remains honestly incomplete, with 7 target prompts passed and 1 Teams warning.
 - [x] Re-read `/Users/leoxu/.codex/AGENTS.md` and acknowledged the updated overnight and task-queue rules.
 - [x] Jarvis `0.1.473` build `473` is live; full `tests.test_safety` passed `946/946`, `scripts/verify_safe.py` passed `105/105` at `runtime/verification/verify-safe-20260620-024010.json`, focused Magic Keyboard full-loop proof passed at `runtime/full_loop_regression/20260620-024641/summary.json`, and the official pre-build gate passed `5/5` at `runtime/pre_build_gate/20260620-024701/summary.json`.
 - [x] Route-source full-loop proof added: RAM `runtime/full_loop_regression/20260620-025405/summary.json`, Calendar `runtime/full_loop_regression/20260620-025414/summary.json`, and Magic Keyboard `runtime/full_loop_regression/20260620-025420/summary.json` all passed with `route_source: model_tool_call`; full `tests.test_safety` passed `949/949`.

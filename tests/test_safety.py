@@ -843,6 +843,29 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(proof["honest_wrong_subject"])
         self.assertIn("Geography of Greece", proof["visible_reply_preview"])
 
+    def test_full_loop_teams_login_gate_is_honest_not_inspected(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": (
+                    "Teams is still behind a password or sign-in gate in Chrome, "
+                    "so I have not reached the assignment page yet."
+                ),
+                "visible_screen_follow_up": {
+                    "status": "login_gate_visible",
+                    "visible_reply_preview": (
+                        "Teams is still behind a password or sign-in gate in Chrome, "
+                        "so I have not reached the assignment page yet."
+                    ),
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertTrue(proof["honest_not_inspected"])
+        self.assertTrue(proof["honest_login_gate"])
+        self.assertFalse(proof["capability_complete"])
+        self.assertEqual(proof["completion_status"], "not_inspected")
+
     def test_full_loop_teams_honesty_reports_browser_focus_failure(self):
         proof = full_loop_regression.verify_teams_assignment_honesty({
             "result": {
@@ -1000,6 +1023,93 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(proof["all_senders_match"])
         self.assertEqual(proof["proof_source"], "voice_loop_command_result")
         self.assertEqual(proof["resolved_sender"], "Sharpay Cao")
+
+    def test_full_loop_email_sharpay_retries_transient_http_gateway_error_once(self):
+        transient = {
+            "result": {
+                "status": "failed",
+                "error": "RuntimeError: HTTP 502: ",
+            },
+        }
+        recovered = {
+            "result": {
+                "status": "passed",
+                "command_response_tool": "outlook.visible_summary",
+                "visible_reply_preview": "Sharpay Cao sent a rehearsal reminder.",
+                "command_response_result": {
+                    "status": "checked",
+                    "sender_query": "Sharpay Cao",
+                    "contact_display_name": "Sharpay Cao",
+                    "message_count": 1,
+                    "match_count": 1,
+                    "selection_mode": "sender_latest",
+                },
+            },
+        }
+        case = {
+            "id": "email_sharpay_month",
+            "command": "Hey Jarvis, summarize all the emails from Ms. Sharpay in the past month.",
+            "expect_tool": ["outlook.visible_summary"],
+            "expect_routed_contains": ["Sharpay"],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "scripts.full_loop_regression.voice_loop_qa.run_voice_loop",
+            side_effect=[transient, recovered],
+        ) as voice_loop_mock:
+            result = full_loop_regression.run_email_sharpay_case(
+                case,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir),
+                timeout=1,
+                exercise_live_speech=False,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["voice_loop_status"], "passed")
+        self.assertEqual(voice_loop_mock.call_count, 2)
+        self.assertIn("Voice loop recovered after one transient HTTP retry.", result["warnings"])
+        self.assertTrue(result["action_proof"]["passed"])
+
+    def test_full_loop_email_sharpay_transient_retry_still_fails_if_not_recovered(self):
+        transient = {
+            "result": {
+                "status": "failed",
+                "error": "RuntimeError: HTTP 502: ",
+            },
+        }
+        case = {
+            "id": "email_sharpay_month",
+            "command": "Hey Jarvis, summarize all the emails from Ms. Sharpay in the past month.",
+            "expect_tool": ["outlook.visible_summary"],
+            "expect_routed_contains": ["Sharpay"],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "scripts.full_loop_regression.voice_loop_qa.run_voice_loop",
+            side_effect=[transient, transient],
+        ) as voice_loop_mock, patch(
+            "scripts.full_loop_regression.email_sharpay_filter_proof",
+            return_value={
+                "lookup_status": "found",
+                "mail_status": "checked",
+                "all_senders_match": True,
+                "resolved_sender": "Sharpay Cao",
+                "message_count": 1,
+            },
+        ):
+            result = full_loop_regression.run_email_sharpay_case(
+                case,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir),
+                timeout=1,
+                exercise_live_speech=False,
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["voice_loop_status"], "failed")
+        self.assertEqual(voice_loop_mock.call_count, 2)
+        self.assertIn("Transient HTTP retry was attempted but did not recover the voice loop.", result["warnings"])
 
     def test_full_loop_email_sharpay_rejects_unrelated_newest_fallback(self):
         proof = full_loop_regression.verify_email_sharpay_honesty({
@@ -13105,7 +13215,7 @@ Pages occupied by compressor:             10.
         self.assertTrue(result["offline_fallback"]["requires_user_confirmation_before_local_run"])
         self.assertTrue(result["offline_fallback"]["requires_separate_heavy_local_unlock"])
         self.assertIn("gpt-oss:20b", {item["model"] for item in result["offline_fallback"]["blocked_local_candidates"]})
-        remote_mock.assert_called_once_with(probe=True)
+        remote_mock.assert_called_once_with(probe=True, connect_timeout_seconds=2.0, command_timeout_seconds=3.0)
 
     def test_model_test_plan_asks_before_local_when_remote_unavailable(self):
         remote = {
@@ -13124,6 +13234,7 @@ Pages occupied by compressor:             10.
         self.assertFalse(result["ran_model"])
         self.assertIn("MacBook Air", result["reply"])
         self.assertIn("ask before running", result["reply"])
+        self.assertLessEqual(len(result["reply"]), 90)
         self.assertEqual(result["offline_fallback"]["recommended_local_candidate"], "gemma3n:e4b")
         self.assertTrue(result["offline_fallback"]["cloud_first"])
         self.assertTrue(result["offline_fallback"]["remote_first"])

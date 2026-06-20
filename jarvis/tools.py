@@ -11010,7 +11010,12 @@ def safety_status() -> dict[str, Any]:
     }
 
 
-def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
+def remote_worker_status(
+    *,
+    probe: bool = True,
+    connect_timeout_seconds: float = 8.0,
+    command_timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
     """Return bounded Tailscale MacBook Air readiness without reading user files."""
     ssh = _find_executable("ssh")
     tailscale = _tailscale_transport_status(probe=probe)
@@ -11082,7 +11087,7 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
                 "-o",
                 "BatchMode=yes",
                 "-o",
-                "ConnectTimeout=8",
+                f"ConnectTimeout={max(1, int(connect_timeout_seconds))}",
                 REMOTE_WORKER_SSH_TARGET,
                 remote_script,
             ],
@@ -11090,7 +11095,7 @@ def remote_worker_status(*, probe: bool = True) -> dict[str, Any]:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=10,
+            timeout=max(1.0, command_timeout_seconds),
             check=False,
         )
     except subprocess.TimeoutExpired as error:
@@ -11223,7 +11228,7 @@ def model_test_plan(model_name: str | None = None, *, prompt: str | None = None)
         clean_model = extracted_model
     heavy = _model_is_heavy_for_this_mac(clean_model)
     offline_fallback = _offline_model_fallback_policy(clean_model, heavy=heavy)
-    remote = remote_worker_status(probe=True)
+    remote = remote_worker_status(probe=True, connect_timeout_seconds=2.0, command_timeout_seconds=3.0)
     remote_available = remote.get("status") == "available"
     if not clean_model:
         clean_model = "requested model"
@@ -11240,7 +11245,7 @@ def model_test_plan(model_name: str | None = None, *, prompt: str | None = None)
         elif heavy:
             reply = f"{clean_model} may be too heavy for this 16 GB Mac, and I cannot reach the MacBook Air right now. I should ask before running it locally."
         else:
-            reply = f"I cannot reach the MacBook Air right now. I should ask before running {clean_model} on this Mac, even if it looks small enough for a bounded test."
+            reply = f"I cannot reach the MacBook Air. I should ask before running {clean_model} on this Mac."
     return {
         "tool": "models.test_plan",
         "executed": True,
