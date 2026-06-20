@@ -412,6 +412,12 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
     public let characterCount: Int
     public let captureWidth: Int
     public let captureHeight: Int
+    public let captureBoundsX: Double
+    public let captureBoundsY: Double
+    public let captureBoundsWidth: Double
+    public let captureBoundsHeight: Double
+    public let captureScaleX: Double
+    public let captureScaleY: Double
     public let screenAccessPreflight: Bool
     public let captureError: String?
     public let appBundlePath: String
@@ -427,6 +433,12 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
         characterCount: Int = 0,
         captureWidth: Int = 0,
         captureHeight: Int = 0,
+        captureBoundsX: Double = 0,
+        captureBoundsY: Double = 0,
+        captureBoundsWidth: Double = 0,
+        captureBoundsHeight: Double = 0,
+        captureScaleX: Double = 0,
+        captureScaleY: Double = 0,
         screenAccessPreflight: Bool = false,
         captureError: String? = nil,
         appBundlePath: String = "",
@@ -441,6 +453,12 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
         self.characterCount = characterCount
         self.captureWidth = captureWidth
         self.captureHeight = captureHeight
+        self.captureBoundsX = captureBoundsX
+        self.captureBoundsY = captureBoundsY
+        self.captureBoundsWidth = captureBoundsWidth
+        self.captureBoundsHeight = captureBoundsHeight
+        self.captureScaleX = captureScaleX
+        self.captureScaleY = captureScaleY
         self.screenAccessPreflight = screenAccessPreflight
         self.captureError = captureError
         self.appBundlePath = appBundlePath
@@ -458,6 +476,12 @@ public struct VisibleOutlookTextDiagnostics: Sendable {
             "character_count": characterCount,
             "capture_width": captureWidth,
             "capture_height": captureHeight,
+            "capture_bounds_x": captureBoundsX,
+            "capture_bounds_y": captureBoundsY,
+            "capture_bounds_width": captureBoundsWidth,
+            "capture_bounds_height": captureBoundsHeight,
+            "capture_scale_x": captureScaleX,
+            "capture_scale_y": captureScaleY,
             "screen_access_preflight": screenAccessPreflight,
         ]
         if let captureError, !captureError.isEmpty {

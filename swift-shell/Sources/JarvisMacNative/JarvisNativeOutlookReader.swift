@@ -41,6 +41,12 @@ public struct NativeOCRLine: Sendable {
     }
 }
 
+private struct NativeWindowCapture {
+    let image: CGImage
+    let bounds: CGRect
+    let ownerName: String
+}
+
 public enum JarvisNativeOutlookReader {
     public static func readVisibleOutlookText() async throws -> NativeOutlookOCRResult {
         try await focusOutlook()
@@ -54,7 +60,8 @@ public enum JarvisNativeOutlookReader {
             }
         }
 
-        guard let image = captureVisibleOutlookWindow() ?? CGDisplayCreateImage(CGMainDisplayID()) else {
+        let windowCapture = captureVisibleOutlookWindow()
+        guard let image = windowCapture?.image ?? CGDisplayCreateImage(CGMainDisplayID()) else {
             throw NativeOutlookReadError.captureFailed
         }
 
@@ -67,6 +74,12 @@ public enum JarvisNativeOutlookReader {
                 characterCount: text.count,
                 captureWidth: image.width,
                 captureHeight: image.height,
+                captureBoundsX: double(windowCapture?.bounds.origin.x),
+                captureBoundsY: double(windowCapture?.bounds.origin.y),
+                captureBoundsWidth: double(windowCapture?.bounds.width),
+                captureBoundsHeight: double(windowCapture?.bounds.height),
+                captureScaleX: captureScale(imagePixels: image.width, screenPoints: windowCapture?.bounds.width),
+                captureScaleY: captureScale(imagePixels: image.height, screenPoints: windowCapture?.bounds.height),
                 screenAccessPreflight: hadAccessBeforeRequest,
                 captureError: nil,
                 appBundlePath: Bundle.main.bundleURL.path,
@@ -101,11 +114,13 @@ public enum JarvisNativeOutlookReader {
         }
 
         let ownerNames = cleanTargetName?.isEmpty == false ? Set([cleanTargetName!]) : nil
-        guard let initialImage = captureVisibleWindow(ownerNames: ownerNames) ?? CGDisplayCreateImage(CGMainDisplayID()) else {
+        let initialWindowCapture = captureVisibleWindow(ownerNames: ownerNames)
+        guard let initialImage = initialWindowCapture?.image ?? CGDisplayCreateImage(CGMainDisplayID()) else {
             throw NativeOutlookReadError.captureFailed
         }
 
         var image = initialImage
+        var windowCapture = initialWindowCapture
         var lines = try recognizeTextLines(in: image)
         var source = "native_vision_ocr_screen"
         let initialText = lines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,6 +131,7 @@ public enum JarvisNativeOutlookReader {
             let displayText = displayLines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             if displayLines.count > lines.count || displayText.count > initialText.count + 80 {
                 image = displayImage
+                windowCapture = nil
                 lines = displayLines
                 source = "native_vision_ocr_screen_display_fallback"
             }
@@ -129,6 +145,12 @@ public enum JarvisNativeOutlookReader {
                 characterCount: text.count,
                 captureWidth: image.width,
                 captureHeight: image.height,
+                captureBoundsX: double(windowCapture?.bounds.origin.x),
+                captureBoundsY: double(windowCapture?.bounds.origin.y),
+                captureBoundsWidth: double(windowCapture?.bounds.width),
+                captureBoundsHeight: double(windowCapture?.bounds.height),
+                captureScaleX: captureScale(imagePixels: image.width, screenPoints: windowCapture?.bounds.width),
+                captureScaleY: captureScale(imagePixels: image.height, screenPoints: windowCapture?.bounds.height),
                 screenAccessPreflight: hadAccessBeforeRequest,
                 captureError: nil,
                 appBundlePath: Bundle.main.bundleURL.path,
@@ -203,11 +225,11 @@ public enum JarvisNativeOutlookReader {
         }
     }
 
-    private static func captureVisibleOutlookWindow() -> CGImage? {
+    private static func captureVisibleOutlookWindow() -> NativeWindowCapture? {
         captureVisibleWindow(ownerNames: Set(["Microsoft Outlook"]))
     }
 
-    private static func captureVisibleWindow(ownerNames: Set<String>? = nil) -> CGImage? {
+    private static func captureVisibleWindow(ownerNames: Set<String>? = nil) -> NativeWindowCapture? {
         guard let windowInfo = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
@@ -215,7 +237,7 @@ public enum JarvisNativeOutlookReader {
             return nil
         }
 
-        let candidates: [(windowID: CGWindowID, bounds: CGRect)] = windowInfo.compactMap { window in
+        let candidates: [(windowID: CGWindowID, bounds: CGRect, ownerName: String)] = windowInfo.compactMap { window in
             let ownerName = window[kCGWindowOwnerName as String] as? String ?? ""
             if let ownerNames {
                 guard ownerNames.contains(ownerName) else {
@@ -238,7 +260,7 @@ public enum JarvisNativeOutlookReader {
             guard bounds.width >= 240, bounds.height >= 180 else {
                 return nil
             }
-            return (CGWindowID(number.uint32Value), bounds)
+            return (CGWindowID(number.uint32Value), bounds, ownerName)
         }
 
         let selected = ownerNames == nil
@@ -251,7 +273,7 @@ public enum JarvisNativeOutlookReader {
         }
 
         let imageOptions: CGWindowImageOption = [.boundsIgnoreFraming, .bestResolution]
-        return CGWindowListCreateImage(
+        let image = CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
             selected.windowID,
@@ -262,6 +284,24 @@ public enum JarvisNativeOutlookReader {
             kCGNullWindowID,
             imageOptions
         )
+        guard let image else {
+            return nil
+        }
+        return NativeWindowCapture(image: image, bounds: selected.bounds, ownerName: selected.ownerName)
+    }
+
+    private static func captureScale(imagePixels: Int, screenPoints: CGFloat?) -> Double {
+        guard let screenPoints, screenPoints > 0 else {
+            return 0
+        }
+        return Double(imagePixels) / Double(screenPoints)
+    }
+
+    private static func double(_ value: CGFloat?) -> Double {
+        guard let value else {
+            return 0
+        }
+        return Double(value)
     }
 
     public static func failureDiagnostics(

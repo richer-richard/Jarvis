@@ -2301,7 +2301,32 @@ def select_ocr_line_target(
             "center": {"x": round(x + width / 2, 2), "y": round(y + height / 2, 2)},
             "pixels": {"x": round(x, 2), "y": round(y, 2), "width": round(width, 2), "height": round(height, 2)},
         }
+        screen_center = ocr_line_screen_center(best, capture_payload)
+        if screen_center:
+            best["screen_center"] = screen_center
     return best if best and best.get("found") else {"found": False, "reason": "no_label_match"}
+
+
+def ocr_line_screen_center(target: dict[str, Any], capture_payload: dict[str, Any]) -> dict[str, float] | None:
+    pixels = target.get("pixels") if isinstance(target.get("pixels"), dict) else {}
+    diagnostics = capture_payload.get("diagnostics") if isinstance(capture_payload.get("diagnostics"), dict) else {}
+    try:
+        pixel_x = float(pixels.get("x"))
+        pixel_y = float(pixels.get("y"))
+        pixel_width = float(pixels.get("width"))
+        pixel_height = float(pixels.get("height"))
+        bounds_x = float(diagnostics.get("capture_bounds_x"))
+        bounds_y = float(diagnostics.get("capture_bounds_y"))
+        scale_x = float(diagnostics.get("capture_scale_x"))
+        scale_y = float(diagnostics.get("capture_scale_y"))
+    except (TypeError, ValueError):
+        return None
+    if pixel_width <= 0 or pixel_height <= 0 or scale_x <= 0 or scale_y <= 0:
+        return None
+    return {
+        "x": round(bounds_x + (pixel_x + pixel_width / 2.0) / scale_x, 2),
+        "y": round(bounds_y + (pixel_y + pixel_height / 2.0) / scale_y, 2),
+    }
 
 
 def _ocr_label_matches_text(label: str, text_key: str) -> bool:
@@ -2323,7 +2348,10 @@ def visible_navigation_plan(
             "reason": str(target.get("reason") or "target_missing") if isinstance(target, dict) else "target_missing",
             "will_click": False,
         }
-    center = target.get("center") if isinstance(target.get("center"), dict) else {}
+    center = target.get("screen_center") if isinstance(target.get("screen_center"), dict) else {}
+    coordinate_space = "screen_points" if center else "image_pixels"
+    if not center:
+        center = target.get("center") if isinstance(target.get("center"), dict) else {}
     try:
         x = float(center.get("x"))
         y = float(center.get("y"))
@@ -2342,6 +2370,7 @@ def visible_navigation_plan(
         "requires_explicit_live_navigation": True,
         "target_text": str(target.get("text") or ""),
         "point": {"x": round(x, 2), "y": round(y, 2)},
+        "coordinate_space": coordinate_space,
         "target": target,
     }
 
@@ -2454,6 +2483,13 @@ def execute_visible_navigation_plan(
         return {"attempted": False, "executed": False, "status": "plan_not_ready"}
     if plan.get("will_click") is not False:
         return {"attempted": False, "executed": False, "status": "plan_not_fail_closed"}
+    if plan.get("coordinate_space") != "screen_points":
+        return {
+            "attempted": False,
+            "executed": False,
+            "status": "screen_coordinates_missing",
+            "coordinate_space": str(plan.get("coordinate_space") or "unknown"),
+        }
     point = plan.get("point") if isinstance(plan.get("point"), dict) else {}
     try:
         x = float(point.get("x"))

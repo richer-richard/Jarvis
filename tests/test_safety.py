@@ -3080,6 +3080,31 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(plan["will_click"])
         self.assertEqual(plan["reason"], "no_label_match")
 
+    def test_voice_loop_qa_ocr_target_can_convert_to_screen_points(self):
+        capture_payload = {
+            "diagnostics": {
+                "capture_bounds_x": 100.0,
+                "capture_bounds_y": 50.0,
+                "capture_scale_x": 2.0,
+                "capture_scale_y": 2.0,
+            },
+            "ocr_lines": [
+                {"text": "All teams", "pixels": {"x": 171, "y": 306, "width": 172, "height": 33}},
+            ],
+        }
+
+        target = voice_loop_qa.select_ocr_line_target(capture_payload, ["All teams"])
+        plan = voice_loop_qa.visible_navigation_plan(
+            target,
+            action="click",
+            purpose="return to Teams list",
+        )
+
+        self.assertEqual(target["center"], {"x": 257.0, "y": 322.5})
+        self.assertEqual(target["screen_center"], {"x": 228.5, "y": 211.25})
+        self.assertEqual(plan["coordinate_space"], "screen_points")
+        self.assertEqual(plan["point"], {"x": 228.5, "y": 211.25})
+
     def test_voice_loop_qa_execute_visible_navigation_requires_unlock(self):
         plan = {
             "planned": True,
@@ -3104,6 +3129,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             "planned": True,
             "will_click": False,
             "point": {"x": 68.0, "y": 577.0},
+            "coordinate_space": "screen_points",
         }
         completed = subprocess.CompletedProcess(["osascript"], 0, stdout="", stderr="")
         with patch.dict(os.environ, {"JARVIS_ALLOW_LIVE_UI_NAVIGATION": "1"}, clear=False), \
@@ -3122,11 +3148,32 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn('tell process "Google Chrome"', script)
         self.assertIn("click at {68.0, 577.0}", script)
 
+    def test_voice_loop_qa_execute_visible_navigation_refuses_image_pixels(self):
+        plan = {
+            "planned": True,
+            "will_click": False,
+            "point": {"x": 257.0, "y": 322.5},
+            "coordinate_space": "image_pixels",
+        }
+        with patch.dict(os.environ, {"JARVIS_ALLOW_LIVE_UI_NAVIGATION": "1"}, clear=False), \
+             patch("scripts.voice_loop_qa.subprocess.run") as run_mock:
+            result = voice_loop_qa.execute_visible_navigation_plan(
+                plan,
+                target_app_name="Google Chrome",
+                timeout=5.0,
+            )
+
+        self.assertFalse(result["attempted"])
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["status"], "screen_coordinates_missing")
+        run_mock.assert_not_called()
+
     def test_voice_loop_qa_execute_visible_navigation_reports_timeout(self):
         plan = {
             "planned": True,
             "will_click": False,
             "point": {"x": 257.13, "y": 323.04},
+            "coordinate_space": "screen_points",
         }
         with patch.dict(os.environ, {"JARVIS_ALLOW_LIVE_UI_NAVIGATION": "1"}, clear=False), \
              patch(
@@ -4717,6 +4764,9 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.479", shipped)
+        self.assertIn("Retina scale", shipped)
+        self.assertIn("screen points", shipped)
         self.assertIn("0.1.478", shipped)
         self.assertIn("safe commerce tool", shipped)
         self.assertIn("All teams", shipped)
@@ -13235,8 +13285,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.478}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-478}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.479}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-479}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
