@@ -188,6 +188,12 @@ Status legend:
      fallback routes. Outlook and SQLite request recent messages before applying
      `index:2`, so Jarvis does not summarize the newest email when Leo asks for
      the second newest.
+   - 2026-06-21 proof update: Jarvis 0.1.494 now recovers when the first model
+     clearly answers a real email-check request as plain chat instead of calling
+     the email tool. The fallback executes `outlook.visible_summary` and records
+     `model_route_fallback.reason: model_answered_instead_of_email_tool`. The
+     paired regression keeps generic prompts like "explain why email is useful"
+     on `conversation.fast_local` without reading mail.
 
 4. Partially fixed/risky: Jarvis must first say a natural working line, then
    return with the summary.

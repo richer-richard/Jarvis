@@ -7115,6 +7115,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.494", shipped)
+        self.assertIn("email tool recovery", shipped)
         self.assertIn("0.1.493", shipped)
         self.assertIn("loose internal routing text", shipped)
         self.assertIn("0.1.492", shipped)
@@ -14317,6 +14319,31 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result.tool, "conversation.fast_local")
         mail_mock.assert_not_called()
 
+    def test_email_model_punt_recovers_with_visible_summary_tool(self):
+        fake_result = {
+            "tool": "conversation.fast_local",
+            "status": "completed",
+            "executed": True,
+            "backend": "groq",
+            "reply": "I cannot directly access your inbox from here.",
+        }
+        mail_result = {
+            "status": "checked",
+            "summary": "Your newest email is a short reminder.",
+            "message_count": 1,
+        }
+        with patch("jarvis.planner.run_fast_local_chat", return_value=fake_result) as model_mock, \
+             patch("jarvis.planner.outlook_read_only_check", return_value=mail_result) as mail_mock:
+            result = Planner().handle("Could you check my email and summarize the newest one?")
+
+        self.assertEqual(result.tool, "outlook.visible_summary")
+        self.assertEqual(result.summary, "Recovered email route after first model answered without using the email tool.")
+        self.assertEqual(result.result["model_route_fallback"]["reason"], "model_answered_instead_of_email_tool")
+        self.assertEqual(result.result["model_route_fallback"]["primary_status"], "completed")
+        self.assertEqual(result.result["model_route_fallback"]["primary_tool"], "conversation.fast_local")
+        model_mock.assert_called_once()
+        mail_mock.assert_called_once()
+
     def test_email_sender_constraint_waits_for_contact_confirmation(self):
         fake_result = {"status": "no_matching_messages", "messages": [], "message_count": 0}
         tool_request = {
@@ -16240,8 +16267,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.493}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-493}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.494}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-494}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)

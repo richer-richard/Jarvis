@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.494 makes email tool recovery more reliable without fake keyword routing: if the first model clearly punts a real email-check request into plain chat, Jarvis recovers with the email summary tool and labels the fallback, while generic email conversation still never reads mail.",
     "Jarvis 0.1.493 strengthens the speech firewall: loose internal routing text such as selected tool, status_text, final_result, audit ids, and dotted tool ids are stripped before they can reach the app or TTS.",
     "Jarvis 0.1.492 makes explicit email wording authoritative: if Leo asks for the second email or emails 2 through 4, Jarvis honors the original prompt even when a model lazily suggests the newest email.",
     "Jarvis 0.1.491 packages the Chrome safety recovery: Teams live probes no longer launch Chrome or create fresh Chrome windows by default, cleanup targets only newly-created Teams windows/tabs by ID, and Sharpay-style school years are spoken as `2026 to 2027` instead of one giant number.",
