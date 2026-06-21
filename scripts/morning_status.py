@@ -1157,15 +1157,19 @@ def print_speech_emergency_status(base_url: str, *, app_pids: list[str], helper_
     muted = bool(speech.get("muted"))
     active = bool(speech.get("active_speech"))
     automatic_available = bool(speech.get("automatic_speech_available"))
-    emergency_ready = bool(app_pids or helper_pids)
+    helper_ready = bool(helper_pids)
+    app_ready = bool(app_pids)
     if muted:
         print("Speech emergency: safe (speech muted)")
         return
-    if emergency_ready:
-        print("Speech emergency: ready (menu helper/app process present)")
+    if helper_ready:
+        print("Speech emergency: ready (menu helper present)")
         return
     if active or automatic_available:
-        print("Speech emergency: missing menu helper while speech is unmuted")
+        if app_ready:
+            print("Speech emergency: menu helper missing while Jarvis app is running and speech is unmuted")
+        else:
+            print("Speech emergency: missing menu helper while speech is unmuted")
         print("Action: run `scripts/open_jarvis.sh` before enabling spoken replies")
 
 

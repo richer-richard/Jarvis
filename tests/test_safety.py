@@ -28190,6 +28190,52 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Speech emergency: missing menu helper while speech is unmuted", printed)
         self.assertIn("scripts/open_jarvis.sh", printed)
 
+    def test_morning_status_warns_when_app_runs_without_menu_helper_and_speech_available(self):
+        def fake_run(command, **kwargs):
+            if command == ["pgrep", "-x", "jarvis-menu-bar"]:
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="123\n", stderr="")
+            if command == ["pgrep", "-x", "jarvis-status-helper"]:
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="")
+
+        with patch("scripts.morning_status.subprocess.run", side_effect=fake_run), \
+             patch(
+                 "scripts.morning_status.get_json",
+                 return_value={"muted": False, "active_speech": True, "automatic_speech_available": True},
+             ), \
+             patch("builtins.print") as print_mock:
+            print_process_status("http://127.0.0.1:8765")
+
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("App processes: 1 jarvis-menu-bar running", printed)
+        self.assertIn(
+            "Speech emergency: menu helper missing while Jarvis app is running and speech is unmuted",
+            printed,
+        )
+        self.assertIn("scripts/open_jarvis.sh", printed)
+        self.assertNotIn("Speech emergency: ready", printed)
+
+    def test_morning_status_speech_emergency_ready_requires_helper(self):
+        def fake_run(command, **kwargs):
+            if command == ["pgrep", "-x", "jarvis-menu-bar"]:
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="123\n", stderr="")
+            if command == ["pgrep", "-x", "jarvis-status-helper"]:
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="456\n", stderr="")
+            return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="")
+
+        with patch("scripts.morning_status.subprocess.run", side_effect=fake_run), \
+             patch(
+                 "scripts.morning_status.get_json",
+                 return_value={"muted": False, "active_speech": True, "automatic_speech_available": True},
+             ), \
+             patch("builtins.print") as print_mock:
+            print_process_status("http://127.0.0.1:8765")
+
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("App processes: 1 jarvis-menu-bar, 1 jarvis-status-helper running", printed)
+        self.assertIn("Speech emergency: ready (menu helper present)", printed)
+        self.assertNotIn("menu helper missing", printed)
+
     def test_morning_status_age_formatting(self):
         self.assertEqual(format_uptime(time_since(100.0, now=165.0)), "1m 5s")
 
