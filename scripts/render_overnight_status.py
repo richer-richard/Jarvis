@@ -28,6 +28,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.491 packages the Chrome safety recovery: Teams live probes no longer launch Chrome or create fresh Chrome windows by default, cleanup targets only newly-created Teams windows/tabs by ID, and Sharpay-style school years are spoken as `2026 to 2027` instead of one giant number.",
     "Jarvis 0.1.490 normalizes command replies so tool-backed diagnostics expose the same human answer to the app, speech/audit paths, and copied JSON instead of falling back to generic backend summaries.",
     "Jarvis 0.1.489 tightens the summon popout: the top-right surface is smaller, uses grouped system Liquid Glass on macOS 26, keeps an adaptive material fallback, and removes the heavier shadow that could read as a rectangular block in fullscreen.",
     "Jarvis 0.1.488 fixes the proof-board artifact link: the Capability Questions page now links to a loopback-served latest full-loop JSON route, and the safe verifier checks that route with GET and HEAD.",
