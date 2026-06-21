@@ -22199,6 +22199,25 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("compared unread", spoken)
         self.assertNotIn("email route", spoken)
 
+    def test_auto_speech_sanitizer_drops_inline_internal_clauses(self):
+        technical = jarvis_tools._sanitize_spoken_text(
+            "Your schedule is clear. Technical details: used Calendar cache and model route diagnostics."
+        )
+        action_then_summary = jarvis_tools._sanitize_spoken_text(
+            "Done. Actions: opened Outlook, selected newest unread. Summary: You have a form to fill in."
+        )
+        visible = jarvis_tools._sanitize_user_visible_text(
+            "The email has a form. Debug: selected_tool=email.summary, scanned 5 messages."
+        )
+
+        self.assertEqual(technical, "Your schedule is clear.")
+        self.assertEqual(action_then_summary, "Done. You have a form to fill in.")
+        self.assertEqual(visible, "The email has a form.")
+        self.assertNotIn("Technical details", technical)
+        self.assertNotIn("Actions", action_then_summary)
+        self.assertNotIn("Debug", visible)
+        self.assertNotIn("selected_tool", visible)
+
     def test_auto_speech_sanitizer_drops_backend_diagnostics(self):
         spoken = jarvis_tools._sanitize_spoken_text(
             "Opened Microsoft Outlook.\n"

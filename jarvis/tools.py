@@ -1792,8 +1792,37 @@ def _strip_spoken_internal_sections(text: str) -> str:
                 skipping_section = False
                 output.append(public_match.group(1) or line)
             continue
+        line = _strip_inline_internal_sections(line)
+        if not line.strip():
+            continue
         output.append(line)
     return "\n".join(output)
+
+
+def _strip_inline_internal_sections(line: str) -> str:
+    """Remove one-line debug/action clauses while preserving later public answers."""
+    value = str(line or "")
+    if not value:
+        return value
+    internal_label = re.compile(
+        r"(?i)(?:^|(?<=[.!?])\s+)\b(?:actions?|next\s+steps?|technical\s+details?|debug|diagnostics?|"
+        r"tool\s+results?|model\s+details?|backend\s+details?|what\s+i\s+did|steps?\s+taken|"
+        r"process|implementation\s+notes?|reasoning|rationale)\s*:\s*"
+    )
+    public_label = re.compile(r"(?i)\b(?:summary|answer|result|reply)\s*:\s*")
+    while True:
+        match = internal_label.search(value)
+        if not match:
+            break
+        public_match = public_label.search(value, match.end())
+        if public_match:
+            replacement = value[public_match.end() :]
+            value = value[: match.start()].rstrip(" ,;") + (" " if replacement.strip() else "") + replacement
+        else:
+            value = value[: match.start()].rstrip(" ,;")
+        if not value:
+            break
+    return value
 
 
 def _english_only_spoken_text(text: str) -> str:
