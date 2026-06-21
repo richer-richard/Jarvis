@@ -773,6 +773,12 @@ Status legend:
      user-visible `summary` text before audit/display/speech attachment, and
      debug-only sanitized-away replies still leave an explicit zero-length
      speech status instead of disappearing from copied JSON.
+   - 2026-06-21 proof update: Jarvis 0.1.493 adds a second loose-token firewall
+     for model/router fragments such as `selected tool outlook.visible_summary`,
+     `status_text: ...`, `final_result`, audit ids, and dotted tool ids used as
+     prose. The live bundle was rebuilt and verified on commit `419faec`; full
+     `tests.test_safety` passed `1131/1131`, and post-commit
+     `scripts/verify_safe.py` passed `106/106`.
 
 3. Open/unknown: stronger browser/computer-control tools must avoid destructive
    actions unless confirmed.
