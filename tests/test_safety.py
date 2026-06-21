@@ -6749,6 +6749,10 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Physical audio proof", workboard)
         self.assertIn("Not ready for physical speaker/microphone capture", workboard)
         self.assertIn("Strict physical-capture gates fail closed", workboard)
+        self.assertIn("Browser safety", workboard)
+        self.assertIn("must not launch Chrome or create fresh Chrome windows by default", workboard)
+        self.assertIn("JARVIS_ALLOW_CHROME_WINDOW_CREATION=1", workboard)
+        self.assertIn("newly-created Teams windows/tabs by recorded window or tab id", workboard)
         self.assertIn("Time checkpoint", workboard)
         self.assertIn("Return point", workboard)
         self.assertIn("JARVIS_BUG_BACKLOG.md plus .memory.md", workboard)
@@ -7189,6 +7193,13 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Not ready for physical speaker/microphone capture", detail)
         self.assertIn("loopback_device_missing", detail)
         self.assertIn("Strict physical-capture gates fail closed", detail)
+
+    def test_workboard_browser_safety_detail_names_no_fresh_windows_rule(self):
+        detail = render_overnight_status.workboard_browser_safety_detail()
+
+        self.assertIn("must not launch Chrome or create fresh Chrome windows by default", detail)
+        self.assertIn("JARVIS_ALLOW_CHROME_WINDOW_CREATION=1", detail)
+        self.assertIn("recorded window or tab id", detail)
 
     def test_render_overnight_status_script_adds_project_root_to_import_path(self):
         source = (PROJECT_ROOT / "scripts" / "render_overnight_status.py").read_text(encoding="utf-8")

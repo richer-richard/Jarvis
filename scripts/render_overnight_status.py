@@ -2238,6 +2238,10 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
             physical_detail,
         ),
         (
+            "Browser safety",
+            workboard_browser_safety_detail(),
+        ),
+        (
             "Time checkpoint",
             f"Last rendered {context['updated']}; check the clock before starting each new lane and before any promised morning report.",
         ),
@@ -2260,6 +2264,14 @@ def workboard_physical_audio_detail(physical: dict[str, Any]) -> str:
     if label:
         return f"Not ready for physical speaker/microphone capture: {label}. Strict physical-capture gates fail closed until a real loopback route is available."
     return "Not generated yet; strict physical-capture gates fail closed until a real loopback route is available."
+
+
+def workboard_browser_safety_detail() -> str:
+    return (
+        "Chrome/Teams probes must not launch Chrome or create fresh Chrome windows by default; "
+        "fresh-window recovery requires JARVIS_ALLOW_CHROME_WINDOW_CREATION=1, and cleanup only "
+        "closes newly-created Teams windows/tabs by recorded window or tab id."
+    )
 
 
 def workboard_current_subtask(context: dict[str, Any]) -> str:
