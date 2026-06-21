@@ -594,6 +594,7 @@ def latest_teams_live_navigation_diagnostic() -> str:
             execution = proof.get("visible_navigation_execution")
             steps = proof.get("visible_navigation_execution_steps")
             age = format_uptime(time_since(report.stat().st_mtime))
+            stale_text = full_loop_artifact_stale_text(data)
             if not isinstance(execution, dict) or not execution:
                 sequence = proof.get("visible_navigation_sequence")
                 labels = [
@@ -604,7 +605,7 @@ def latest_teams_live_navigation_diagnostic() -> str:
                     and str(step.get("label") or step.get("key") or "").strip()
                 ] if isinstance(sequence, list) else []
                 label_text = f"; next sequence {' -> '.join(labels)}" if labels else ""
-                return f"not exercised in latest Teams artifact{label_text}; {report.relative_to(PROJECT_ROOT)}, age {age}"
+                return f"not exercised in latest Teams artifact{label_text}; {report.relative_to(PROJECT_ROOT)}, age {age}{stale_text}"
             status = str(execution.get("status") or "unknown").strip() or "unknown"
             point = execution.get("point") if isinstance(execution.get("point"), dict) else {}
             point_text = f" at ({point.get('x')}, {point.get('y')})" if point else ""
@@ -621,7 +622,15 @@ def latest_teams_live_navigation_diagnostic() -> str:
                 action = f"stopped as {action_prefix}{status}{point_text}{coordinate_text}"
             step_count = len(steps) if isinstance(steps, list) else 0
             step_text = teams_navigation_steps_text(steps) if isinstance(steps, list) else ""
-            return f"{action}; {step_count} step(s){step_text}; {report.relative_to(PROJECT_ROOT)}, age {age}"
+            return f"{action}; {step_count} step(s){step_text}; {report.relative_to(PROJECT_ROOT)}, age {age}{stale_text}"
+    return ""
+
+
+def full_loop_artifact_stale_text(data: dict[str, Any]) -> str:
+    source_commit = str(data.get("source_commit") or "").strip()
+    head_commit = git_commit_short()
+    if source_commit and head_commit and source_commit != head_commit:
+        return f", stale for HEAD {head_commit} (artifact ran on {source_commit})"
     return ""
 
 

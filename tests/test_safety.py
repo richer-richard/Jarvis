@@ -193,6 +193,7 @@ from scripts.morning_status import (
     pre_build_gate_status_label,
     pre_build_gate_teams_blocker,
     pre_build_gate_summary,
+    full_loop_artifact_stale_text,
     print_report_surfaces,
     print_latest_pre_build_gate,
     print_latest_context_smoke,
@@ -28498,6 +28499,46 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("All teams -> requested class -> Assignments", diagnostic)
         self.assertIn("20260620-104341", diagnostic)
         self.assertNotIn("navigation_loop_prevented", diagnostic)
+
+    def test_morning_status_latest_teams_diagnostic_marks_stale_source_commit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report_dir = root / "runtime" / "full_loop_regression" / "20260620-104341"
+            report_dir.mkdir(parents=True)
+            (report_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "source_commit": "oldgate",
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "action_proof": {
+                                    "visible_navigation_sequence": [
+                                        {"label": "All teams"},
+                                        {"label": "requested class"},
+                                        {"label": "Assignments"},
+                                    ]
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="newhead"):
+                diagnostic = latest_teams_live_navigation_diagnostic()
+
+        self.assertIn("not exercised in latest Teams artifact", diagnostic)
+        self.assertIn("stale for HEAD newhead", diagnostic)
+        self.assertIn("artifact ran on oldgate", diagnostic)
+
+    def test_morning_status_full_loop_artifact_stale_text_ignores_missing_or_current_commit(self):
+        with patch("scripts.morning_status.git_commit_short", return_value="head"):
+            self.assertEqual(full_loop_artifact_stale_text({}), "")
+            self.assertEqual(full_loop_artifact_stale_text({"source_commit": "head"}), "")
+            self.assertIn("stale for HEAD head", full_loop_artifact_stale_text({"source_commit": "old"}))
 
     def test_render_status_latest_teams_diagnostic_prefers_fresh_not_exercised_artifact(self):
         data = {

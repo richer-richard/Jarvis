@@ -266,3 +266,4 @@
 - [x] Prevented partial pre-build gates such as `--skip-full-loop` from replacing canonical `runtime/pre_build_gate/latest.json` release proof. Partial gates now record `partial_gate`, list skipped steps, keep timestamped artifacts only, and full `tests.test_safety` passed `1108/1108`.
 - [x] Made morning status label stale or diagnostic pre-build gates in the headline so old/partial proof cannot be mistaken for current release proof. Focused status tests passed and full `tests.test_safety` passed `1109/1109`.
 - [x] Labeled Chrome cleanup warnings from stale pre-build gates as stale too, matching Teams/Music blocker wording. Focused status test passed and full `tests.test_safety` passed `1109/1109`.
+- [x] Marked latest Teams live-navigation diagnostics as stale when their full-loop artifact source commit differs from current `HEAD`. Focused diagnostics tests passed and full `tests.test_safety` passed `1111/1111`.
