@@ -11,8 +11,8 @@
 - [x] Fix requirement-audit summary so completed proof notes are not listed as remaining work.
 - [x] Mirror stale/non-canonical pre-build gate wording in the master HTML report so stale release proof is not presented as current.
 - [x] Mirror stale safe-verifier wording in morning status and the master HTML report so green verifier proof cannot be mistaken for current HEAD proof.
-- [ ] Overnight protocol active from 2026-06-20 22:02 CST with unknown wake-up time: keep working until Leo explicitly says he woke up; do not ask questions, do not request secret code, skip approval-gated/risky work, and keep safe non-interactive progress moving.
-- [ ] Use overnight protocol with no fixed wake-up time: keep working until Leo says he woke up; do not wait for questions, secret-code prompts, or interactive approvals.
+- [x] Overnight protocol from 2026-06-20 is no longer active because Leo explicitly said he is awake on 2026-06-21 around 13:00 CST; do not produce halt or morning reports unless Leo directly asks for one.
+- [x] Removed the stale "keep working until Leo says he woke up" cue from the active queue; continue normal Jarvis hardening with time checks and concise progress updates.
 - [x] Refresh current proof surfaces after the canonical app rebuild and fresh safe verification.
 - [x] Run full `tests.test_safety` for the Hey Jarvis restart-churn fix and commit it if green.
 - [x] Expand Chrome/Jarvis test-tab cleanup so overnight-created local report, workboard, wake-audition, and old LocalOS music tabs are identifiable without touching personal tabs.
