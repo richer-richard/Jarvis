@@ -8429,6 +8429,21 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result.summary, "Timed out after 1s")
         self.assertLess(result.duration_seconds, 3)
 
+    def test_verify_safe_check_result_json_normalizes_bytes(self):
+        result = verify_safe.CheckResult(
+            name="temporary_app_self_test",
+            passed=False,
+            summary=b"Timed out",
+            stdout_tail=b"partial stdout",
+            stderr_tail=b"partial stderr",
+        )
+
+        payload = verify_safe.check_result_to_json(result)
+        json.dumps(payload)
+        self.assertEqual(payload["summary"], "Timed out")
+        self.assertEqual(payload["stdout_tail"], "partial stdout")
+        self.assertEqual(payload["stderr_tail"], "partial stderr")
+
     def test_verify_safe_run_command_reports_exit_code_and_missing_text(self):
         completed = subprocess.CompletedProcess(
             args=["swift", "run", "jarvis-menu-bar", "--self-test"],
@@ -28627,7 +28642,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("stale for HEAD head", blocker)
         self.assertNotIn("Old generic", blocker)
 
-    def test_morning_status_prints_music_blocker(self):
+    def test_morning_status_prints_music_warning_for_warning_level_music_proof(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             gate_dir = root / "runtime" / "pre_build_gate"
@@ -28679,8 +28694,57 @@ class RuntimeSurfaceTests(unittest.TestCase):
                 print_latest_pre_build_gate()
 
         printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
-        self.assertIn("Music blocker: Music playback proof is warning", printed)
+        self.assertIn("Music warning: Music playback proof is warning", printed)
         self.assertIn("Chrome media inspection is blocked", printed)
+
+    def test_morning_status_prints_music_blocker_for_failed_music_proof(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            gate_dir = root / "runtime" / "pre_build_gate"
+            report_path = root / "runtime" / "full_loop_regression" / "summary.json"
+            gate_dir.mkdir(parents=True)
+            report_path.parent.mkdir(parents=True)
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "music_play_waving_through_window",
+                                "status": "failed",
+                                "warnings": ["Music did not start."],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (gate_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "passed": 0,
+                        "total": 1,
+                        "source_commit": "head",
+                        "results": [
+                            {
+                                "id": "full_loop_regression",
+                                "ok": False,
+                                "stdout_tail": f"Report: {report_path}\nmusic_play_waving_through_window: failed",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="head"), \
+                 patch("builtins.print") as print_mock:
+                print_latest_pre_build_gate()
+
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Music blocker: Music playback proof is failed", printed)
+        self.assertIn("Music did not start", printed)
 
     def test_morning_status_pre_build_gate_teams_blocker_summary(self):
         with tempfile.TemporaryDirectory() as temp_dir:

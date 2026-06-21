@@ -263,9 +263,10 @@ def print_latest_pre_build_gate() -> None:
     if music_blocker:
         standalone_music = newer_standalone_music_blocker(data)
         if standalone_music:
-            print(f"Latest standalone Music blocker: {standalone_music}")
+            print(f"Latest standalone {music_issue_label_from_text(standalone_music)}: {standalone_music}")
         else:
-            prefix = "Last known Music blocker from stale gate" if stale_suffix else "Music blocker"
+            issue_label = music_issue_label_from_text(music_blocker)
+            prefix = f"Last known {issue_label} from stale gate" if stale_suffix else issue_label
             print(f"{prefix}: {music_blocker}")
     cleanup_warning = pre_build_gate_cleanup_warning(data)
     if cleanup_warning:
@@ -596,6 +597,10 @@ def music_blocker_from_full_loop_item(item: dict[str, Any]) -> str:
     if isinstance(new_media, list) and not new_media:
         parts.append("no new detected media surface remained")
     return "; ".join(dict.fromkeys(parts)) + "."
+
+
+def music_issue_label_from_text(text: str) -> str:
+    return "Music warning" if "Music playback proof is warning" in str(text) else "Music blocker"
 
 
 def teams_deeplink_route_status_text(item: dict[str, Any]) -> str:

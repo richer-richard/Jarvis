@@ -72,6 +72,17 @@
 
 ## Completed This Turn
 
+- [x] Made `scripts/morning_status.py` distinguish Music warnings from Music
+  blockers. Warning-level Music proof, such as native Music playback/cleanup
+  succeeding while Chrome media inspection is blocked, now prints `Music warning`
+  instead of `Music blocker`; failed Music proof still prints `Music blocker`.
+  Focused status tests passed, live status shows `Latest standalone Music
+  warning`, and full `tests.test_safety` passed `1138/1138`.
+- [x] Fixed a verifier report-writing regression exposed by refreshing proof
+  after the Music wording commit: timeout results that contain byte strings now
+  serialize to JSON-safe text instead of crashing `scripts/verify_safe.py` at
+  report write time. Focused serialization tests passed, and full
+  `tests.test_safety` passed `1139/1139`.
 - [x] Hardened `scripts/verify_safe.py` against verifier freezes found after
   the speech-emergency report commit. Temporary app self-tests and isolated
   Swift host probes now use a process-group hard timeout so pipe-holding child

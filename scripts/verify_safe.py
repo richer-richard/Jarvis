@@ -446,6 +446,13 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def check_result_to_json(result: CheckResult) -> dict[str, Any]:
+    data = asdict(result)
+    for key in ("summary", "stdout_tail", "stderr_tail"):
+        data[key] = ensure_text(data.get(key))
+    return data
+
+
 def speech_text_matches_reply(reply: Any, speech_text: Any) -> bool:
     """Return true when the auditable TTS text matches the visible reply."""
     reply_text = normalize_speech_check_text(reply)
@@ -2018,7 +2025,7 @@ def run_checks() -> dict[str, Any]:
         "generated_at": started_at,
         "completed_at": time.time(),
         "duration_seconds": round(time.monotonic() - started, 3),
-        "results": [asdict(result) for result in results],
+        "results": [check_result_to_json(result) for result in results],
     }
 
 
