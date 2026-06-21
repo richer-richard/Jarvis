@@ -9245,6 +9245,29 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("in Music", result["reply"])
         open_mock.assert_called_once()
 
+    def test_music_app_bridge_play_reports_empty_music_library(self):
+        bridge_responses = iter([
+            {"ok": True, "app": "Music"},
+            {"ok": False, "error": {"code": "song_not_found", "message": "No song matched."}},
+            {"ok": True, "songCount": 0, "libraryPath": "/Users/leo/Music/Music Library"},
+        ])
+        with patch("jarvis.tools._music_app_bridge_request", side_effect=lambda *_args, **_kwargs: next(bridge_responses)):
+            result = jarvis_tools._music_app_bridge_play(
+                query="Waving Through A Window",
+                user_request="play Waving Through A Window",
+                from_your_pick=False,
+                started_at=time.monotonic(),
+            )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["status"], "music_app_not_playing")
+        self.assertEqual(result["playback_confirmation"], "music_app_library_empty")
+        self.assertIn("library appears empty", result["reply"])
+        details = jarvis_tools._music_app_bridge_failure_details(result)
+        self.assertEqual(details["permission_issue"], "music_app_library_empty")
+        self.assertIn("shared MP3 folder", " ".join(details["next_steps"]))
+
     def test_music_app_bridge_play_resumes_when_song_is_selected_but_paused(self):
         requested_song = {
             "id": "song-waving",
@@ -9273,6 +9296,46 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["playback_confirmation"], "playing")
         self.assertEqual(result["music_app_bridge"]["resume"]["message"], "Resumed")
         self.assertIn(("POST", "/resume"), [call.args[:2] for call in bridge_mock.call_args_list])
+
+    def test_music_app_bridge_play_waits_for_delayed_playback_confirmation(self):
+        requested_song = {
+            "id": "song-waving",
+            "title": "Dear Evan Hansen | 2017 Tony Awards",
+            "artist": "Dear Evan Hansen",
+        }
+        bridge_responses = iter([
+            {"ok": True, "app": "Music"},
+            {"ok": True, "song": requested_song},
+            {"ok": True, "playing": False, "nowPlaying": None, "currentTime": 0},
+            {
+                "ok": True,
+                "playing": True,
+                "currentTime": 1.2,
+                "nowPlaying": {
+                    **requested_song,
+                    "fileName": "Dear Evan Hansen 2017 Tony Awards.mp3",
+                },
+            },
+        ])
+        with patch("jarvis.tools._music_app_bridge_request", side_effect=lambda *_args, **_kwargs: next(bridge_responses)) as bridge_mock, \
+             patch("jarvis.tools.time.sleep") as sleep_mock:
+            result = jarvis_tools._music_app_bridge_play(
+                query="Waving Through A Window",
+                user_request="play Waving Through A Window",
+                from_your_pick=False,
+                started_at=time.monotonic(),
+            )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["status"], "playing")
+        self.assertEqual(result["played_by"], "music_app")
+        self.assertEqual(result["playback_confirmation"], "playing")
+        self.assertGreaterEqual(
+            [call.args[:2] for call in bridge_mock.call_args_list].count(("GET", "/playback-state")),
+            2,
+        )
+        sleep_mock.assert_called()
 
     def test_music_app_bridge_play_rejects_wrong_current_track(self):
         bridge_responses = iter([

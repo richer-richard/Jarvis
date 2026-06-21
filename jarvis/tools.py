@@ -3552,6 +3552,17 @@ def _localos_music_connection_blocker_details(
 
 def _music_app_bridge_failure_details(attempt: dict[str, Any]) -> dict[str, Any]:
     confirmation = str(attempt.get("playback_confirmation") or "music_app_not_playing")
+    if confirmation == "music_app_library_empty":
+        return {
+            "permission_issue": "music_app_library_empty",
+            "requires_user_action": False,
+            "next_steps": [
+                "Open Music and point its library at the shared MP3 folder.",
+                "Refresh the Music library, then try the request again.",
+                "Jarvis did not start any hidden fallback audio.",
+            ],
+            "spoken_summary": "Music is connected, but its library appears empty.",
+        }
     if confirmation == "wrong_track_playing":
         return {
             "permission_issue": "music_app_wrong_track_playing",
@@ -3744,6 +3755,41 @@ def _music_app_bridge_same_song(left: dict[str, Any], right: dict[str, Any]) -> 
     return bool(left_identity and right_identity and left_identity == right_identity)
 
 
+def _music_app_bridge_wait_for_playback(
+    *,
+    requested_song: dict[str, Any],
+    from_your_pick: bool,
+    timeout_seconds: float = 4.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    last_playback: dict[str, Any] = {}
+    while True:
+        playback = _music_app_bridge_request("GET", "/playback-state", timeout=2.0)
+        if isinstance(playback, dict):
+            last_playback = playback
+        playback_song = playback.get("nowPlaying") if isinstance(playback.get("nowPlaying"), dict) else {}
+        song = playback_song if playback_song else requested_song
+        playing = playback.get("ok") is True and playback.get("playing") is True and isinstance(song, dict)
+        current_track_matches_request = bool(
+            playing
+            and (
+                from_your_pick
+                or not requested_song
+                or _music_app_bridge_same_song(requested_song, song)
+            )
+        )
+        if current_track_matches_request:
+            return playback
+        if playback.get("ok") is True and isinstance(playback_song, dict):
+            if playback.get("playing") is True:
+                return playback
+            if requested_song and _music_app_bridge_same_song(requested_song, playback_song):
+                return playback
+        if time.monotonic() >= deadline:
+            return last_playback
+        time.sleep(0.25)
+
+
 def _music_app_bridge_play(
     *,
     query: str | None,
@@ -3782,17 +3828,41 @@ def _music_app_bridge_play(
         elif clean_query:
             play = _music_app_bridge_request("POST", "/play", query={"query": clean_query}, timeout=4.0)
     if play.get("ok") is not True:
+        status_probe: dict[str, Any] = {}
+        if play_error.get("code") == "song_not_found":
+            status_probe = _music_app_bridge_request("GET", "/status", timeout=2.0)
+            try:
+                song_count = int(status_probe.get("songCount") or 0)
+            except (TypeError, ValueError):
+                song_count = -1
+            if status_probe.get("ok") is True and song_count == 0:
+                return {
+                    "status": "music_app_not_playing",
+                    "played_by": "none",
+                    "playback_confirmation": "music_app_library_empty",
+                    "music_app_bridge": {
+                        "health": health,
+                        "play": play,
+                        "status": status_probe,
+                        "startup": startup,
+                    },
+                    "reply": "Music is connected, but its library appears empty. I did not start another hidden music player.",
+                }
         return {
             "status": "music_app_not_playing",
             "music_app_bridge": {
                 "health": health,
                 "play": play,
+                "status": status_probe,
                 "startup": startup,
             },
         }
-    time.sleep(0.9)
-    playback = _music_app_bridge_request("GET", "/playback-state", timeout=2.0)
     requested_song = play.get("song") if isinstance(play.get("song"), dict) else {}
+    playback = _music_app_bridge_wait_for_playback(
+        requested_song=requested_song,
+        from_your_pick=from_your_pick,
+        timeout_seconds=4.0,
+    )
     playback_song = playback.get("nowPlaying") if isinstance(playback.get("nowPlaying"), dict) else {}
     song = playback_song if playback_song else requested_song
     playing = playback.get("ok") is True and playback.get("playing") is True and isinstance(song, dict)

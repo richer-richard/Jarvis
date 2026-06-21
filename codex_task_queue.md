@@ -48,6 +48,7 @@
 - [x] Prototype Apple Speech/Dictation as Jarvis's primary STT lane: use macOS Speech framework if possible, compare transcript quality/latency against the current local STT on the same recorded prompts, and keep local STT as fallback until Apple dictation is live-proven.
 - [x] Add a reusable no-prompt Apple Speech STT probe and surface its latest result in `voice.stt_candidates`.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
+- [x] Harden native Music bridge playback confirmation so cold-start/delayed playback is polled before Jarvis claims Music did not start.
 - [x] Create a local HTML page of hard, impressive Jarvis capability questions, serve it through the Jarvis worker, and verify it stays populated.
 - [x] Persist the read-only physical audio loopback preflight as a stable latest artifact and expose it in the report support files.
 - [x] Print the Capability Questions file path and loopback URL in `scripts/morning_status.py` breadcrumbs.
