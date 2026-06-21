@@ -1496,17 +1496,41 @@ def latest_pre_build_gate() -> dict[str, Any]:
     status = str(data.get("status") or ("passed" if data.get("ok") else "failed"))
     path = str(latest.relative_to(PROJECT_ROOT)) if latest.is_relative_to(PROJECT_ROOT) else str(latest)
     warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    label = pre_build_gate_report_label(data, status=status, passed=passed, total=total)
     return {
         "ok": bool(data.get("ok")) and status == "passed",
         "path": path,
-        "label": f"{status}, {passed}/{total} passed" if total else status or "empty",
+        "label": label,
         "status": status,
         "passed": passed,
         "total": total,
         "source_commit": str(data.get("source_commit") or ""),
+        "canonical_latest": data.get("canonical_latest"),
+        "partial_gate": bool(data.get("partial_gate")),
+        "stale_text": pre_build_gate_report_stale_text(data),
         "warnings": [str(item) for item in warnings if str(item).strip()],
         "teams_blocker": latest_pre_build_gate_teams_blocker(data),
     }
+
+
+def pre_build_gate_report_label(data: dict[str, Any], *, status: str, passed: int, total: int) -> str:
+    base = f"{status}, {passed}/{total} passed" if total else status or "empty"
+    stale_text = pre_build_gate_report_stale_text(data)
+    if stale_text:
+        return f"{base} ({stale_text})"
+    if data.get("canonical_latest") is False or data.get("partial_gate"):
+        return f"{base} (non-canonical diagnostic)"
+    return base
+
+
+def pre_build_gate_report_stale_text(data: dict[str, Any]) -> str:
+    source_commit = str(data.get("source_commit") or "").strip()
+    head_commit = git(["rev-parse", "--short", "HEAD"])
+    if source_commit and head_commit and source_commit != head_commit:
+        return f"stale for HEAD {head_commit} (gate ran on {source_commit})"
+    if not source_commit:
+        return "source commit unknown"
+    return ""
 
 
 def latest_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:

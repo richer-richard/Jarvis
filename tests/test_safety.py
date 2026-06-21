@@ -6724,6 +6724,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("English-first", report)
         self.assertIn("empty_after_sanitization", report)
         self.assertIn("suppressed-speech previews", report)
+
         proof = render_overnight_status.proof_items_with_verification(
             {"label": "91/91 passed"},
             regression_matrix={
@@ -7105,6 +7106,58 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Chrome cleanup helper now targets Jarvis report", shipped)
         self.assertIn("speech emergency status visible", shipped)
         self.assertIn("no Shut Up menu control is reachable", shipped)
+
+    def test_render_status_pre_build_gate_label_marks_stale_head(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            gate_dir = root / "runtime" / "pre_build_gate"
+            gate_dir.mkdir(parents=True)
+            (gate_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "failed",
+                        "passed": 2,
+                        "total": 4,
+                        "source_commit": "oldgate",
+                        "canonical_latest": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(render_overnight_status, "PROJECT_ROOT", root), \
+                 patch("scripts.render_overnight_status.git", return_value="newhead"):
+                gate = render_overnight_status.latest_pre_build_gate()
+
+        self.assertEqual(
+            gate["label"],
+            "failed, 2/4 passed (stale for HEAD newhead (gate ran on oldgate))",
+        )
+        proof_text = render_overnight_status.current_best_proof_text(
+            {
+                "verification": {"label": "106/106 passed"},
+                "pre_build_gate": gate,
+                "physical_audio": {},
+            },
+            python_tests="1113/1113",
+            full_loop_text="",
+            latency_text="",
+            matrix_text="",
+        )
+        self.assertIn("Current pre-build gate: failed, 2/4 passed", proof_text)
+        self.assertIn("stale for HEAD newhead", proof_text)
+
+    def test_render_status_pre_build_gate_label_marks_noncanonical_diagnostic(self):
+        with patch("scripts.render_overnight_status.git", return_value="head"):
+            label = render_overnight_status.pre_build_gate_report_label(
+                {"canonical_latest": False, "partial_gate": True, "source_commit": "head"},
+                status="passed",
+                passed=1,
+                total=1,
+            )
+
+        self.assertEqual(label, "passed, 1/1 passed (non-canonical diagnostic)")
 
     def test_render_overnight_status_reads_latest_no_prompt_verification(self):
         with tempfile.TemporaryDirectory() as temp_dir:
