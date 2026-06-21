@@ -7118,6 +7118,65 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Teams assignment is not_inspected", text)
         self.assertNotIn("current Teams pre-build blocker", text)
 
+    def test_render_overnight_status_local_teams_blocker_keeps_deeplink_summary_private(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "summary.json"
+            voice_report_path = Path(temp_dir) / "voice-loop-report.json"
+            voice_report_path.write_text(
+                json.dumps(
+                    {
+                        "result": {
+                            "command_response_result": {
+                                "teams_deeplink_route_status": "no_prompt_match",
+                                "teams_deeplink_row_count": 3,
+                                "uses_teams_deeplink_first": False,
+                                "teams_page_inspection_status": "chrome_handoff_then_native_visible_read",
+                                "url": "https://teams.microsoft.com/private",
+                                "selected_teams_deeplink": {"class_id": "private-class"},
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "voice_loop_report": str(voice_report_path),
+                                "action_proof": {
+                                    "completion_status": "not_inspected",
+                                    "browser_focus_not_verified": True,
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            blocker = render_overnight_status.local_pre_build_gate_teams_blocker(
+                {
+                    "results": [
+                        {
+                            "id": "full_loop_regression",
+                            "stdout_tail": f"Report: {report_path}\nteams_music_assignment_honesty: warning",
+                        }
+                    ]
+                }
+            )
+
+        self.assertIn("Teams assignment is not_inspected", blocker)
+        self.assertIn("Teams deep-link inventory had no prompt match across 3 Teams history row(s)", blocker)
+        self.assertIn("fell back instead of opening an unrelated class", blocker)
+        self.assertIn("inspection lane chrome_handoff_then_native_visible_read", blocker)
+        self.assertIn("Chrome did not foreground Teams before OCR", blocker)
+        self.assertNotIn("private-class", blocker)
+        self.assertNotIn("teams.microsoft.com/private", blocker)
+
     def test_render_overnight_status_git_dirty_unknown_on_status_failure(self):
         with patch("scripts.render_overnight_status.git_status_porcelain", return_value=(False, "")):
             self.assertEqual(render_overnight_status.git_dirty_label(), "unknown")

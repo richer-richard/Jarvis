@@ -1615,16 +1615,9 @@ def local_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             parts.append("Microsoft sign-in gate is visible in Chrome")
         if proof.get("chrome_page_read_blocked"):
             parts.append("Chrome page-read is blocked")
-        deeplink_reason = str(proof.get("deeplink_fallback_reason") or "").strip()
-        history_count = proof.get("teams_history_row_count")
-        if deeplink_reason:
-            count_text = f" across {history_count} Teams history row(s)" if history_count not in (None, "") else ""
-            parts.append(f"Teams deep-link inventory had {deeplink_reason}{count_text}")
-        if proof.get("fell_back_from_deeplink"):
-            parts.append("Jarvis fell back instead of opening an unrelated class")
-        lane = str(proof.get("inspection_lane") or "").strip()
-        if lane:
-            parts.append(f"inspection lane {lane}")
+        deeplink_status = local_teams_deeplink_route_status_text(item)
+        if deeplink_status:
+            parts.append(deeplink_status)
         if proof.get("browser_focus_not_verified"):
             active_title = str(proof.get("browser_open_active_title") or "").strip()
             active_url = str(proof.get("browser_open_active_url") or "").strip()
@@ -1639,6 +1632,36 @@ def local_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
             parts.append(f"Chrome did not foreground Teams before OCR{f' ({focus_detail})' if focus_detail else ''}")
         return "; ".join(parts) + "."
     return ""
+
+
+def local_teams_deeplink_route_status_text(item: dict[str, Any]) -> str:
+    voice_report_raw = str(item.get("voice_loop_report") or "").strip()
+    if not voice_report_raw:
+        return ""
+    voice_report = Path(voice_report_raw)
+    if not voice_report.is_absolute():
+        voice_report = PROJECT_ROOT / voice_report
+    try:
+        data = json.loads(voice_report.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    result = data.get("result") if isinstance(data.get("result"), dict) else {}
+    summary = result.get("command_response_result") if isinstance(result.get("command_response_result"), dict) else {}
+    route_status = str(summary.get("teams_deeplink_route_status") or "").strip()
+    if not route_status:
+        return ""
+    row_count = summary.get("teams_deeplink_row_count")
+    try:
+        row_count_text = f" across {int(row_count)} Teams history row(s)"
+    except (TypeError, ValueError):
+        row_count_text = ""
+    inspection_status = str(summary.get("teams_page_inspection_status") or "").strip()
+    inspection_text = f"; inspection lane {inspection_status}" if inspection_status else ""
+    if summary.get("uses_teams_deeplink_first"):
+        return f"Teams deep-link route is {route_status}{row_count_text}{inspection_text}"
+    if route_status == "no_prompt_match":
+        return f"Teams deep-link inventory had no prompt match{row_count_text}; Jarvis fell back instead of opening an unrelated class{inspection_text}"
+    return f"Teams deep-link route is {route_status}{row_count_text}{inspection_text}"
 
 
 def latest_physical_audio_preflight() -> dict[str, Any]:
