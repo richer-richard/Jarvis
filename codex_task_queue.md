@@ -77,8 +77,8 @@
   `index.html`, and `capability_questions.html` after writing its timestamped
   and stable `latest.json` proof. Focused verifier tests passed, full
   `tests.test_safety` passed `1141/1141`, live `scripts/verify_safe.py` passed
-  `106/106`, and the rendered report contains
-  `verify-safe-20260621-154719.json`.
+  `106/106`, and the rendered report now contains the latest safe-verifier
+  artifact from `runtime/verification/latest.json`.
 - [x] Made `.memory.md` stop pinning the current safe verifier to a
   stale-prone timestamped filename. It now points future work to
   `runtime/verification/latest.json` / `scripts/morning_status.py`, and the

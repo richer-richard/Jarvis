@@ -7225,8 +7225,11 @@ class VerifySafeScriptTests(unittest.TestCase):
 
     def test_project_memory_current_live_state_is_not_stale(self):
         memory = (PROJECT_ROOT / ".memory.md").read_text(encoding="utf-8")
+        current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
+        self.assertIn("runtime/verification/latest.json", current_focus)
+        self.assertNotIn("verify-safe-20260621-132210.json", current_focus)
         self.assertIn("Jarvis 0.1.494 build 494", section)
         self.assertIn("runtime/verification/latest.json", section)
         self.assertIn("passed 106/106", section)
