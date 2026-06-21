@@ -1739,14 +1739,14 @@ def run_checks() -> dict[str, Any]:
                     [PYTHON, "scripts/morning_status.py"],
                     env={"JARVIS_BASE_URL": active_base_url},
                     timeout=30,
-                    expect="Latest verification:",
+                    expect="Latest verification",
                 ),
                 run_command(
                     "morning_status_base_url_command",
                     [PYTHON, "scripts/morning_status.py"],
                     env={"JARVIS_BASE_URL": f"{active_base_url}/api/command/"},
                     timeout=30,
-                    expect="Latest verification:",
+                    expect="Latest verification",
                 ),
                 run_command("swift_build", ["swift", "build", "--package-path", "swift-shell"], timeout=180),
                 run_command(

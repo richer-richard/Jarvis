@@ -206,7 +206,9 @@ from scripts.morning_status import (
     time_since,
     verification_action,
     verification_highlights,
+    verification_stale_suffix,
     verification_window_probe,
+    latest_verification_status_label,
     wake_threshold_summary,
 )
 
@@ -7678,6 +7680,34 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertTrue(result["window_probe"]["session_locked"])
         self.assertTrue(result["window_probe"]["panel_is_visible"])
         self.assertEqual(result["window_probe"]["window_count"], 3)
+
+    def test_render_overnight_status_latest_verification_marks_stale_source_commit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            verification_dir = root / "runtime" / "verification"
+            verification_dir.mkdir(parents=True)
+            report_path = verification_dir / "verify-safe-20260617-010203.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "source_commit": "oldverify",
+                        "results": [{"name": "python_unit_tests", "passed": True}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.render_overnight_status.PROJECT_ROOT", root), \
+                 patch("scripts.render_overnight_status.git", return_value="newhead"):
+                result = render_overnight_status.latest_verification()
+
+        self.assertEqual(
+            result["label"],
+            "1/1 passed (stale for HEAD newhead (verifier ran on oldverify))",
+        )
+        items = render_overnight_status.proof_items_with_verification(result)
+        self.assertTrue(any("stale for HEAD newhead" in item for item in items))
 
     def test_render_overnight_status_proof_mentions_locked_window_probe(self):
         items = render_overnight_status.proof_items_with_verification(
@@ -27784,6 +27814,27 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIsNone(verification_action(True, MORNING_MAX_VERIFICATION_AGE_SECONDS))
         self.assertIn("older than 12 hours", verification_action(True, MORNING_MAX_VERIFICATION_AGE_SECONDS + 1) or "")
         self.assertIn("failed", verification_action(False, 1) or "")
+
+    def test_morning_status_marks_verification_stale_for_head(self):
+        with patch("scripts.morning_status.git_commit_short", return_value="newhead"):
+            suffix = verification_stale_suffix({"source_commit": "oldverify"})
+
+        self.assertIn("stale for HEAD newhead", suffix)
+        self.assertIn("verifier ran on oldverify", suffix)
+        self.assertEqual(verification_stale_suffix({"source_commit": ""}), ", source commit unknown")
+
+    def test_morning_status_labels_stale_verification(self):
+        self.assertEqual(
+            latest_verification_status_label(
+                stale_suffix=", stale for HEAD newhead (verifier ran on oldverify)"
+            ),
+            "Latest verification (stale; not current HEAD)",
+        )
+        self.assertEqual(
+            latest_verification_status_label(stale_suffix=", source commit unknown"),
+            "Latest verification (source unknown)",
+        )
+        self.assertEqual(latest_verification_status_label(stale_suffix=""), "Latest verification")
 
     def test_morning_status_latency_smoke_summary(self):
         summary = latency_smoke_summary(

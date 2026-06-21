@@ -218,7 +218,9 @@ def print_latest_verification() -> None:
     timestamp = verification_timestamp(latest, data)
     age_seconds = time_since(timestamp)
     age = format_uptime(age_seconds)
-    print(f"Latest verification: {state} {passed}/{total} ({latest.relative_to(PROJECT_ROOT)}, age {age})")
+    stale_suffix = verification_stale_suffix(data)
+    label = latest_verification_status_label(stale_suffix=stale_suffix)
+    print(f"{label}: {state} {passed}/{total} ({latest.relative_to(PROJECT_ROOT)}, age {age}{stale_suffix})")
     action = verification_action(bool(data.get("ok")), age_seconds)
     if action:
         print(f"Action: {action}")
@@ -325,6 +327,24 @@ def pre_build_gate_stale_suffix(data: dict[str, Any]) -> str:
     if not source_commit:
         return ", source commit unknown"
     return ""
+
+
+def verification_stale_suffix(data: dict[str, Any]) -> str:
+    source_commit = str(data.get("source_commit") or "").strip()
+    head_commit = git_commit_short()
+    if source_commit and head_commit and source_commit != head_commit:
+        return f", stale for HEAD {head_commit} (verifier ran on {source_commit})"
+    if not source_commit:
+        return ", source commit unknown"
+    return ""
+
+
+def latest_verification_status_label(*, stale_suffix: str) -> str:
+    if stale_suffix:
+        if "stale for HEAD" in stale_suffix:
+            return "Latest verification (stale; not current HEAD)"
+        return "Latest verification (source unknown)"
+    return "Latest verification"
 
 
 def git_commit_short() -> str:

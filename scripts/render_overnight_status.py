@@ -841,8 +841,11 @@ def proof_items_with_verification(
 ) -> list[str]:
     items = list(PROOF_ITEMS)
     if verification.get("path"):
+        verification_label = str(verification.get("label") or "").strip()
+        if not verification_label:
+            verification_label = f"{verification.get('passed', 0)}/{verification.get('total', 0)}"
         items.append(
-            f"Latest verifier artifact: {verification['path']} with {verification['passed']}/{verification['total']} checks."
+            f"Latest verifier artifact: {verification['path']} with {verification_label} checks."
         )
     window_probe = verification.get("window_probe") if isinstance(verification.get("window_probe"), dict) else {}
     if window_probe.get("summary"):
@@ -1018,14 +1021,35 @@ def latest_verification() -> dict[str, Any]:
     total = len(results)
     relative = str(latest.relative_to(PROJECT_ROOT))
     window_probe = latest_window_probe(results)
+    label = latest_verification_label(data, passed=passed, total=total)
     return {
         "ok": bool(data.get("ok")) and total > 0 and passed == total,
         "path": relative,
         "passed": passed,
         "total": total,
-        "label": f"{passed}/{total} passed" if total else "empty",
+        "label": label,
+        "source_commit": str(data.get("source_commit") or ""),
+        "stale_text": latest_verification_stale_text(data),
         "window_probe": window_probe,
     }
+
+
+def latest_verification_label(data: dict[str, Any], *, passed: int, total: int) -> str:
+    base = f"{passed}/{total} passed" if total else "empty"
+    stale_text = latest_verification_stale_text(data)
+    if stale_text:
+        return f"{base} ({stale_text})"
+    return base
+
+
+def latest_verification_stale_text(data: dict[str, Any]) -> str:
+    source_commit = str(data.get("source_commit") or "").strip()
+    head_commit = git(["rev-parse", "--short", "HEAD"])
+    if source_commit and head_commit and source_commit != head_commit:
+        return f"stale for HEAD {head_commit} (verifier ran on {source_commit})"
+    if not source_commit:
+        return "source commit unknown"
+    return ""
 
 
 def latest_window_probe(results: list[dict[str, Any]]) -> dict[str, Any]:
