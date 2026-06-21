@@ -7105,6 +7105,19 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertIn("Latest closed-loop voice QA exercised live speech playback, observed active speech", workboard)
 
+    def test_workboard_current_subtask_marks_stale_teams_blocker(self):
+        text = render_overnight_status.workboard_current_subtask({
+            "pre_build_gate": {
+                "stale_text": "stale for HEAD newhead (gate ran on oldgate)",
+                "teams_blocker": "Teams assignment is not_inspected; Chrome did not foreground Teams before OCR.",
+            }
+        })
+
+        self.assertIn("stale pre-build gate", text)
+        self.assertIn("current HEAD", text)
+        self.assertIn("Teams assignment is not_inspected", text)
+        self.assertNotIn("current Teams pre-build blocker", text)
+
     def test_render_overnight_status_git_dirty_unknown_on_status_failure(self):
         with patch("scripts.render_overnight_status.git_status_porcelain", return_value=(False, "")):
             self.assertEqual(render_overnight_status.git_dirty_label(), "unknown")

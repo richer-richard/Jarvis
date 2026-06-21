@@ -1561,6 +1561,9 @@ def pre_build_gate_report_stale_text(data: dict[str, Any]) -> str:
 
 
 def latest_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
+    blocker = local_pre_build_gate_teams_blocker(data)
+    if blocker:
+        return blocker
     try:
         from scripts.morning_status import pre_build_gate_teams_blocker
     except Exception:
@@ -1569,6 +1572,73 @@ def latest_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
         return str(pre_build_gate_teams_blocker(data) or "").strip()
     except Exception:
         return ""
+
+
+def local_pre_build_gate_full_loop_report_path(data: dict[str, Any]) -> Path | None:
+    results = data.get("results")
+    if not isinstance(results, list):
+        return None
+    for item in results:
+        if not isinstance(item, dict) or item.get("id") != "full_loop_regression":
+            continue
+        text = "\n".join(str(item.get(key) or "") for key in ("stdout", "stdout_tail", "stderr", "stderr_tail"))
+        match = re.search(r"Report:\s+(.+?summary\.json)", text)
+        if not match:
+            continue
+        path = Path(match.group(1).strip())
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        return path
+    return None
+
+
+def local_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
+    full_loop_path = local_pre_build_gate_full_loop_report_path(data)
+    if not full_loop_path:
+        return ""
+    try:
+        full_loop = json.loads(full_loop_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    results = full_loop.get("results")
+    if not isinstance(results, list):
+        return ""
+    for item in results:
+        if not isinstance(item, dict) or item.get("case_id") != "teams_music_assignment_honesty":
+            continue
+        if str(item.get("status") or "") == "passed":
+            return ""
+        proof = item.get("action_proof") if isinstance(item.get("action_proof"), dict) else {}
+        completion = str(proof.get("completion_status") or item.get("status") or "unknown").strip() or "unknown"
+        parts = [f"Teams assignment is {completion}"]
+        if proof.get("honest_login_gate") or proof.get("browser_open_login_gate"):
+            parts.append("Microsoft sign-in gate is visible in Chrome")
+        if proof.get("chrome_page_read_blocked"):
+            parts.append("Chrome page-read is blocked")
+        deeplink_reason = str(proof.get("deeplink_fallback_reason") or "").strip()
+        history_count = proof.get("teams_history_row_count")
+        if deeplink_reason:
+            count_text = f" across {history_count} Teams history row(s)" if history_count not in (None, "") else ""
+            parts.append(f"Teams deep-link inventory had {deeplink_reason}{count_text}")
+        if proof.get("fell_back_from_deeplink"):
+            parts.append("Jarvis fell back instead of opening an unrelated class")
+        lane = str(proof.get("inspection_lane") or "").strip()
+        if lane:
+            parts.append(f"inspection lane {lane}")
+        if proof.get("browser_focus_not_verified"):
+            active_title = str(proof.get("browser_open_active_title") or "").strip()
+            active_url = str(proof.get("browser_open_active_url") or "").strip()
+            detail = active_title or active_url
+            expected_host = str(proof.get("browser_focus_expected_host") or "").strip()
+            attempted_url = str(proof.get("browser_focus_attempted_url") or "").strip()
+            focus_detail = f"active: {detail}" if detail else ""
+            if expected_host:
+                focus_detail = f"{focus_detail}; expected: {expected_host}" if focus_detail else f"expected: {expected_host}"
+            if attempted_url:
+                focus_detail = f"{focus_detail}; attempted: {attempted_url}" if focus_detail else f"attempted: {attempted_url}"
+            parts.append(f"Chrome did not foreground Teams before OCR{f' ({focus_detail})' if focus_detail else ''}")
+        return "; ".join(parts) + "."
+    return ""
 
 
 def latest_physical_audio_preflight() -> dict[str, Any]:
@@ -2155,10 +2225,13 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
 def workboard_current_subtask(context: dict[str, Any]) -> str:
     pre_build = context.get("pre_build_gate") if isinstance(context.get("pre_build_gate"), dict) else {}
     teams_blocker = str(pre_build.get("teams_blocker") or "").strip()
+    stale_text = str(pre_build.get("stale_text") or "").strip()
     if teams_blocker:
+        if stale_text:
+            return f"Refresh the stale pre-build gate or prove the Teams blocker on current HEAD: {teams_blocker}"
         return f"Resolve or prove the current Teams pre-build blocker: {teams_blocker}"
-    if pre_build.get("stale_text"):
-        return f"Refresh or explain the stale pre-build gate: {pre_build.get('stale_text')}"
+    if stale_text:
+        return f"Refresh or explain the stale pre-build gate: {stale_text}"
     return "Pick the highest-risk open backlog row, patch or prove it, then update tests, the bug backlog, and memory."
 
 
