@@ -28,7 +28,23 @@ CHROME_CLEANUP_WARMUP_ATTEMPTS = 2
 CHROME_CLEANUP_WARMUP_RETRY_DELAY_SECONDS = 1.0
 
 
+def _chrome_running() -> bool:
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/pgrep", "-x", "Google Chrome"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
 def _chrome_warmup() -> dict[str, Any]:
+    if not _chrome_running():
+        return {"status": "not_running", "stdout": "0", "attempts": []}
     script = 'tell application "Google Chrome" to count windows'
     attempts: list[dict[str, Any]] = []
     for attempt in range(1, CHROME_CLEANUP_WARMUP_ATTEMPTS + 1):
@@ -129,6 +145,18 @@ JSON.stringify(targets);
 def cleanup_chrome_test_tabs(*, execute: bool, close_duplicate_teams: bool = False) -> dict[str, Any]:
     script = _cleanup_jxa(close_targets=execute, close_duplicate_teams=close_duplicate_teams)
     warmup = _chrome_warmup()
+    if warmup.get("status") == "not_running":
+        return {
+            "ok": True,
+            "executed": execute,
+            "closed_count": 0,
+            "target_count": 0,
+            "targets": [],
+            "close_duplicate_teams": bool(close_duplicate_teams),
+            "attempts": [],
+            "warmup": warmup,
+            "reason": "chrome_not_running",
+        }
     if warmup.get("status") == "timeout":
         return {
             "ok": False,

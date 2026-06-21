@@ -1598,6 +1598,7 @@ def visible_navigation_execution_warning(action_proof: dict[str, Any]) -> str:
 
 def chrome_tab_snapshot() -> list[dict[str, str]]:
     script = '''
+if application "Google Chrome" is not running then return ""
 set output to ""
 tell application "Google Chrome"
   repeat with w in windows

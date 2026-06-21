@@ -2128,7 +2128,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             ]),
             stderr="",
         )
-        with patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
             result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=False)
 
         self.assertTrue(result["ok"])
@@ -2151,7 +2152,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             ]),
             stderr="",
         )
-        with patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
             result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=True)
 
         self.assertTrue(result["ok"])
@@ -2178,7 +2180,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             ]),
             stderr="",
         )
-        with patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
             result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=True, close_duplicate_teams=True)
 
         self.assertTrue(result["ok"])
@@ -2198,7 +2201,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             stdout=json.dumps([]),
             stderr="",
         )
-        with patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch("scripts.cleanup_chrome_test_tabs.subprocess.run", return_value=completed) as run_mock:
             result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=False)
 
         self.assertTrue(result["ok"])
@@ -2206,7 +2210,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("const closeDuplicateTeams = false", run_mock.call_args.args[0][-1])
 
     def test_cleanup_chrome_test_tabs_timeout_is_reported_cleanly(self):
-        with patch(
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch(
             "scripts.cleanup_chrome_test_tabs.subprocess.run",
             side_effect=subprocess.TimeoutExpired(["osascript"], timeout=30),
         ) as run_mock, patch("scripts.cleanup_chrome_test_tabs.time.sleep") as sleep_mock:
@@ -2237,7 +2242,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             stdout="[]",
             stderr="",
         )
-        with patch(
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch(
             "scripts.cleanup_chrome_test_tabs.subprocess.run",
             side_effect=[warmup_completed, cleanup_completed],
         ) as run_mock:
@@ -2260,7 +2266,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             stdout="[]",
             stderr="",
         )
-        with patch(
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch(
             "scripts.cleanup_chrome_test_tabs.subprocess.run",
             side_effect=[
                 subprocess.TimeoutExpired(["osascript"], timeout=8),
@@ -2284,7 +2291,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             stdout="1\n",
             stderr="",
         )
-        with patch(
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch(
             "scripts.cleanup_chrome_test_tabs.subprocess.run",
             side_effect=[warmup_completed, *[
                 subprocess.TimeoutExpired(["osascript"], timeout=8)
@@ -2319,7 +2327,8 @@ class VerifySafeScriptTests(unittest.TestCase):
             stdout="1\n",
             stderr="",
         )
-        with patch(
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=True), \
+             patch(
             "scripts.cleanup_chrome_test_tabs.subprocess.run",
             side_effect=[warmup_completed, subprocess.TimeoutExpired(["osascript"], timeout=8), completed],
         ) as run_mock, patch("scripts.cleanup_chrome_test_tabs.time.sleep"):
@@ -2330,6 +2339,24 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["warmup"]["status"], "completed")
         self.assertEqual(run_mock.call_count, 3)
         self.assertEqual([attempt["status"] for attempt in result["attempts"]], ["timeout", "completed"])
+
+    def test_cleanup_chrome_test_tabs_does_not_launch_chrome_when_closed(self):
+        with patch("scripts.cleanup_chrome_test_tabs._chrome_running", return_value=False), \
+             patch("scripts.cleanup_chrome_test_tabs.subprocess.run") as run_mock:
+            result = cleanup_chrome_test_tabs.cleanup_chrome_test_tabs(execute=True, close_duplicate_teams=True)
+
+        run_mock.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["target_count"], 0)
+        self.assertEqual(result["closed_count"], 0)
+        self.assertEqual(result["reason"], "chrome_not_running")
+        self.assertEqual(result["warmup"]["status"], "not_running")
+
+    def test_full_loop_chrome_tab_snapshot_does_not_launch_chrome_when_closed(self):
+        source = (PROJECT_ROOT / "scripts" / "full_loop_regression.py").read_text(encoding="utf-8")
+
+        self.assertIn('if application "Google Chrome" is not running then return ""', source)
 
     def test_cleanup_chrome_test_tabs_cli_accepts_explicit_dry_run(self):
         with patch("scripts.cleanup_chrome_test_tabs.cleanup_chrome_test_tabs", return_value={
