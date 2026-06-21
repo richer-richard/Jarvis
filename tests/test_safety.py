@@ -6706,6 +6706,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Operator Checkpoint", workboard)
         self.assertIn("Current goal", workboard)
         self.assertIn("Current subtask", workboard)
+        self.assertIn("Resolve or prove the current Teams pre-build blocker", workboard)
         self.assertIn("Proof needed", workboard)
         self.assertIn("Pre-build gate", workboard)
         self.assertIn("failed, 3/4 passed", workboard)

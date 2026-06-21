@@ -2126,7 +2126,7 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
         ),
         (
             "Current subtask",
-            "Pick the highest-risk open backlog row, patch or prove it, then update tests, the bug backlog, and memory.",
+            workboard_current_subtask(context),
         ),
         (
             "Proof needed",
@@ -2150,6 +2150,16 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
         for label, value in checkpoints
     )
     return f"<section><h2>Operator Checkpoint</h2><ul class=\"checkpoint\">{rows}</ul></section>"
+
+
+def workboard_current_subtask(context: dict[str, Any]) -> str:
+    pre_build = context.get("pre_build_gate") if isinstance(context.get("pre_build_gate"), dict) else {}
+    teams_blocker = str(pre_build.get("teams_blocker") or "").strip()
+    if teams_blocker:
+        return f"Resolve or prove the current Teams pre-build blocker: {teams_blocker}"
+    if pre_build.get("stale_text"):
+        return f"Refresh or explain the stale pre-build gate: {pre_build.get('stale_text')}"
+    return "Pick the highest-risk open backlog row, patch or prove it, then update tests, the bug backlog, and memory."
 
 
 def workboard_bundle_sentence(context: dict[str, Any]) -> str:

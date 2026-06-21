@@ -72,6 +72,13 @@
 
 ## Completed This Turn
 
+- [x] Made the workboard Current subtask dynamic. When the pre-build gate has a
+  derived Teams blocker, the Operator Checkpoint now says to resolve or prove
+  that exact blocker instead of showing a generic backlog instruction. Focused
+  render contract passed, full `tests.test_safety` passed `1141/1141`, and
+  `render_overnight_status.main()` wrote a workboard containing
+  `Resolve or prove the current Teams pre-build blocker` plus
+  `Teams assignment is not_inspected`.
 - [x] Added the current pre-build gate state to the workboard Operator
   Checkpoint. The quick workboard now shows stale/red gate status and the
   derived Teams blocker instead of requiring Leo to open the longer report.
