@@ -194,6 +194,7 @@ from scripts.morning_status import (
     pre_build_gate_teams_blocker,
     pre_build_gate_summary,
     full_loop_artifact_stale_text,
+    newer_standalone_music_blocker,
     print_report_surfaces,
     print_latest_pre_build_gate,
     print_latest_context_smoke,
@@ -28234,6 +28235,70 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("native Music cleanup verified stopped", blocker)
         self.assertIn("no new afplay process was detected", blocker)
         self.assertIn("no new detected media surface remained", blocker)
+
+    def test_morning_status_prefers_newer_standalone_music_blocker(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            gate_report = root / "runtime" / "full_loop_regression" / "20260621-090000" / "summary.json"
+            standalone_report = root / "runtime" / "full_loop_regression" / "20260621-102235" / "summary.json"
+            gate_report.parent.mkdir(parents=True)
+            standalone_report.parent.mkdir(parents=True)
+            gate_report.write_text(
+                json.dumps(
+                    {
+                        "source_commit": "oldgate",
+                        "results": [
+                            {
+                                "case_id": "music_play_waving_through_window",
+                                "status": "failed",
+                                "warnings": ["Old generic Music failure."],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            standalone_report.write_text(
+                json.dumps(
+                    {
+                        "source_commit": "newerproof",
+                        "results": [
+                            {
+                                "case_id": "music_play_waving_through_window",
+                                "status": "warning",
+                                "warnings": ["Jarvis Music reply: Playing Dear Evan Hansen | 2017 Tony Awards in Music."],
+                                "cleanup": {
+                                    "verified_stopped": True,
+                                    "new_afplay_processes_after": [],
+                                    "new_media_surfaces_after": [],
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os.utime(gate_report, (100.0, 100.0))
+            os.utime(standalone_report, (200.0, 200.0))
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="head"):
+                blocker = newer_standalone_music_blocker(
+                    {
+                        "results": [
+                            {
+                                "id": "full_loop_regression",
+                                "stdout_tail": f"Report: {gate_report}\nmusic_play_waving_through_window: failed",
+                            }
+                        ]
+                    }
+                )
+
+        self.assertIn("Music playback proof is warning", blocker)
+        self.assertIn("Dear Evan Hansen", blocker)
+        self.assertIn("native Music cleanup verified stopped", blocker)
+        self.assertIn("stale for HEAD head", blocker)
+        self.assertNotIn("Old generic", blocker)
 
     def test_morning_status_prints_music_blocker(self):
         with tempfile.TemporaryDirectory() as temp_dir:

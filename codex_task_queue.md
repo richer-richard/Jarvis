@@ -50,6 +50,7 @@
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 - [x] Harden native Music bridge playback confirmation so cold-start/delayed playback is polled before Jarvis claims Music did not start.
 - [x] Preserve the concrete `music_app_library_empty` diagnosis through Jarvis voice-loop/full-loop reporting instead of flattening it into a generic Music failure.
+- [x] Make morning status prefer newer standalone Music proof over stale pre-build-gate Music blocker wording when the full gate is stale.
 - [x] Create a local HTML page of hard, impressive Jarvis capability questions, serve it through the Jarvis worker, and verify it stays populated.
 - [x] Persist the read-only physical audio loopback preflight as a stable latest artifact and expose it in the report support files.
 - [x] Print the Capability Questions file path and loopback URL in `scripts/morning_status.py` breadcrumbs.

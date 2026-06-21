@@ -261,8 +261,12 @@ def print_latest_pre_build_gate() -> None:
         print(f"{prefix}: {teams_blocker}")
     music_blocker = pre_build_gate_music_blocker(data)
     if music_blocker:
-        prefix = "Music blocker from stale gate" if stale_suffix else "Music blocker"
-        print(f"{prefix}: {music_blocker}")
+        standalone_music = newer_standalone_music_blocker(data)
+        if standalone_music:
+            print(f"Music blocker from newer standalone proof: {standalone_music}")
+        else:
+            prefix = "Music blocker from stale gate" if stale_suffix else "Music blocker"
+            print(f"{prefix}: {music_blocker}")
     cleanup_warning = pre_build_gate_cleanup_warning(data)
     if cleanup_warning:
         prefix = "Chrome cleanup warning from stale gate" if stale_suffix else "Chrome cleanup warning"
@@ -522,6 +526,76 @@ def pre_build_gate_music_blocker(data: dict[str, Any]) -> str:
             parts.append("no new detected media surface remained")
         return "; ".join(dict.fromkeys(parts)) + "."
     return ""
+
+
+def newer_standalone_music_blocker(gate_data: dict[str, Any]) -> str:
+    gate_full_loop = pre_build_gate_full_loop_report_path(gate_data)
+    latest = latest_full_loop_case_report("music_play_waving_through_window")
+    if latest is None:
+        return ""
+    report, data, item = latest
+    if gate_full_loop is not None:
+        try:
+            if report.resolve() == gate_full_loop.resolve():
+                return ""
+        except OSError:
+            if report == gate_full_loop:
+                return ""
+        try:
+            if report.stat().st_mtime <= gate_full_loop.stat().st_mtime:
+                return ""
+        except OSError:
+            return ""
+    if str(item.get("status") or "") == "passed":
+        return ""
+    blocker = music_blocker_from_full_loop_item(item)
+    if not blocker:
+        return ""
+    age = format_uptime(time_since(report.stat().st_mtime))
+    stale_text = full_loop_artifact_stale_text(data)
+    return f"{blocker} ({report.relative_to(PROJECT_ROOT)}, age {age}{stale_text})"
+
+
+def latest_full_loop_case_report(case_id: str) -> tuple[Path, dict[str, Any], dict[str, Any]] | None:
+    full_loop_root = PROJECT_ROOT / "runtime" / "full_loop_regression"
+    reports = sorted(
+        (path for path in full_loop_root.glob("20*/summary.json") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for report in reports:
+        try:
+            data = json.loads(report.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        results = data.get("results")
+        if not isinstance(results, list):
+            continue
+        for item in results:
+            if isinstance(item, dict) and item.get("case_id") == case_id:
+                return report, data, item
+    return None
+
+
+def music_blocker_from_full_loop_item(item: dict[str, Any]) -> str:
+    warnings = [str(value).strip() for value in item.get("warnings") or [] if str(value).strip()]
+    cleanup = item.get("cleanup") if isinstance(item.get("cleanup"), dict) else {}
+    media_after = cleanup.get("media_surfaces_after") if isinstance(cleanup.get("media_surfaces_after"), dict) else {}
+    blocked = media_after.get("blocked") if isinstance(media_after.get("blocked"), list) else []
+    parts = [f"Music playback proof is {item.get('status') or 'not passed'}"]
+    if warnings:
+        parts.extend(warnings)
+    if "Google Chrome" in blocked:
+        parts.append("Chrome media inspection is blocked")
+    if cleanup.get("verified_stopped") is True:
+        parts.append("native Music cleanup verified stopped")
+    new_afplay = cleanup.get("new_afplay_processes_after")
+    if isinstance(new_afplay, list) and not new_afplay:
+        parts.append("no new afplay process was detected")
+    new_media = cleanup.get("new_media_surfaces_after")
+    if isinstance(new_media, list) and not new_media:
+        parts.append("no new detected media surface remained")
+    return "; ".join(dict.fromkeys(parts)) + "."
 
 
 def teams_deeplink_route_status_text(item: dict[str, Any]) -> str:
