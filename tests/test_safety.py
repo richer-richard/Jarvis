@@ -14580,6 +14580,43 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(kwargs["selection"], "index:2")
         self.assertIn("second email", kwargs["original_prompt"])
 
+    def test_email_original_prompt_selection_overrides_model_latest_entity(self):
+        fake_result = {"status": "checked", "messages": [], "message_count": 0}
+        with patch("jarvis.planner.contact_data_lookup", return_value={"status": "not_found"}), \
+             patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock:
+            result = Planner().handle_selected_tool(
+                "check my email and summarize my second email for me",
+                "outlook.visible_summary",
+                {"selection": "latest"},
+            )
+            status_text = email_request_status_text(
+                "check my email and summarize my second email for me",
+                {"selection": "latest"},
+            )
+
+        self.assertEqual(result.tool, "outlook.visible_summary")
+        self.assertEqual(result.result["selection"], "index:2")
+        self.assertEqual(status_text, "Checking your second email now.")
+        self.assertEqual(mail_mock.call_args.kwargs["selection"], "index:2")
+
+    def test_email_original_prompt_range_overrides_model_latest_entity(self):
+        fake_result = {"status": "checked", "messages": [], "message_count": 0}
+        with patch("jarvis.planner.contact_data_lookup", return_value={"status": "not_found"}), \
+             patch("jarvis.planner.outlook_read_only_check", return_value=fake_result) as mail_mock:
+            result = Planner().handle_selected_tool(
+                "summarize emails 2 through 4 in my inbox",
+                "outlook.visible_summary",
+                {"selection": "latest"},
+            )
+            status_text = email_request_status_text(
+                "summarize emails 2 through 4 in my inbox",
+                {"selection": "latest"},
+            )
+
+        self.assertEqual(result.result["selection"], "range:2-4")
+        self.assertEqual(status_text, "Checking emails 2 through 4 now.")
+        self.assertEqual(mail_mock.call_args.kwargs["selection"], "range:2-4")
+
     def test_email_preview_exposes_original_prompt_selection_without_reading_mail(self):
         intent = {
             "status": "completed",

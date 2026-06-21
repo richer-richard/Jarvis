@@ -16213,7 +16213,7 @@ def _email_selection_from_prompt(text: str | None) -> str | None:
     if ordinal is not None:
         return f"index:{ordinal}"
     range_match = re.search(
-        r"\b(?:email|mail|message|messages)\s+(\d{1,2})\s*(?:-|to|through)\s*(\d{1,2})\b",
+        r"\b(?:emails?|mails?|messages?)\s+(\d{1,2})\s*(?:-|to|through)\s*(\d{1,2})\b",
         lower,
     )
     if range_match:

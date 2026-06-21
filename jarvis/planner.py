@@ -1995,6 +1995,9 @@ class Planner:
             )
             if isinstance(result, dict):
                 result.setdefault("sender_query", sender_query)
+                result.setdefault("selection", selection)
+                result.setdefault("selection_source", email_request.get("selection_source"))
+                result.setdefault("selection_rule", email_request.get("selection_rule"))
                 result["resolved_sender_query"] = email_request.get("resolved_sender_query")
                 result["contact_alias_lookup"] = email_request.get("contact_alias_lookup")
                 result["date_range"] = email_request.get("date_range")
@@ -3583,11 +3586,7 @@ def email_request_metadata(
     entity_selection = _clean_optional_entity(safe_entities.get("selection"))
     structured_selection = _email_selection_from_entities(safe_entities)
     prompt_selection = _extract_email_selection_constraint(text)
-    selection = (
-        prompt_selection
-        if prompt_selection == "all_matching"
-        else entity_selection or structured_selection or prompt_selection
-    )
+    selection = prompt_selection or entity_selection or structured_selection
     sender_query = _email_sender_query_from_entities_and_prompt(text, safe_entities)
     entity_date_range = _clean_optional_entity(safe_entities.get("date_range"))
     prompt_date_range = _extract_email_date_range_constraint(text)
@@ -3713,9 +3712,9 @@ def email_request_status_text(text: str, entities: dict[str, Any] | None = None)
     safe_entities = entities if isinstance(entities, dict) else {}
     sender_query = _email_sender_query_from_entities_and_prompt(text, safe_entities)
     selection = (
-        _clean_optional_entity(safe_entities.get("selection"))
+        _extract_email_selection_constraint(text)
+        or _clean_optional_entity(safe_entities.get("selection"))
         or _email_selection_from_entities(safe_entities)
-        or _extract_email_selection_constraint(text)
     )
     date_range = _normalize_email_date_range(
         _clean_optional_entity(safe_entities.get("date_range"))
@@ -3821,7 +3820,7 @@ def _extract_email_selection_constraint(text: str) -> str | None:
     if ordinal is not None:
         return f"index:{ordinal}"
     range_match = re.search(
-        r"\b(?:email|mail|message|messages)\s+(\d{1,2})\s*(?:-|to|through)\s*(\d{1,2})\b",
+        r"\b(?:emails?|mails?|messages?)\s+(\d{1,2})\s*(?:-|to|through)\s*(\d{1,2})\b",
         lower,
     )
     if range_match:
