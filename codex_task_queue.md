@@ -54,6 +54,7 @@
 - [x] Create a local HTML page of hard, impressive Jarvis capability questions, serve it through the Jarvis worker, and verify it stays populated.
 - [x] Persist the read-only physical audio loopback preflight as a stable latest artifact and expose it in the report support files.
 - [x] Print the Capability Questions file path and loopback URL in `scripts/morning_status.py` breadcrumbs.
+- [x] Strip inline Codex Activity / Worker Audit diagnostic tails from spoken and visible replies, not only standalone diagnostic rows.
 - [x] Harden Teams browser-read visible fallback so OCR-mangled wrong-Space text like `teams cloud microsott` is treated as unreadable Teams, not a fake page summary.
 - [x] Fix misleading Teams proof warning that says "different Chrome window" when the captured Chrome title is already Microsoft Teams but OCR content is wrong-surface.
 - [x] Let native visible-screen OCR fall back to main-display/Chrome-bounds capture when strict Chrome window-title capture fails, so Teams can still be read or fail closed after verified Chrome foregrounding.

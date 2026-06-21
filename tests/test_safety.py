@@ -22217,10 +22217,22 @@ class RuntimeSurfaceTests(unittest.TestCase):
         colonless_inline = jarvis_tools._sanitize_spoken_text(
             "Opened Microsoft Outlook. | Tool time 0.2s | Model gpt-oss-120b-cloud | Backend groq | First visible 1.2s"
         )
+        inline_activity = jarvis_tools._sanitize_spoken_text(
+            "Yes sir, checking your email now. Codex Activity codex-0ad5099d completed | 1m 56.9s | gpt-5.4-mini"
+        )
+        inline_worker_blob = jarvis_tools._sanitize_spoken_text(
+            "Opened Outlook. Worker Audit Verification Wake Worker already online 23210 events, 27.6 MB, 90d retention."
+        )
+        visible_activity = jarvis_tools._sanitize_user_visible_text(
+            "Yes sir, checking your email now. Codex Activity codex-0ad5099d completed | 1m 56.9s | gpt-5.4-mini"
+        )
 
         self.assertEqual(spoken, "Opened Microsoft Outlook.")
         self.assertEqual(inline, "Hello, sir. What would you like done?")
         self.assertEqual(colonless_inline, "Opened Microsoft Outlook.")
+        self.assertEqual(inline_activity, "Yes sir, checking your email now.")
+        self.assertEqual(inline_worker_blob, "Opened Outlook.")
+        self.assertEqual(visible_activity, "Yes sir, checking your email now.")
         self.assertNotIn("Groq", spoken)
         self.assertNotIn("Tool time", spoken)
         self.assertNotIn("gpt-oss", spoken)

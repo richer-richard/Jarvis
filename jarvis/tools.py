@@ -1717,6 +1717,14 @@ def _strip_spoken_diagnostic_fragments(text: str) -> str:
     )
     for line in str(text or "").splitlines():
         if diagnostic_line.match(line):
+            prefix = re.sub(
+                r"(?i)(?:^|[\s,.;])\b(?:codex\s*activity|cli\s*tail|worker\s+audit\s+verification|"
+                r"audit\s+verification\s+wake\s+worker|app\s*perms?\s*:\s*\d+/\d+\s+ready\s+worker\s+audit\s+verification)\b.*$",
+                " ",
+                line,
+            ).strip()
+            if prefix and prefix != line.strip() and re.search(r"[.!?]\s*$", prefix):
+                cleaned_lines.append(prefix)
             continue
         cleaned_lines.append(line)
     cleaned = "\n".join(cleaned_lines)
@@ -1741,6 +1749,17 @@ def _strip_spoken_diagnostic_fragments(text: str) -> str:
     )
     cleaned = re.sub(
         r"(?i)\s+\b(?:groq|ollama)\b[^\n]*",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)(?:^|[\s,.;])\b(?:codex\s*activity|cli\s*tail)\b[^\n]*",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)(?:^|[\s,.;])\b(?:worker\s+audit\s+verification|audit\s+verification\s+wake\s+worker|"
+        r"app\s*perms?\s*:\s*\d+/\d+\s+ready\s+worker\s+audit\s+verification)\b[^\n]*",
         " ",
         cleaned,
     )
