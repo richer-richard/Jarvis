@@ -22438,6 +22438,28 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("selected", json_tool + loose_tool)
         self.assertNotIn("outlook", json_tool + loose_tool)
 
+    def test_auto_speech_sanitizer_drops_loose_internal_routing_tokens(self):
+        spoken = jarvis_tools._sanitize_spoken_text(
+            "Yes sir. selected tool outlook.visible_summary. Checking now. "
+            "status_text: Checking your email now. final_result complete."
+        )
+        visible = jarvis_tools._sanitize_user_visible_text(
+            "Opened Outlook. selected tool outlook.visible_summary. "
+            "status_text: Checking your email now. final_result complete."
+        )
+        dotted = jarvis_tools._sanitize_spoken_text(
+            "Opened Outlook. outlook.visible_summary checked the inbox."
+        )
+
+        self.assertEqual(spoken, "Yes sir. Checking now.")
+        self.assertEqual(visible, "Opened Outlook.")
+        self.assertEqual(dotted, "Opened Outlook.")
+        for text in (spoken, visible, dotted):
+            self.assertNotIn("selected tool", text.lower())
+            self.assertNotIn("status_text", text.lower())
+            self.assertNotIn("final_result", text.lower())
+            self.assertNotIn("outlook.visible_summary", text)
+
     def test_auto_speech_sanitizer_drops_future_tool_call_fragments(self):
         spoken = jarvis_tools._sanitize_spoken_text(
             "Yes sir, checking your calendar now.\\Calendar(1, today, false) Your schedule is clear."

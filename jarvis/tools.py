@@ -1661,6 +1661,7 @@ def _sanitize_spoken_text(text: str) -> str:
     spoken = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", "", spoken)
     spoken = re.sub(r"(?im)^\s*(?:summary|answer|result|reply|action|actions|details?|link|subject|sender|from)\s*:\s*", "", spoken)
     spoken = re.sub(r"(?i)\b(?:selected[_\s-]*tool|entities|tool)\s*[:=]\s*[^\s,.!?;]+(?:\.[^\s,.!?;]+)*", " ", spoken)
+    spoken = _strip_inline_internal_token_leaks(spoken)
     spoken = re.sub(r"[*_`#>]+", "", spoken)
     spoken = re.sub(r"\s*\n+\s*", ", ", spoken)
     spoken = re.sub(r"\s*[:;]\s*", ", ", spoken)
@@ -1686,11 +1687,39 @@ def _sanitize_user_visible_text(text: str, *, max_chars: int = 4000) -> str:
     visible = re.sub(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "an email address", visible)
     visible = re.sub(r"(?im)^\s*(?:selected[_\s-]*tool|entities)\s*[:=].*$", " ", visible)
     visible = re.sub(r"(?i)\b(?:selected[_\s-]*tool|entities)\s*[:=]\s*[^\n,.!?;]+", " ", visible)
+    visible = _strip_inline_internal_token_leaks(visible)
     visible = re.sub(r"[ \t\f\v]+", " ", visible)
     visible = re.sub(r"\s+\n", "\n", visible)
     visible = re.sub(r"\n{3,}", "\n\n", visible)
     visible = re.sub(r"\s+([,.!?])", r"\1", visible)
+    visible = re.sub(r"\.{2,}", ".", visible)
     return visible.strip(" \t\n,")[: max(1, int(max_chars))]
+
+
+def _strip_inline_internal_token_leaks(text: str) -> str:
+    """Remove compact routing/debug tokens that are not useful to Leo."""
+    cleaned = str(text or "")
+    cleaned = re.sub(
+        r"(?i)(?:^|[\s,.;])\bselected\s+tool\s+[A-Za-z][A-Za-z0-9_.-]*\b",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)(?:^|[\s,.;])\b(?:status[_\s-]*text|tool[_\s-]*requested|final[_\s-]*result|audit[_\s-]*event[_\s-]*id)\b\s*[:=]?\s*[^.!?\n]*(?:[.!?]|$)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)(?:^|[\s,.;])\b(?:app|browser|codex|conversation|diagnostics|files|memory|outlook|quick|screen|shell|system|teams|terminal|tools|ui|voice|workflow)\.[a-z0-9_]*_[a-z0-9_]*\b[^.!?\n]*(?:[.!?]|$)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)(?:^|[\s,.;])\b(?:app|browser|codex|conversation|diagnostics|files|memory|outlook|quick|screen|shell|system|teams|terminal|tools|ui|voice|workflow)\.[a-z0-9_]+\b",
+        " ",
+        cleaned,
+    )
+    return cleaned
 
 
 def _strip_spoken_json_tool_fragments(text: str) -> str:
