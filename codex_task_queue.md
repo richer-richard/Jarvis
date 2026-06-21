@@ -2,6 +2,7 @@
 
 ## Active
 
+- [x] Halt active overnight implementation on Leo's instruction, preserve the checkpoint, and prepare a concise HTML status report before pausing work.
 - [ ] Continue the active Jarvis hardening goal until all known user-reported bugs are fixed or captured by reliable regression tests.
 - [ ] Overnight protocol active from 2026-06-20 22:02 CST with unknown wake-up time: keep working until Leo explicitly says he woke up; do not ask questions, do not request secret code, skip approval-gated/risky work, and keep safe non-interactive progress moving.
 - [ ] Use overnight protocol with no fixed wake-up time: keep working until Leo says he woke up; do not wait for questions, secret-code prompts, or interactive approvals.
