@@ -74,6 +74,14 @@
 
 ## Completed This Turn
 
+- [x] Shipped Jarvis 0.1.497 explicit-speech fail-closed safety: `say out loud
+  ...` now returns `Jarvis speech is muted.` while muted, or says the Shut Up
+  control is unavailable when the emergency helper is missing, and does not
+  start macOS `say` in either case. Focused regressions passed, full
+  `python3 -m unittest tests.test_safety` passed `1161/1161`, the canonical
+  `output/Jarvis.app` rebuilt and relaunched as `0.1.497 build 497`, and a live
+  muted explicit-speech probe returned `executed=false`, `speech_status=muted`,
+  and `speech_spoken=false`.
 - [x] Recorded Leo's June 25/26 overnight Chrome safety rule in both
   `.memory.md` and `codex_task_queue.md`: continue safely until exactly
   8:00 AM CST/Beijing on June 26, 2026, do not open Chrome tabs/windows unless

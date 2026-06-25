@@ -21285,10 +21285,17 @@ def _run_say_text(text: str) -> dict[str, Any]:
             "reply": "I did not find anything readable to speak.",
         }
     speech = speak_text_async(spoken, reason="explicit", force=True)
+    status = str(speech.get("status") or "unavailable")
+    if status == "muted":
+        reply = "Jarvis speech is muted."
+    elif status == "emergency_control_missing":
+        reply = "I cannot speak until the Shut Up control is available."
+    else:
+        reply = "Started speaking locally." if speech.get("spoken") else "I could not start local speech."
     return {
         "tool": "quick.local_control",
         "matched": True,
-        "status": "started" if speech.get("spoken") else str(speech.get("status") or "unavailable"),
+        "status": "started" if speech.get("spoken") else status,
         "executed": bool(speech.get("spoken")),
         "action": "speech.say",
         "provider": speech.get("provider"),
@@ -21296,7 +21303,7 @@ def _run_say_text(text: str) -> dict[str, Any]:
         "text_length": len(spoken),
         "speech": speech,
         **_duration_fields(started_at),
-        "reply": "Started speaking locally." if speech.get("spoken") else "I could not start local speech.",
+        "reply": reply,
     }
 
 

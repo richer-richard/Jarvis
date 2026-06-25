@@ -7452,7 +7452,9 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
-        self.assertIn("0.1.496", shipped)
+        self.assertIn("0.1.497", shipped)
+        self.assertIn("explicit speech safer", shipped)
+        self.assertIn("Shut Up menu control is unavailable", shipped)
         self.assertIn("status-helper from the same Jarvis bundle", shipped)
         self.assertIn("0.1.495", shipped)
         self.assertIn("voice-loop tests now suppress browser actions by default", shipped)
@@ -7549,7 +7551,11 @@ class VerifySafeScriptTests(unittest.TestCase):
         current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
-        self.assertIn("Last updated: 2026-06-26 02:43 CST", memory)
+        self.assertIn("Last updated: 2026-06-26 03:05 CST", memory)
+        self.assertIn("Jarvis 0.1.497 build 497", current_focus)
+        self.assertIn("makes explicit speech commands fail closed", current_focus)
+        self.assertIn("Jarvis speech is muted", current_focus)
+        self.assertIn("Shut Up control is available", current_focus)
         self.assertIn("continue the June\n  25/26 overnight run until exactly 8:00 AM", current_focus)
         self.assertIn("Computer safety is the top constraint", current_focus)
         self.assertIn("Do not open Chrome tabs/windows unless\n  a task truly needs it", current_focus)
@@ -7571,7 +7577,9 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("298e14a", current_focus)
         self.assertIn("runtime/verification/latest.json", current_focus)
         self.assertNotIn("verify-safe-20260621-132210.json", current_focus)
-        self.assertIn("Jarvis 0.1.496 build 496", section)
+        self.assertIn("Jarvis 0.1.497 build 497", section)
+        self.assertIn("explicit speech\n  commands fail closed", section)
+        self.assertIn("same-bundle Shut Up control is\n  unavailable", section)
         self.assertIn("runtime/verification/latest.json", section)
         self.assertIn("passed 106/106", section)
         self.assertIn("distinguish stale", section)
@@ -16717,8 +16725,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.496}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-496}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.497}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-497}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
@@ -22192,6 +22200,37 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["action"], "speech.say")
         self.assertEqual(result["speech"]["reason"], "explicit")
         self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/say", "hello"])
+
+    def test_quick_speech_command_respects_muted_state(self):
+        with patch("jarvis.tools.SPEECH_MUTED", True), \
+             patch("jarvis.tools.subprocess.Popen") as popen_mock:
+            result = quick_local_control("say out loud hello")
+
+        self.assertEqual(result["status"], "muted")
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["action"], "speech.say")
+        self.assertEqual(result["speech"]["status"], "muted")
+        self.assertEqual(result["reply"], "Jarvis speech is muted.")
+        popen_mock.assert_not_called()
+
+    def test_quick_speech_command_requires_emergency_control_when_configured(self):
+        with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+             patch("jarvis.tools._speech_emergency_control_snapshot", return_value={
+                 "emergency_control_required": True,
+                 "emergency_control_available": False,
+                 "emergency_control_process": "jarvis-status-helper",
+                 "emergency_control_detail": "missing_expected_helper",
+                 "emergency_control_expected_path": "/tmp/Jarvis.app/Contents/MacOS/jarvis-status-helper",
+             }), \
+             patch("jarvis.tools.subprocess.Popen") as popen_mock:
+            result = quick_local_control("say out loud hello")
+
+        self.assertEqual(result["status"], "emergency_control_missing")
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["action"], "speech.say")
+        self.assertEqual(result["speech"]["status"], "emergency_control_missing")
+        self.assertIn("Shut Up control", result["reply"])
+        popen_mock.assert_not_called()
 
     def test_quick_speech_command_honors_explicit_macos_voice_override(self):
         class FakeProcess:
