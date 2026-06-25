@@ -7435,6 +7435,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("report refresh self-healing", shipped)
         self.assertIn("Codex speed status", shipped)
         self.assertIn("build-and-launch", shipped.lower())
+        self.assertIn("fenced code blocks stay visible on screen", shipped)
         self.assertIn("fresh full-loop proof for Leo's target prompt set", shipped)
         self.assertIn("zero warnings", shipped)
         self.assertIn("ignores Piper worker command-line arguments", shipped)
