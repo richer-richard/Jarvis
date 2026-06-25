@@ -29436,6 +29436,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                 "action_proof": {
                                     "completion_status": "not_inspected",
                                     "honest_not_inspected": True,
+                                    "browser_target_available": True,
+                                    "uses_imported_bookmark_first": True,
+                                    "uses_teams_deeplink_first": False,
                                     "visible_reply_preview": (
                                         "I found a Teams route, but browser actions are suppressed for this QA run, "
                                         "so I did not open Chrome."
@@ -30254,6 +30257,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
                                 "action_proof": {
                                     "completion_status": "not_inspected",
                                     "honest_not_inspected": True,
+                                    "browser_target_available": True,
+                                    "uses_imported_bookmark_first": True,
+                                    "uses_teams_deeplink_first": False,
                                     "visible_reply_preview": (
                                         "I found a Teams route, but browser actions are suppressed for this QA run, "
                                         "so I did not open Chrome."
@@ -30274,6 +30280,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("browser actions suppressed", diagnostic)
         self.assertIn("Chrome was not opened", diagnostic)
         self.assertIn("Teams was not inspected", diagnostic)
+        self.assertIn("safe imported Teams bookmark route ready", diagnostic)
 
     def test_morning_status_full_loop_artifact_stale_text_ignores_missing_or_current_commit(self):
         with patch("scripts.morning_status.git_commit_short", return_value="head"):

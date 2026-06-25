@@ -767,7 +767,11 @@ def teams_browser_suppression_diagnostic(item: dict[str, Any]) -> str:
         inspection = "Teams was not inspected"
     else:
         inspection = f"Teams status {completion}"
-    return f"{completion}; browser actions suppressed, Chrome was not opened, {inspection}"
+    route_text = ""
+    if proof.get("browser_target_available"):
+        route_label = "Teams deep link" if proof.get("uses_teams_deeplink_first") else "imported Teams bookmark"
+        route_text = f", safe {route_label} route ready"
+    return f"{completion}; browser actions suppressed, Chrome was not opened, {inspection}{route_text}"
 
 
 def latest_teams_live_navigation_diagnostic() -> str:
