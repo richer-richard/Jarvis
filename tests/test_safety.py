@@ -7479,6 +7479,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                                 "teams_deeplink_route_status": "no_prompt_match",
                                 "teams_deeplink_row_count": 3,
                                 "uses_teams_deeplink_first": False,
+                                "browser_target_available": True,
+                                "uses_imported_bookmark_first": True,
                                 "teams_page_inspection_status": "chrome_handoff_then_native_visible_read",
                                 "url": "https://teams.microsoft.com/private",
                                 "selected_teams_deeplink": {"class_id": "private-class"},
@@ -29784,6 +29786,59 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5) in screenshot pixels", blocker)
         self.assertIn("Teams Search no-click plan is ready for Music at (1821.84, 146.25) in screen points", blocker)
         self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17) in legacy coordinate space", blocker)
+
+    def test_morning_status_pre_build_gate_teams_blocker_reports_suppressed_bookmark_route(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "summary.json"
+            voice_report_path = Path(temp_dir) / "voice-loop-report.json"
+            voice_report_path.write_text(
+                json.dumps(
+                    {
+                        "result": {
+                            "command_response_result": {
+                                "browser_target_available": True,
+                                "uses_imported_bookmark_first": True,
+                                "uses_teams_deeplink_first": False,
+                                "teams_deeplink_route_status": "no_prompt_match",
+                                "teams_deeplink_row_count": 3,
+                                "teams_page_inspection_status": "browser_actions_suppressed",
+                                "url": "https://teams.microsoft.com/private",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "voice_loop_report": str(voice_report_path),
+                                "action_proof": {"completion_status": "not_inspected"},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            blocker = pre_build_gate_teams_blocker(
+                {
+                    "results": [
+                        {
+                            "id": "full_loop_regression",
+                            "ok": False,
+                            "stdout_tail": f"Report: {report_path}\nteams_music_assignment_honesty: warning",
+                        }
+                    ]
+                }
+            )
+
+        self.assertIn("safe imported Teams bookmark route ready but browser actions suppressed", blocker)
+        self.assertNotIn("teams.microsoft.com/private", blocker)
 
     def test_morning_status_pre_build_gate_teams_blocker_reports_focus_failure(self):
         with tempfile.TemporaryDirectory() as temp_dir:

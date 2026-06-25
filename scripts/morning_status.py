@@ -640,11 +640,15 @@ def teams_deeplink_route_status_text(item: dict[str, Any]) -> str:
         row_count_text = ""
     inspection_status = str(summary.get("teams_page_inspection_status") or "").strip()
     inspection_text = f"; inspection lane {inspection_status}" if inspection_status else ""
+    safe_route_text = ""
+    if summary.get("browser_target_available") and inspection_status == "browser_actions_suppressed":
+        route_label = "Teams deep link" if summary.get("uses_teams_deeplink_first") else "imported Teams bookmark"
+        safe_route_text = f"; safe {route_label} route ready but browser actions suppressed"
     if summary.get("uses_teams_deeplink_first"):
-        return f"Teams deep-link route is {route_status}{row_count_text}{inspection_text}"
+        return f"Teams deep-link route is {route_status}{row_count_text}{inspection_text}{safe_route_text}"
     if route_status == "no_prompt_match":
-        return f"Teams deep-link inventory had no prompt match{row_count_text}; Jarvis fell back instead of opening an unrelated class{inspection_text}"
-    return f"Teams deep-link route is {route_status}{row_count_text}{inspection_text}"
+        return f"Teams deep-link inventory had no prompt match{row_count_text}; Jarvis fell back instead of opening an unrelated class{inspection_text}{safe_route_text}"
+    return f"Teams deep-link route is {route_status}{row_count_text}{inspection_text}{safe_route_text}"
 
 
 def coordinate_space_status_text(payload: dict[str, Any]) -> str:

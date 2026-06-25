@@ -61,6 +61,7 @@
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
 - [x] Fix the `email_sharpay_month` full-loop warning caused by local STT hearing proper names like `Cao`/`Hongqiao` incorrectly, add a focused regression, and confirm the email full-loop case passes without opening Chrome.
 - [x] Improve Teams target-prompt proof transparency: when browser actions are suppressed, the full-loop warning now says whether a safe imported Teams bookmark or deep-link route is ready without opening Chrome or exposing the URL.
+- [x] Surface the same safe Teams bookmark/deep-link route readiness in `scripts/morning_status.py`, so the breakfast report does not hide the useful next step behind the generic Teams blocker line.
 - [x] Harden native Music bridge playback confirmation so cold-start/delayed playback is polled before Jarvis claims Music did not start.
 - [x] Preserve the concrete `music_app_library_empty` diagnosis through Jarvis voice-loop/full-loop reporting instead of flattening it into a generic Music failure.
 - [x] Make morning status prefer newer standalone Music proof over stale pre-build-gate Music blocker wording when the full gate is stale.
@@ -82,6 +83,7 @@
 
 - [x] Fixed the current `email_sharpay_month` warning: the speech verifier now normalizes the observed local-STT noise (`Sharpay Cow`, `Hong Cho`, `Student Council Corps`, spoken year ranges) without lowering the global speech similarity threshold. Focused regressions passed and `python3 scripts/full_loop_regression.py --case email --timeout 60 --no-report-refresh` passed at `runtime/full_loop_regression/20260626-052816/summary.json`.
 - [x] Improved current Teams failure proof: `teams_music_assignment_honesty` still warns honestly because Jarvis did not inspect the Music assignment, but the warning now records that a safe imported Teams bookmark route is ready while browser actions are suppressed. Focused regressions passed and the Teams-only full-loop artifact is `runtime/full_loop_regression/20260626-054504/summary.json`.
+- [x] Updated morning status to include the same safe Teams route detail: it now says `safe imported Teams bookmark route ready but browser actions suppressed` while still redacting private Teams URLs. Focused morning-status regressions passed.
 - [x] Added a Chrome safety line to `scripts/morning_status.py`: the live
   output now says `Chrome safety from stale gate: cleanup ok; Chrome not
   running; 0 test tab/window targets.` when the cleanup artifact proves Chrome
