@@ -257,7 +257,10 @@ def print_latest_pre_build_gate() -> None:
     )
     teams_blocker = pre_build_gate_teams_blocker(data)
     if teams_blocker:
-        prefix = "Last known Teams blocker from stale gate" if stale_suffix else "Teams blocker"
+        if stale_suffix and latest_current_teams_artifact_available():
+            prefix = "Stale pre-build Teams blocker superseded by current Teams artifact"
+        else:
+            prefix = "Last known Teams blocker from stale gate" if stale_suffix else "Teams blocker"
         print(f"{prefix}: {teams_blocker}")
     music_blocker = pre_build_gate_music_blocker(data)
     if music_blocker:
@@ -681,7 +684,7 @@ def pre_build_gate_cleanup_warning(data: dict[str, Any]) -> str:
     return ""
 
 
-def latest_teams_live_navigation_diagnostic() -> str:
+def latest_teams_artifact() -> tuple[Path, dict[str, Any], dict[str, Any]] | None:
     full_loop_root = PROJECT_ROOT / "runtime" / "full_loop_regression"
     reports = sorted(
         (path for path in full_loop_root.glob("20*/summary.json") if path.is_file()),
@@ -696,40 +699,73 @@ def latest_teams_live_navigation_diagnostic() -> str:
         for item in data.get("results", []) if isinstance(data.get("results"), list) else []:
             if not isinstance(item, dict) or item.get("case_id") != "teams_music_assignment_honesty":
                 continue
-            proof = item.get("action_proof") if isinstance(item.get("action_proof"), dict) else {}
-            execution = proof.get("visible_navigation_execution")
-            steps = proof.get("visible_navigation_execution_steps")
-            age = format_uptime(time_since(report.stat().st_mtime))
-            stale_text = full_loop_artifact_stale_text(data)
-            if not isinstance(execution, dict) or not execution:
-                sequence = proof.get("visible_navigation_sequence")
-                labels = [
-                    str(step.get("label") or step.get("key") or "").strip()
-                    for step in sequence
-                    if isinstance(sequence, list)
-                    and isinstance(step, dict)
-                    and str(step.get("label") or step.get("key") or "").strip()
-                ] if isinstance(sequence, list) else []
-                label_text = f"; next sequence {' -> '.join(labels)}" if labels else ""
-                return f"not exercised in latest Teams artifact{label_text}; {report.relative_to(PROJECT_ROOT)}, age {age}{stale_text}"
-            status = str(execution.get("status") or "unknown").strip() or "unknown"
-            point = execution.get("point") if isinstance(execution.get("point"), dict) else {}
-            point_text = f" at ({point.get('x')}, {point.get('y')})" if point else ""
-            coordinate_text = coordinate_space_status_text(execution)
-            action_name = str(execution.get("action") or "").strip()
-            action_prefix = f"{action_name} " if action_name else ""
-            if execution.get("executed"):
-                action = f"executed {action_prefix}{status}{point_text}{coordinate_text}"
-            elif execution.get("attempted"):
-                action = f"attempted {action_prefix}and got {status}{point_text}{coordinate_text}"
-            elif str(execution.get("reason") or "") == "no_untried_navigation_plan":
-                action = f"stopped after exhausting safe navigation plans as {status}"
-            else:
-                action = f"stopped as {action_prefix}{status}{point_text}{coordinate_text}"
-            step_count = len(steps) if isinstance(steps, list) else 0
-            step_text = teams_navigation_steps_text(steps) if isinstance(steps, list) else ""
-            return f"{action}; {step_count} step(s){step_text}; {report.relative_to(PROJECT_ROOT)}, age {age}{stale_text}"
-    return ""
+            return report, data, item
+    return None
+
+
+def latest_current_teams_artifact_available() -> bool:
+    artifact = latest_teams_artifact()
+    if not artifact:
+        return False
+    _, data, _ = artifact
+    return not full_loop_artifact_stale_text(data)
+
+
+def teams_browser_suppression_diagnostic(item: dict[str, Any]) -> str:
+    proof = item.get("action_proof") if isinstance(item.get("action_proof"), dict) else {}
+    reply = str(proof.get("visible_reply_preview") or "").strip()
+    browser_suppressed = "browser actions are suppressed" in reply.lower()
+    if not browser_suppressed:
+        return ""
+    completion = str(proof.get("completion_status") or item.get("status") or "unknown").strip() or "unknown"
+    if proof.get("honest_not_inspected") or completion == "not_inspected":
+        inspection = "Teams was not inspected"
+    else:
+        inspection = f"Teams status {completion}"
+    return f"{completion}; browser actions suppressed, Chrome was not opened, {inspection}"
+
+
+def latest_teams_live_navigation_diagnostic() -> str:
+    artifact = latest_teams_artifact()
+    if not artifact:
+        return ""
+    report, data, item = artifact
+    proof = item.get("action_proof") if isinstance(item.get("action_proof"), dict) else {}
+    execution = proof.get("visible_navigation_execution")
+    steps = proof.get("visible_navigation_execution_steps")
+    age = format_uptime(time_since(report.stat().st_mtime))
+    stale_text = full_loop_artifact_stale_text(data)
+    suppression = teams_browser_suppression_diagnostic(item)
+    if suppression:
+        return f"{suppression}; {report.relative_to(PROJECT_ROOT)}, age {age}{stale_text}"
+    if not isinstance(execution, dict) or not execution:
+        sequence = proof.get("visible_navigation_sequence")
+        labels = [
+            str(step.get("label") or step.get("key") or "").strip()
+            for step in sequence
+            if isinstance(sequence, list)
+            and isinstance(step, dict)
+            and str(step.get("label") or step.get("key") or "").strip()
+        ] if isinstance(sequence, list) else []
+        label_text = f"; next sequence {' -> '.join(labels)}" if labels else ""
+        return f"not exercised in latest Teams artifact{label_text}; {report.relative_to(PROJECT_ROOT)}, age {age}{stale_text}"
+    status = str(execution.get("status") or "unknown").strip() or "unknown"
+    point = execution.get("point") if isinstance(execution.get("point"), dict) else {}
+    point_text = f" at ({point.get('x')}, {point.get('y')})" if point else ""
+    coordinate_text = coordinate_space_status_text(execution)
+    action_name = str(execution.get("action") or "").strip()
+    action_prefix = f"{action_name} " if action_name else ""
+    if execution.get("executed"):
+        action = f"executed {action_prefix}{status}{point_text}{coordinate_text}"
+    elif execution.get("attempted"):
+        action = f"attempted {action_prefix}and got {status}{point_text}{coordinate_text}"
+    elif str(execution.get("reason") or "") == "no_untried_navigation_plan":
+        action = f"stopped after exhausting safe navigation plans as {status}"
+    else:
+        action = f"stopped as {action_prefix}{status}{point_text}{coordinate_text}"
+    step_count = len(steps) if isinstance(steps, list) else 0
+    step_text = teams_navigation_steps_text(steps) if isinstance(steps, list) else ""
+    return f"{action}; {step_count} step(s){step_text}; {report.relative_to(PROJECT_ROOT)}, age {age}{stale_text}"
 
 
 def full_loop_artifact_stale_text(data: dict[str, Any]) -> str:

@@ -7547,7 +7547,11 @@ class VerifySafeScriptTests(unittest.TestCase):
         current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
-        self.assertIn("Last updated: 2026-06-26 01:26 CST", memory)
+        self.assertIn("Last updated: 2026-06-26 01:50 CST", memory)
+        self.assertIn("current Teams safety artifact", current_focus)
+        self.assertIn("browser actions were suppressed", current_focus)
+        self.assertIn("Chrome was not opened", current_focus)
+        self.assertIn("1157/1157", current_focus)
         self.assertIn("suppress_browser_actions", current_focus)
         self.assertIn("Chrome cleanup", current_focus)
         self.assertIn("af0ef40", current_focus)
@@ -29012,6 +29016,79 @@ class RuntimeSurfaceTests(unittest.TestCase):
         printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
         self.assertIn("Last known Teams blocker from stale gate: Teams assignment is wrong_subject.", printed)
 
+    def test_morning_status_supersedes_stale_teams_blocker_with_current_artifact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            gate_dir = root / "runtime" / "pre_build_gate"
+            gate_dir.mkdir(parents=True)
+            stale_report = root / "runtime" / "full_loop_regression" / "stale-summary.json"
+            stale_report.parent.mkdir(parents=True)
+            stale_report.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {"completion_status": "wrong_subject"},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            current_report_dir = root / "runtime" / "full_loop_regression" / "20260626-013905"
+            current_report_dir.mkdir(parents=True)
+            (current_report_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "source_commit": "newhead",
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {
+                                    "completion_status": "not_inspected",
+                                    "honest_not_inspected": True,
+                                    "visible_reply_preview": (
+                                        "I found a Teams route, but browser actions are suppressed for this QA run, "
+                                        "so I did not open Chrome."
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (gate_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "passed": 0,
+                        "total": 1,
+                        "source_commit": "oldgate",
+                        "results": [
+                            {
+                                "id": "full_loop_regression",
+                                "ok": False,
+                                "stdout_tail": f"Report: {stale_report}\nteams_music_assignment_honesty: warning",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="newhead"), \
+                 patch("builtins.print") as print_mock:
+                print_latest_pre_build_gate()
+
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertNotIn("Last known Teams blocker from stale gate", printed)
+        self.assertIn("Stale pre-build Teams blocker superseded by current Teams artifact", printed)
+
     def test_morning_status_pre_build_gate_music_blocker_summary(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             report_path = Path(temp_dir) / "summary.json"
@@ -29721,6 +29798,43 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("not exercised in latest Teams artifact", diagnostic)
         self.assertIn("stale for HEAD newhead", diagnostic)
         self.assertIn("artifact ran on oldgate", diagnostic)
+
+    def test_morning_status_latest_teams_diagnostic_reports_browser_suppression(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report_dir = root / "runtime" / "full_loop_regression" / "20260626-013905"
+            report_dir.mkdir(parents=True)
+            (report_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "source_commit": "head",
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {
+                                    "completion_status": "not_inspected",
+                                    "honest_not_inspected": True,
+                                    "visible_reply_preview": (
+                                        "I found a Teams route, but browser actions are suppressed for this QA run, "
+                                        "so I did not open Chrome."
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="head"):
+                diagnostic = latest_teams_live_navigation_diagnostic()
+
+        self.assertIn("not_inspected", diagnostic)
+        self.assertIn("browser actions suppressed", diagnostic)
+        self.assertIn("Chrome was not opened", diagnostic)
+        self.assertIn("Teams was not inspected", diagnostic)
 
     def test_morning_status_full_loop_artifact_stale_text_ignores_missing_or_current_commit(self):
         with patch("scripts.morning_status.git_commit_short", return_value="head"):
