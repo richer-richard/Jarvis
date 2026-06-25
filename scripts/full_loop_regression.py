@@ -474,6 +474,10 @@ def run_music_waving_case(
             cleanup["new_afplay_processes_after"] = new_processes_since(before_afplay, after_afplay)
             cleanup["media_surfaces_after"] = after_media_surfaces
             cleanup["new_media_surfaces_after"] = new_media_surfaces_since(before_media_surfaces, after_media_surfaces)
+            cleanup["new_blocked_media_inspections_after"] = new_blocked_media_inspections_since(
+                before_media_surfaces,
+                after_media_surfaces,
+            )
             result["cleanup"] = cleanup
             result["total_seconds"] = round(time.monotonic() - started, 3)
             if not cleanup["verified_stopped"]:
@@ -497,7 +501,7 @@ def run_music_waving_case(
                     warnings = []
                     result["warnings"] = warnings
                 warnings.append("Music cleanup left a new media playback surface running.")
-            blocked_surfaces = after_media_surfaces.get("blocked")
+            blocked_surfaces = cleanup["new_blocked_media_inspections_after"]
             if isinstance(blocked_surfaces, list) and "Google Chrome" in blocked_surfaces:
                 if result.get("status") == "passed":
                     result["status"] = "warning"
@@ -505,7 +509,9 @@ def run_music_waving_case(
                 if not isinstance(warnings, list):
                     warnings = []
                     result["warnings"] = warnings
-                warnings.append("Chrome media-surface inspection was blocked, so this proof could not rule out hidden Chrome audio.")
+                warnings.append(
+                    "Chrome media-surface inspection became blocked during the test, so this proof could not rule out hidden Chrome audio."
+                )
         write_json(run_dir / "cleanup.json", cleanup)
 
 
@@ -701,6 +707,12 @@ def new_media_surfaces_since(before: dict[str, Any], after: dict[str, Any]) -> l
     before_surfaces = {str(item) for item in before.get("surfaces", [])}
     after_surfaces = {str(item) for item in after.get("surfaces", [])}
     return sorted(after_surfaces - before_surfaces)
+
+
+def new_blocked_media_inspections_since(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    before_blocked = {str(item) for item in before.get("blocked", [])}
+    after_blocked = {str(item) for item in after.get("blocked", [])}
+    return sorted(after_blocked - before_blocked)
 
 
 def wait_for_music_playback(music_bridge_url: str, *, timeout: float) -> dict[str, Any]:

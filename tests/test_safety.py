@@ -579,7 +579,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["cleanup"]["new_media_surfaces_after"], ["Google Chrome"])
         self.assertIn("Music cleanup left a new media playback surface running.", result["warnings"])
 
-    def test_full_loop_music_case_warns_when_chrome_media_inspection_blocked(self):
+    def test_full_loop_music_case_warns_when_chrome_media_inspection_becomes_blocked(self):
         def fake_music_bridge_request(_base_url, method, path, **_kwargs):
             if method == "GET" and path == "/health":
                 return {"ok": True}
@@ -621,7 +621,53 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "warning")
         self.assertEqual(result["cleanup"]["media_surfaces_after"]["blocked"], ["Google Chrome"])
-        self.assertIn("could not rule out hidden Chrome audio", result["warnings"][0])
+        self.assertEqual(result["cleanup"]["new_blocked_media_inspections_after"], ["Google Chrome"])
+        self.assertIn("became blocked during the test", result["warnings"][0])
+
+    def test_full_loop_music_case_allows_preexisting_chrome_media_inspection_block(self):
+        def fake_music_bridge_request(_base_url, method, path, **_kwargs):
+            if method == "GET" and path == "/health":
+                return {"ok": True}
+            if method == "GET" and path == "/playback-state":
+                return {"ok": True, "playing": False}
+            return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.music_bridge_request", side_effect=fake_music_bridge_request), \
+             patch("scripts.full_loop_regression.afplay_process_snapshot", return_value=[]), \
+             patch(
+                 "scripts.full_loop_regression.media_playback_surface_snapshot",
+                 side_effect=[
+                     {"surfaces": [], "blocked": ["Google Chrome"]},
+                     {"surfaces": [], "blocked": ["Google Chrome"]},
+                 ],
+             ), \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop, \
+             patch("scripts.full_loop_regression.wait_for_music_playback") as wait_for_music_playback:
+            run_voice_loop.return_value = {"result": {"status": "passed"}}
+            wait_for_music_playback.return_value = {
+                "ok": True,
+                "playing": True,
+                "currentTime": 1.0,
+                "nowPlaying": {
+                    "title": "Dear Evan Hansen | 2017 Tony Awards",
+                    "fileName": "Dear Evan Hansen.mp3",
+                },
+            }
+
+            result = full_loop_regression.run_music_waving_case(
+                full_loop_regression.MUSIC_WAVING_CASE,
+                base_url="http://127.0.0.1:8765",
+                music_bridge_url="http://127.0.0.1:47879",
+                run_dir=Path(tmpdir) / "music",
+                timeout=1.0,
+                exercise_live_speech=False,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["cleanup"]["media_surfaces_after"]["blocked"], ["Google Chrome"])
+        self.assertEqual(result["cleanup"]["new_blocked_media_inspections_after"], [])
+        self.assertNotIn("Chrome media-surface inspection", " ".join(result["warnings"]))
 
     def test_full_loop_new_processes_since_ignores_existing_afplay(self):
         before = [{"pid": 11, "command": "/usr/bin/afplay old.wav"}]
@@ -637,6 +683,15 @@ class VerifySafeScriptTests(unittest.TestCase):
         after = {"surfaces": ["Google Chrome", "Music"]}
 
         self.assertEqual(full_loop_regression.new_media_surfaces_since(before, after), ["Music"])
+
+    def test_full_loop_new_blocked_media_inspections_since_ignores_preexisting_block(self):
+        before = {"blocked": ["Google Chrome"]}
+        after = {"blocked": ["Google Chrome", "QuickTime Player"]}
+
+        self.assertEqual(
+            full_loop_regression.new_blocked_media_inspections_since(before, after),
+            ["QuickTime Player"],
+        )
 
     def test_full_loop_chrome_tab_snapshot_timeout_fails_soft(self):
         with patch("scripts.full_loop_regression.subprocess.run", side_effect=subprocess.TimeoutExpired(["osascript"], 10)):
