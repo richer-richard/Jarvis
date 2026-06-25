@@ -1418,35 +1418,34 @@ def run_teams_assignment_case(
 ) -> dict[str, Any]:
     started = time.monotonic()
     run_dir.mkdir(parents=True, exist_ok=True)
-    chrome_memory_guard: dict[str, Any] | None = None
-    if exercise_visible_navigation:
-        chrome_memory_guard = chrome_memory_safety_snapshot()
-        write_json(run_dir / "chrome-memory-safety.json", chrome_memory_guard)
-        if not chrome_memory_guard.get("ok"):
-            reason = str(chrome_memory_guard.get("reason") or "Chrome memory safety check failed.")
-            warning = f"Chrome live navigation skipped for computer safety: {reason}"
-            return {
-                "case_id": case["id"],
-                "status": "warning",
-                "warnings": [warning],
-                "command": case["command"],
-                "voice_loop_status": "skipped_for_chrome_memory_safety",
-                "voice_loop_report": "",
-                "action_proof": {
-                    "passed": True,
-                    "capability_complete": False,
-                    "completion_status": "not_inspected",
-                    "visible_reply_preview": warning,
-                    "chrome_memory_guard": chrome_memory_guard,
-                },
-                "cleanup": {
-                    "required": False,
-                    "reason": "Chrome was not touched because the live-navigation memory guard failed closed.",
-                },
+    chrome_memory_guard = chrome_memory_safety_snapshot()
+    chrome_tab_snapshots_allowed = bool(chrome_memory_guard.get("ok"))
+    write_json(run_dir / "chrome-memory-safety.json", chrome_memory_guard)
+    if exercise_visible_navigation and not chrome_memory_guard.get("ok"):
+        reason = str(chrome_memory_guard.get("reason") or "Chrome memory safety check failed.")
+        warning = f"Chrome live navigation skipped for computer safety: {reason}"
+        return {
+            "case_id": case["id"],
+            "status": "warning",
+            "warnings": [warning],
+            "command": case["command"],
+            "voice_loop_status": "skipped_for_chrome_memory_safety",
+            "voice_loop_report": "",
+            "action_proof": {
+                "passed": True,
+                "capability_complete": False,
+                "completion_status": "not_inspected",
+                "visible_reply_preview": warning,
                 "chrome_memory_guard": chrome_memory_guard,
-                "total_seconds": round(time.monotonic() - started, 3),
-            }
-    before_tabs = chrome_tab_snapshot()
+            },
+            "cleanup": {
+                "required": False,
+                "reason": "Chrome was not touched because the live-navigation memory guard failed closed.",
+            },
+            "chrome_memory_guard": chrome_memory_guard,
+            "total_seconds": round(time.monotonic() - started, 3),
+        }
+    before_tabs = chrome_tab_snapshot() if chrome_tab_snapshots_allowed else []
     write_json(run_dir / "chrome-tabs-before.json", {"tabs": before_tabs})
     cleanup: dict[str, Any] = {}
     try:
@@ -1501,6 +1500,12 @@ def run_teams_assignment_case(
         if not action_proof["passed"]:
             status = "failed"
             warnings.extend(action_proof["failures"])
+        if not chrome_tab_snapshots_allowed:
+            warnings.append(
+                "Chrome tab snapshot and cleanup were skipped for computer safety because the Chrome memory preflight failed."
+            )
+            if status == "passed":
+                status = "warning"
         return {
             "case_id": case["id"],
             "status": status,
@@ -1514,8 +1519,18 @@ def run_teams_assignment_case(
             "total_seconds": round(time.monotonic() - started, 3),
         }
     finally:
-        after_tabs = chrome_tab_snapshot()
-        cleanup.update(clean_new_chrome_tabs(before_tabs, after_tabs, hosts=("teams.microsoft.com", "teams.cloud.microsoft")))
+        after_tabs = chrome_tab_snapshot() if chrome_tab_snapshots_allowed else []
+        if chrome_tab_snapshots_allowed:
+            cleanup.update(clean_new_chrome_tabs(before_tabs, after_tabs, hosts=("teams.microsoft.com", "teams.cloud.microsoft")))
+        else:
+            cleanup.update({
+                "chrome_tabs_closed": 0,
+                "chrome_windows_closed": 0,
+                "new_target_tabs": 0,
+                "new_target_windows": 0,
+                "reason": "chrome_memory_guard_skipped_tab_snapshot",
+                "chrome_memory_guard_status": str(chrome_memory_guard.get("status") or ""),
+            })
         write_json(run_dir / "chrome-tabs-after.json", {"tabs": after_tabs})
         write_json(run_dir / "cleanup.json", cleanup)
 

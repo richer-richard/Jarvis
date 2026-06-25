@@ -5,6 +5,7 @@
 - [ ] Overnight run for June 25/26, 2026: keep working safely until 8:00 AM CST/Beijing on June 26, 2026, continue Jarvis hardening from the current bug backlog, and keep this queue current.
 - [ ] Chrome safety is mandatory tonight: do not open Chrome tabs/windows unless a task truly needs it; record anything Codex/Jarvis/tests open; close every Codex/Jarvis/test-created Chrome tab or window before switching lanes, before any morning report, and before ending the run.
 - [x] Add and verify a Chrome memory preflight for live browser/Teams navigation so tests refuse to touch Chrome if it is already consuming dangerous memory.
+- [x] Extend the Chrome memory preflight to passive Teams tab snapshots so cleanup bookkeeping does not touch Chrome when memory is already unsafe.
 - [x] Halt active overnight implementation on Leo's instruction, preserve the checkpoint, and prepare a concise HTML status report before pausing work.
 - [ ] Continue the active Jarvis hardening goal until all known user-reported bugs are fixed or captured by reliable regression tests.
 - [x] Refresh safe verification on current HEAD `b1c6a13` after the inline diagnostics sanitizer commit, then refresh the status/report surfaces if it passes.
@@ -75,6 +76,15 @@
 
 ## Completed This Turn
 
+- [x] Extended Chrome memory safety to passive Teams tab snapshots: if Chrome is
+  already over the memory ceiling, the Teams full-loop harness can still run
+  browser-suppressed proof but skips Chrome tab ID snapshots and cleanup
+  AppleScript, recording `chrome_memory_guard_skipped_tab_snapshot` instead.
+  Focused guard tests passed, full `python3 -m unittest tests.test_safety`
+  passed `1166/1166`, the canonical `output/Jarvis.app` rebuilt and relaunched
+  as `0.1.501 build 501`, `scripts/verify_safe.py` passed `106/106` at
+  `runtime/verification/verify-safe-20260626-041850.json`, and Chrome cleanup
+  returned `chrome_not_running` with zero targets.
 - [x] Added a Chrome memory safety preflight for live Teams/browser navigation:
   the full-loop harness now checks Google Chrome RSS before allowing
   `--exercise-visible-navigation`; if Chrome is above the safety ceiling or

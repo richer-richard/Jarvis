@@ -754,6 +754,46 @@ class VerifySafeScriptTests(unittest.TestCase):
         tab_snapshot.assert_not_called()
         run_voice_loop.assert_not_called()
 
+    def test_full_loop_teams_skips_passive_chrome_snapshots_when_memory_is_unsafe(self):
+        unsafe = {
+            "ok": False,
+            "status": "chrome_memory_too_high",
+            "reason": "Google Chrome is using 46000.0 MB, above the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 46000.0,
+            "processes": [],
+        }
+        voice_report = {
+            "result": {
+                "status": "passed",
+                "visible_reply_preview": (
+                    "Chrome is blocking Jarvis from controlling the current page. "
+                    "Grant Jarvis Automation access to Chrome and enable Chrome's Allow JavaScript from Apple Events setting, then try again."
+                ),
+                "visible_screen_follow_up": {"status": "browser_permission_blocked", "tool": "browser.read_page"},
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=unsafe), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop", return_value=voice_report) as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=False,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["voice_loop_status"], "passed")
+        self.assertEqual(result["cleanup"]["reason"], "chrome_memory_guard_skipped_tab_snapshot")
+        self.assertTrue(any("Chrome tab snapshot and cleanup were skipped" in warning for warning in result["warnings"]))
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_called_once()
+
     def test_full_loop_codex_default_uses_voice_routed_alias_command(self):
         fake_voice_report = {
             "result": {
@@ -7509,6 +7549,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.501", shipped)
+        self.assertIn("passive Teams tab snapshots", shipped)
         self.assertIn("0.1.500", shipped)
         self.assertIn("current mute state", shipped)
         self.assertIn("currently muted or unmuted", shipped)
@@ -7614,7 +7656,9 @@ class VerifySafeScriptTests(unittest.TestCase):
         current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
-        self.assertIn("Last updated: 2026-06-26 03:55 CST", memory)
+        self.assertIn("Last updated: 2026-06-26 04:10 CST", memory)
+        self.assertIn("Jarvis\n  0.1.501 build 501", current_focus)
+        self.assertIn("chrome_memory_guard_skipped_tab_snapshot", current_focus)
         self.assertIn("Jarvis 0.1.500 build 500", current_focus)
         self.assertIn("Chrome safety checkpoint", current_focus)
         self.assertIn("chrome_memory_too_high", current_focus)
@@ -7648,12 +7692,16 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("298e14a", current_focus)
         self.assertIn("runtime/verification/latest.json", current_focus)
         self.assertNotIn("verify-safe-20260621-132210.json", current_focus)
-        self.assertIn("Jarvis 0.1.500 build 500", section)
-        self.assertIn("Chrome memory\n  preflight", section)
-        self.assertIn("TTS status state whether speech is currently muted or unmuted", section)
-        self.assertIn("Jarvis 0.1.498 explicit-speech safety explanation", section)
+        self.assertIn("Jarvis 0.1.501 build 501", section)
+        self.assertIn("skips passive Chrome tab\n  snapshots", section)
+        self.assertIn("Jarvis 0.1.500 live-browser\n  Chrome memory preflight", section)
+        self.assertIn("Chrome memory preflight", section)
+        self.assertIn("TTS status state whether\n  speech is currently muted or unmuted", section)
+        self.assertIn("Jarvis 0.1.498", section)
+        self.assertIn("explicit-speech safety explanation", section)
         self.assertIn("Jarvis 0.1.497", section)
-        self.assertIn("explicit-speech fail-closed", section)
+        self.assertIn("explicit-speech", section)
+        self.assertIn("fail-closed", section)
         self.assertIn("runtime/verification/latest.json", section)
         self.assertIn("passed 106/106", section)
         self.assertIn("distinguish stale", section)
@@ -16814,8 +16862,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.500}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-500}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.501}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-501}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)

@@ -30,6 +30,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.501 extends Chrome memory protection to passive Teams tab snapshots, so even cleanup bookkeeping avoids touching Chrome when memory is unsafe.",
     "Jarvis 0.1.500 adds a Chrome memory safety preflight before live browser navigation, so Teams/Chrome tests refuse to run if Chrome is already using dangerous memory.",
     "Jarvis 0.1.499 makes voice diagnostics state the current mute state directly, so TTS status says whether speech is currently muted or unmuted instead of only saying automatic speech is on.",
     "Jarvis 0.1.498 makes voice diagnostics clearer: TTS status now explicitly says explicit speech still respects Speech Muted and the Shut Up safety check.",
