@@ -74,6 +74,14 @@
 
 ## Completed This Turn
 
+- [x] Shipped Jarvis 0.1.498 voice-diagnostics clarity: `tts status` now says
+  explicit speech still respects Speech Muted and the Shut Up safety check.
+  Focused TTS status regression passed; full `python3 -m unittest
+  tests.test_safety` passed `1161/1161`, the canonical `output/Jarvis.app`
+  rebuilt and relaunched as `0.1.498 build 498`, a live suppressed `tts status`
+  probe confirmed the new safety line with `played_audio=false`, and
+  `scripts/verify_safe.py` passed `106/106` at
+  `runtime/verification/verify-safe-20260626-032539.json`.
 - [x] Shipped Jarvis 0.1.497 explicit-speech fail-closed safety: `say out loud
   ...` now returns `Jarvis speech is muted.` while muted, or says the Shut Up
   control is unavailable when the emergency helper is missing, and does not

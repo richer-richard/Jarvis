@@ -3007,6 +3007,7 @@ def tts_status() -> dict[str, Any]:
     )
     reply += f" Spoken progress lines are {'on' if TTS_SPEAK_STATUS else 'off'}."
     reply += " Speech interruption is available with `stop talking` or the voice.stop_speaking tool."
+    reply += " Explicit speech still respects Speech Muted and the Shut Up safety check."
     if macos_available:
         voice_label = "macOS fallback voice" if provider == "piper" else "Voice"
         if not TTS_VOICE and not TTS_RATE:

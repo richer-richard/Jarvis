@@ -30,6 +30,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.498 makes voice diagnostics clearer: TTS status now explicitly says explicit speech still respects Speech Muted and the Shut Up safety check.",
     "Jarvis 0.1.497 makes explicit speech safer: `say out loud ...` now refuses clearly when Jarvis is muted or when the Shut Up menu control is unavailable, and it does not start macOS speech in either case.",
     "Jarvis 0.1.496 makes the Shut Up safety path harder to fool: app-launched workers now require the status-helper from the same Jarvis bundle, so an old orphan helper cannot make speech look safely controllable.",
     "Jarvis 0.1.495 makes overnight QA safer around Chrome: voice-loop tests now suppress browser actions by default, Teams plans do not hand off to Chrome while suppressed, and live browser navigation requires an explicit opt-in.",
