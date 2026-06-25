@@ -2906,6 +2906,10 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
     if requested_class:
         return [requested_class, *_visible_navigation_sequence_tail(navigation_targets)]
 
+    assignments = _visible_navigation_assignments_step(
+        navigation_targets,
+        "open the Teams Assignments view before backing out through the class list",
+    )
     all_teams = _visible_navigation_sequence_step(
         navigation_targets,
         "all_teams",
@@ -2914,6 +2918,7 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
     )
     if all_teams:
         return [
+            *([assignments] if assignments else []),
             all_teams,
             *_visible_navigation_search_step(navigation_targets),
             {
@@ -2927,6 +2932,7 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
     search_steps = _visible_navigation_search_step(navigation_targets)
     if search_steps:
         return [
+            *([assignments] if assignments else []),
             *search_steps,
             {
                 "key": "requested_class_after_search",
@@ -3048,17 +3054,23 @@ def _visible_navigation_sequence_step(
 
 
 def _visible_navigation_sequence_tail(navigation_targets: dict[str, Any]) -> list[dict[str, Any]]:
+    assignments = _visible_navigation_assignments_step(
+        navigation_targets,
+        "open Assignments after the requested class is visible",
+    )
+    return [assignments] if assignments else []
+
+
+def _visible_navigation_assignments_step(navigation_targets: dict[str, Any], reason: str) -> dict[str, Any] | None:
     assignments_plan = navigation_targets.get("assignments_plan")
     if not isinstance(assignments_plan, dict) or not assignments_plan.get("planned"):
-        return []
-    return [
-        {
-            "key": "assignments",
-            "label": "Assignments",
-            "reason": "open Assignments after the requested class is visible",
-            "plan": assignments_plan,
-        }
-    ]
+        return None
+    return {
+        "key": "assignments",
+        "label": "Assignments",
+        "reason": reason,
+        "plan": assignments_plan,
+    }
 
 
 def execute_visible_navigation_plan(

@@ -4297,7 +4297,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             ["requested_class", "assignments"],
         )
 
-    def test_voice_loop_qa_visible_navigation_sequence_uses_all_teams_before_assignments_when_class_missing(self):
+    def test_voice_loop_qa_visible_navigation_sequence_uses_assignments_before_all_teams_when_class_missing(self):
         targets = {
             "requested_class_plan": {"planned": False, "will_click": False},
             "all_teams_plan": {
@@ -4316,10 +4316,12 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(
             [step["key"] for step in sequence],
-            ["all_teams", "requested_class_after_all_teams"],
+            ["assignments", "all_teams", "requested_class_after_all_teams"],
         )
-        self.assertEqual(sequence[0]["plan"]["point"], {"x": 257.0, "y": 322.5})
-        self.assertEqual(sequence[1]["plan"]["reason"], "requires_previous_step")
+        self.assertEqual(sequence[0]["plan"]["point"], {"x": 68.0, "y": 577.0})
+        self.assertIn("before backing out", sequence[0]["reason"])
+        self.assertEqual(sequence[1]["plan"]["point"], {"x": 257.0, "y": 322.5})
+        self.assertEqual(sequence[2]["plan"]["reason"], "requires_previous_step")
 
     def test_voice_loop_qa_visible_navigation_sequence_can_search_for_missing_class(self):
         targets = {
@@ -4347,19 +4349,19 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(
             [step["key"] for step in sequence],
-            ["all_teams", "teams_search", "requested_class_after_all_teams"],
+            ["assignments", "all_teams", "teams_search", "requested_class_after_all_teams"],
         )
         next_plan = voice_loop_qa.next_visible_navigation_plan(
             {"visible_navigation_targets": {"sequence": sequence}},
-            seen_navigation_points={(257.0, 322.5)},
+            seen_navigation_points={(68.0, 577.0), (257.0, 322.5)},
         )
         self.assertEqual(next_plan["action"], "type_search")
         self.assertEqual(next_plan["query"], "Music")
         self.assertEqual(next_plan["navigation_key"], "teams_search")
         exhausted_plan = voice_loop_qa.next_visible_navigation_plan(
             {"visible_navigation_targets": {"sequence": sequence, **targets}},
-            seen_navigation_points={(257.0, 322.5), (474.0, 255.0)},
-            seen_navigation_keys={"all_teams", "teams_search"},
+            seen_navigation_points={(68.0, 577.0), (257.0, 322.5), (474.0, 255.0)},
+            seen_navigation_keys={"assignments", "all_teams", "teams_search"},
         )
         self.assertIsNone(exhausted_plan)
 
