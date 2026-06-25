@@ -326,6 +326,30 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["status"], "chrome_not_running")
         self.assertEqual(result["total_mb"], 0.0)
 
+    def test_full_loop_chrome_surface_guard_blocks_crowded_chrome(self):
+        pgrep_result = subprocess.CompletedProcess(["pgrep"], 0, "123\n", "")
+        surface_result = subprocess.CompletedProcess(["osascript"], 0, "12\t64\n", "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", side_effect=[pgrep_result, surface_result]):
+            result = full_loop_regression.chrome_surface_safety_snapshot(max_windows=3, max_tabs=20)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "chrome_surface_too_crowded")
+        self.assertEqual(result["window_count"], 12)
+        self.assertEqual(result["tab_count"], 64)
+        self.assertIn("above the safe live-test limit", result["reason"])
+
+    def test_full_loop_chrome_surface_guard_allows_closed_chrome(self):
+        pgrep_result = subprocess.CompletedProcess(["pgrep"], 1, "", "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", return_value=pgrep_result):
+            result = full_loop_regression.chrome_surface_safety_snapshot(max_windows=3, max_tabs=20)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "chrome_not_running")
+        self.assertEqual(result["window_count"], 0)
+        self.assertEqual(result["tab_count"], 0)
+
     def test_full_loop_music_proof_accepts_expected_song(self):
         proof = full_loop_regression.verify_waving_playback({
             "playing": True,
@@ -755,6 +779,46 @@ class VerifySafeScriptTests(unittest.TestCase):
         tab_snapshot.assert_not_called()
         run_voice_loop.assert_not_called()
 
+    def test_full_loop_teams_live_navigation_skips_when_chrome_surface_is_crowded(self):
+        safe_memory = {
+            "ok": True,
+            "status": "chrome_memory_ok",
+            "reason": "Google Chrome is using 512.0 MB, below the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 512.0,
+            "processes": [],
+        }
+        crowded_surface = {
+            "ok": False,
+            "status": "chrome_surface_too_crowded",
+            "reason": "Google Chrome already has 12 window(s) and 64 tab(s), above the safe live-test limit.",
+            "max_windows": 3,
+            "max_tabs": 20,
+            "window_count": 12,
+            "tab_count": 64,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=safe_memory), \
+             patch("scripts.full_loop_regression.chrome_surface_safety_snapshot", return_value=crowded_surface), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=True,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["voice_loop_status"], "skipped_for_chrome_surface_safety")
+        self.assertEqual(result["chrome_surface_guard"]["status"], "chrome_surface_too_crowded")
+        self.assertIn("Chrome live navigation skipped for computer safety", result["warnings"][0])
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_not_called()
+
     def test_full_loop_teams_skips_passive_chrome_snapshots_when_memory_is_unsafe(self):
         unsafe = {
             "ok": False,
@@ -792,6 +856,51 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["voice_loop_status"], "passed")
         self.assertEqual(result["cleanup"]["reason"], "chrome_memory_guard_skipped_tab_snapshot")
         self.assertTrue(any("Chrome tab snapshot and cleanup were skipped" in warning for warning in result["warnings"]))
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_called_once()
+
+    def test_full_loop_teams_skips_passive_chrome_snapshots_when_surface_is_crowded(self):
+        safe_memory = {
+            "ok": True,
+            "status": "chrome_memory_ok",
+            "reason": "Google Chrome is using 512.0 MB, below the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 512.0,
+            "processes": [],
+        }
+        crowded_surface = {
+            "ok": False,
+            "status": "chrome_surface_too_crowded",
+            "reason": "Google Chrome already has 12 window(s) and 64 tab(s), above the safe live-test limit.",
+            "max_windows": 3,
+            "max_tabs": 20,
+            "window_count": 12,
+            "tab_count": 64,
+        }
+        voice_report = {
+            "result": {
+                "status": "passed",
+                "visible_reply_preview": "I have not inspected the newest Music assignment yet.",
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=safe_memory), \
+             patch("scripts.full_loop_regression.chrome_surface_safety_snapshot", return_value=crowded_surface), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop", return_value=voice_report) as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=False,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["cleanup"]["reason"], "chrome_surface_guard_skipped_tab_snapshot")
+        self.assertTrue(any("window/tab-count preflight failed" in warning for warning in result["warnings"]))
         tab_snapshot.assert_not_called()
         run_voice_loop.assert_called_once()
 
