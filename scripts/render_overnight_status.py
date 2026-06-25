@@ -30,6 +30,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.496 makes the Shut Up safety path harder to fool: app-launched workers now require the status-helper from the same Jarvis bundle, so an old orphan helper cannot make speech look safely controllable.",
     "Jarvis 0.1.495 makes overnight QA safer around Chrome: voice-loop tests now suppress browser actions by default, Teams plans do not hand off to Chrome while suppressed, and live browser navigation requires an explicit opt-in.",
     "Jarvis 0.1.494 keeps code answers readable instead of noisy: fenced code blocks stay visible on screen, but automatic speech says that the code is on screen instead of reading syntax aloud.",
     "Jarvis 0.1.494 makes email tool recovery more reliable without fake keyword routing: if the first model clearly punts a real email-check request into plain chat, Jarvis recovers with the email summary tool and labels the fallback, while generic email conversation still never reads mail.",

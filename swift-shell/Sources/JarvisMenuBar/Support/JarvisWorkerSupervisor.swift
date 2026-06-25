@@ -252,6 +252,13 @@ final class JarvisWorkerSupervisor {
         environment["JARVIS_TTS_VOICE"] = ""
         environment["JARVIS_TTS_RATE"] = ""
         environment["JARVIS_TTS_REQUIRE_EMERGENCY_CONTROL"] = "1"
+        if let identity = currentBundleLaunchIdentity() {
+            environment["JARVIS_TTS_EMERGENCY_HELPER_PATH"] = URL(fileURLWithPath: identity.appPath)
+                .appendingPathComponent("Contents")
+                .appendingPathComponent("MacOS")
+                .appendingPathComponent("jarvis-status-helper")
+                .path
+        }
         if let workspaceRoot = sourceWorkspaceRoot(),
            workspaceRoot.standardizedFileURL.path != projectRoot.standardizedFileURL.path {
             environment["JARVIS_WORKSPACE_ROOT"] = workspaceRoot.path

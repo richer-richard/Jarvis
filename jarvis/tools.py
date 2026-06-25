@@ -75,6 +75,7 @@ from .config import (
     SAFE_SHELL_TIMEOUT_SECONDS,
     TTS_AFPLAY,
     TTS_AUTOMATIC_ENABLED,
+    TTS_EMERGENCY_HELPER_PATH,
     TTS_FALLBACK_PROVIDER,
     TTS_MAX_CHARS,
     TTS_PIPER_BIN,
@@ -2537,11 +2538,14 @@ def _speech_emergency_control_snapshot() -> dict[str, Any]:
             "emergency_control_available": True,
             "emergency_control_process": "",
             "emergency_control_detail": "not_required",
+            "emergency_control_expected_path": "",
         }
     pgrep = _find_executable("pgrep") or "/usr/bin/pgrep"
+    expected_path = TTS_EMERGENCY_HELPER_PATH.strip()
+    command = [pgrep, "-fl", "jarvis-status-helper"] if expected_path else [pgrep, "-x", "jarvis-status-helper"]
     try:
         completed = subprocess.run(
-            [pgrep, "-x", "jarvis-status-helper"],
+            command,
             cwd=PROJECT_ROOT,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -2556,12 +2560,24 @@ def _speech_emergency_control_snapshot() -> dict[str, Any]:
             "emergency_control_available": False,
             "emergency_control_process": "jarvis-status-helper",
             "emergency_control_detail": type(error).__name__,
+            "emergency_control_expected_path": expected_path,
+        }
+    stdout = completed.stdout.strip()
+    if expected_path:
+        matching_lines = [line for line in stdout.splitlines() if expected_path in line]
+        return {
+            "emergency_control_required": True,
+            "emergency_control_available": completed.returncode == 0 and bool(matching_lines),
+            "emergency_control_process": "jarvis-status-helper",
+            "emergency_control_detail": "running_expected_helper" if matching_lines else "missing_expected_helper",
+            "emergency_control_expected_path": expected_path,
         }
     return {
         "emergency_control_required": True,
-        "emergency_control_available": completed.returncode == 0 and bool(completed.stdout.strip()),
+        "emergency_control_available": completed.returncode == 0 and bool(stdout),
         "emergency_control_process": "jarvis-status-helper",
         "emergency_control_detail": "running" if completed.returncode == 0 else "missing",
+        "emergency_control_expected_path": "",
     }
 
 

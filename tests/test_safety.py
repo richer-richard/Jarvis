@@ -7452,6 +7452,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.496", shipped)
+        self.assertIn("status-helper from the same Jarvis bundle", shipped)
         self.assertIn("0.1.495", shipped)
         self.assertIn("voice-loop tests now suppress browser actions by default", shipped)
         self.assertIn("0.1.494", shipped)
@@ -7564,7 +7566,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("298e14a", current_focus)
         self.assertIn("runtime/verification/latest.json", current_focus)
         self.assertNotIn("verify-safe-20260621-132210.json", current_focus)
-        self.assertIn("Jarvis 0.1.495 build 495", section)
+        self.assertIn("Jarvis 0.1.496 build 496", section)
         self.assertIn("runtime/verification/latest.json", section)
         self.assertIn("passed 106/106", section)
         self.assertIn("distinguish stale", section)
@@ -16474,6 +16476,8 @@ Pages occupied by compressor:             10.
         self.assertIn('environment["JARVIS_TTS_VOICE"] = ""', source)
         self.assertIn('environment["JARVIS_TTS_RATE"] = ""', source)
         self.assertIn('environment["JARVIS_TTS_REQUIRE_EMERGENCY_CONTROL"] = "1"', source)
+        self.assertIn('environment["JARVIS_TTS_EMERGENCY_HELPER_PATH"]', source)
+        self.assertIn('jarvis-status-helper', source)
         self.assertNotIn('environment["JARVIS_TTS_PROVIDER"] = "piper"', source)
 
     def test_swift_worker_supervisor_rejects_stale_bundle_workers(self):
@@ -16708,8 +16712,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.495}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-495}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.496}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-496}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)
@@ -23046,6 +23050,28 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["emergency_control_process"], "jarvis-status-helper")
         popen_mock.assert_not_called()
 
+    def test_auto_speech_rejects_stale_emergency_helper_from_other_bundle(self):
+        stale_helper = subprocess.CompletedProcess(
+            args=["pgrep"],
+            returncode=0,
+            stdout="123 /Applications/Jarvis-LocalOS-Only.app/Contents/MacOS/jarvis-status-helper --app-bundle-path /Applications/Jarvis-LocalOS-Only.app\n",
+            stderr="",
+        )
+
+        with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+             patch("jarvis.tools.TTS_EMERGENCY_HELPER_PATH", "/Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper"), \
+             patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+             patch("jarvis.tools._find_executable", side_effect=lambda name: "/usr/bin/pgrep" if name == "pgrep" else "/usr/bin/say"), \
+             patch("jarvis.tools.subprocess.run", return_value=stale_helper), \
+             patch("jarvis.tools.subprocess.Popen") as popen_mock:
+            result = jarvis_tools.speak_text_async("Jarvis should reject the stale helper.", reason="final")
+
+        self.assertFalse(result["spoken"])
+        self.assertEqual(result["status"], "emergency_control_missing")
+        self.assertEqual(result["emergency_control_detail"], "missing_expected_helper")
+        self.assertEqual(result["emergency_control_expected_path"], "/Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper")
+        popen_mock.assert_not_called()
+
     def test_auto_speech_allows_audio_when_emergency_menu_is_running(self):
         class FakeProcess:
             def poll(self):
@@ -23079,6 +23105,41 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["status"], "started")
         self.assertEqual(result["provider"], "macos")
         self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/say", "Jarvis can speak because Shut Up is available."])
+        self.assertTrue(thread_mock.called)
+
+    def test_auto_speech_allows_expected_emergency_helper_bundle(self):
+        class FakeProcess:
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                return 0
+
+        expected_helper = subprocess.CompletedProcess(
+            args=["pgrep"],
+            returncode=0,
+            stdout="123 /Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper --app-bundle-path /Applications/Jarvis.app\n",
+            stderr="",
+        )
+
+        jarvis_tools.SPEECH_PROCESS = None
+        try:
+            with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+                 patch("jarvis.tools.TTS_EMERGENCY_HELPER_PATH", "/Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper"), \
+                 patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+                 patch("jarvis.tools.TTS_PROVIDER", "macos"), \
+                 patch("jarvis.tools._find_executable", side_effect=lambda name: "/usr/bin/pgrep" if name == "pgrep" else "/usr/bin/say"), \
+                 patch("jarvis.tools.subprocess.run", return_value=expected_helper) as run_mock, \
+                 patch("jarvis.tools.threading.Thread") as thread_mock, \
+                 patch("jarvis.tools.subprocess.Popen", return_value=FakeProcess()) as popen_mock:
+                result = jarvis_tools.speak_text_async("Jarvis can speak because the matching helper is available.", reason="final")
+        finally:
+            jarvis_tools.SPEECH_PROCESS = None
+            jarvis_tools.SPEECH_PROCESS_REASON = None
+
+        self.assertTrue(result["spoken"])
+        self.assertEqual(run_mock.call_args.args[0], ["/usr/bin/pgrep", "-fl", "jarvis-status-helper"])
+        self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/say", "Jarvis can speak because the matching helper is available."])
         self.assertTrue(thread_mock.called)
 
     def test_speech_diagnostics_include_full_spoken_text_for_echo_detection(self):
