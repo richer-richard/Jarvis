@@ -7451,7 +7451,12 @@ class VerifySafeScriptTests(unittest.TestCase):
         current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
-        self.assertIn("Last updated: 2026-06-21 17:37 CST", memory)
+        self.assertIn("Last updated: 2026-06-25 23:31 CST", memory)
+        self.assertIn("af0ef40", current_focus)
+        self.assertIn("0387cde", current_focus)
+        self.assertIn("29a2457", current_focus)
+        self.assertIn("db28dfc", current_focus)
+        self.assertIn("6751925", current_focus)
         self.assertIn("b0589ed", current_focus)
         self.assertIn("0386eaf", current_focus)
         self.assertIn("298e14a", current_focus)
@@ -7467,7 +7472,11 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("loopback_device_missing", section)
         self.assertIn("strict physical speaker/microphone", section)
         self.assertNotIn("verify-safe-20260621-151346.json", section)
-        self.assertIn("Music warning", section)
+        self.assertIn("latest live Music proof passed", section)
+        self.assertIn("no longer marks the proof warning", section)
+        self.assertIn("prefers Assignments before All Teams", section)
+        self.assertIn("test-created tab/window must be closed by recorded ID", section)
+        self.assertNotIn("Music warning", section)
         self.assertNotIn("Jarvis 0.1.444 build 444 is live", section)
         self.assertNotIn("verify-safe-20260618-001149.json", section)
 
