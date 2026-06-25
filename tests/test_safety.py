@@ -6490,6 +6490,22 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertGreaterEqual(voice_loop_qa.text_similarity(expected, transcript), 0.9)
 
+    def test_voice_loop_qa_similarity_normalizes_long_sharpay_summary_stt_noise(self):
+        expected = (
+            "Sharpay Cao congratulates you on joining the 2026 to 2027 Hongqiao campus "
+            "student council core team and says more information will be shared after the "
+            "September term starts. Sharpay Cao gave 3 links to feedback forms that you may "
+            "need to fill in."
+        )
+        transcript = (
+            "Sharpay Cow congratulates you on joining the 2026-2027 Hong Cho Campus Student "
+            "Council Corps team, and says more information will be shared after the September "
+            "term starts. Sharpay Cow gave three links to feedback forms that you may need to "
+            "fill in."
+        )
+
+        self.assertGreaterEqual(voice_loop_qa.text_similarity(expected, transcript), 0.9)
+
     def test_voice_loop_qa_visible_screen_followup_preserves_assignment_mismatch_after_browser_block(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch(

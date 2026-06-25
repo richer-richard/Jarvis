@@ -59,6 +59,7 @@
 - [x] Prototype Apple Speech/Dictation as Jarvis's primary STT lane: use macOS Speech framework if possible, compare transcript quality/latency against the current local STT on the same recorded prompts, and keep local STT as fallback until Apple dictation is live-proven.
 - [x] Add a reusable no-prompt Apple Speech STT probe and surface its latest result in `voice.stt_candidates`.
 - [ ] Pick the next risky bug from `JARVIS_BUG_BACKLOG.md`, implement a focused fix, add/update tests, and commit only after meaningful passing proof.
+- [x] Fix the `email_sharpay_month` full-loop warning caused by local STT hearing proper names like `Cao`/`Hongqiao` incorrectly, add a focused regression, and confirm the email full-loop case passes without opening Chrome.
 - [x] Harden native Music bridge playback confirmation so cold-start/delayed playback is polled before Jarvis claims Music did not start.
 - [x] Preserve the concrete `music_app_library_empty` diagnosis through Jarvis voice-loop/full-loop reporting instead of flattening it into a generic Music failure.
 - [x] Make morning status prefer newer standalone Music proof over stale pre-build-gate Music blocker wording when the full gate is stale.
@@ -78,6 +79,7 @@
 
 ## Completed This Turn
 
+- [x] Fixed the current `email_sharpay_month` warning: the speech verifier now normalizes the observed local-STT noise (`Sharpay Cow`, `Hong Cho`, `Student Council Corps`, spoken year ranges) without lowering the global speech similarity threshold. Focused regressions passed and `python3 scripts/full_loop_regression.py --case email --timeout 60 --no-report-refresh` passed at `runtime/full_loop_regression/20260626-052816/summary.json`.
 - [x] Added a Chrome safety line to `scripts/morning_status.py`: the live
   output now says `Chrome safety from stale gate: cleanup ok; Chrome not
   running; 0 test tab/window targets.` when the cleanup artifact proves Chrome

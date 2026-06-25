@@ -1825,6 +1825,15 @@ def normalize_stt_noise_tokens(tokens: list[str]) -> list[str]:
     index = 0
     while index < len(tokens):
         if (
+            index + 2 < len(tokens)
+            and re.fullmatch(r"20\d{2}", tokens[index] or "")
+            and tokens[index + 1] == "to"
+            and re.fullmatch(r"20\d{2}", tokens[index + 2] or "")
+        ):
+            normalized.extend([tokens[index], tokens[index + 2]])
+            index += 3
+            continue
+        if (
             index + 4 < len(tokens)
             and tokens[index:index + 5] == ["20", "million", "262", "27"]
         ):
@@ -1841,14 +1850,23 @@ def normalize_stt_noise_tokens(tokens: list[str]) -> list[str]:
             normalized.extend(["sharpay", "cao"])
             index += 3
             continue
+        if index + 1 < len(tokens) and tokens[index:index + 2] == ["hong", "cho"]:
+            normalized.append("hongqiao")
+            index += 2
+            continue
         if (
             index + 1 < len(tokens)
             and tokens[index] == "sharpay"
-            and tokens[index + 1] in {"cal", "cao", "cows"}
+            and tokens[index + 1] in {"cal", "cao", "cow", "cows"}
         ):
             normalized.extend(["sharpay", "cao"])
             index += 2
             continue
+        if token := tokens[index]:
+            if token == "corps":
+                normalized.append("core")
+                index += 1
+                continue
         normalized.append(tokens[index])
         index += 1
     return normalized
