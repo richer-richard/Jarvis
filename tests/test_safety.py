@@ -6979,6 +6979,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "path": "runtime/pre_build_gate/latest.json",
                 "label": "failed, 3/4 passed",
                 "teams_blocker": "Teams assignment is not_inspected; Microsoft sign-in gate is visible in Chrome.",
+                "cleanup_status": "cleanup ok; Chrome not running; 0 test tab/window targets.",
             },
             "physical_audio": {
                 "ready_for_physical_capture": False,
@@ -6994,6 +6995,20 @@ class VerifySafeScriptTests(unittest.TestCase):
             "risks": render_overnight_status.RISK_ITEMS,
             "supporting": render_overnight_status.SUPPORTING_FILES,
         }
+        context["proof"] = render_overnight_status.proof_items_with_verification(
+            context["verification"],
+            context["no_prompt_verification"],
+            None,
+            None,
+            None,
+            None,
+            None,
+            context["full_loop"],
+            context["pre_build_gate"],
+            None,
+            context["version"],
+            context["build"],
+        )
 
         report = render_overnight_status.render_report(context)
         workboard = render_overnight_status.render_workboard(context)
@@ -7011,6 +7026,10 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Pre-build gate", workboard)
         self.assertIn("failed, 3/4 passed", workboard)
         self.assertIn("Microsoft sign-in gate is visible in Chrome", workboard)
+        self.assertIn("Chrome cleanup proof", workboard)
+        self.assertIn("cleanup ok; Chrome not running; 0 test tab/window targets.", workboard)
+        self.assertIn("Latest pre-build Chrome cleanup proof", report)
+        self.assertIn("runtime/pre_build_gate/latest.json", report)
         self.assertIn("Physical audio proof", workboard)
         self.assertIn("Not ready for physical speaker/microphone capture", workboard)
         self.assertIn("Strict physical-capture gates fail closed", workboard)

@@ -786,6 +786,7 @@ def build_context(base_url: str) -> dict[str, Any]:
             regression_matrix,
             voice_loop,
             full_loop,
+            pre_build_gate,
             crash,
             version,
             build,
@@ -848,6 +849,7 @@ def proof_items_with_verification(
     regression_matrix: dict[str, Any] | None = None,
     voice_loop: dict[str, Any] | None = None,
     full_loop: dict[str, Any] | None = None,
+    pre_build_gate: dict[str, Any] | None = None,
     crash: dict[str, Any] | None = None,
     current_version: str = "",
     current_build: str = "",
@@ -960,6 +962,11 @@ def proof_items_with_verification(
         teams_live_navigation = str(full_loop.get("teams_live_navigation_diagnostic") or "")
         if teams_live_navigation:
             items.append(f"Teams live navigation diagnostic: {teams_live_navigation}.")
+    if pre_build_gate and pre_build_gate.get("cleanup_status"):
+        items.append(
+            "Latest pre-build Chrome cleanup proof: "
+            f"{pre_build_gate['cleanup_status']} ({pre_build_gate.get('path') or 'runtime/pre_build_gate/latest.json'})."
+        )
     if crash and crash.get("path"):
         crash_version = str(crash.get("version") or "unknown")
         crash_build = str(crash.get("build") or "unknown")
@@ -1547,6 +1554,7 @@ def latest_pre_build_gate() -> dict[str, Any]:
         "stale_text": pre_build_gate_report_stale_text(data),
         "warnings": [str(item) for item in warnings if str(item).strip()],
         "teams_blocker": latest_pre_build_gate_teams_blocker(data),
+        "cleanup_status": latest_pre_build_gate_cleanup_status(data),
     }
 
 
@@ -1582,6 +1590,43 @@ def latest_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
         return str(pre_build_gate_teams_blocker(data) or "").strip()
     except Exception:
         return ""
+
+
+def latest_pre_build_gate_cleanup_status(data: dict[str, Any]) -> str:
+    results = data.get("results")
+    if not isinstance(results, list):
+        return ""
+    for item in results:
+        if not isinstance(item, dict) or item.get("id") != "cleanup_chrome_test_tabs" or not item.get("ok"):
+            continue
+        detail = cleanup_stdout_detail(item)
+        reason = str(detail.get("reason") or "").strip()
+        target_count = safe_int(detail.get("target_count"))
+        closed_count = safe_int(detail.get("closed_count"))
+        if reason == "chrome_not_running":
+            return "cleanup ok; Chrome not running; 0 test tab/window targets."
+        if reason:
+            return f"cleanup ok; {closed_count} closed; {target_count} test tab/window target(s); reason {reason}."
+        return f"cleanup ok; {closed_count} closed; {target_count} test tab/window target(s)."
+    return ""
+
+
+def cleanup_stdout_detail(item: dict[str, Any]) -> dict[str, Any]:
+    text = str(item.get("stdout_tail") or item.get("stdout") or "").strip()
+    if not text:
+        return {}
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def local_pre_build_gate_full_loop_report_path(data: dict[str, Any]) -> Path | None:
@@ -2222,6 +2267,7 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
         gate_detail = "not generated"
     if pre_build.get("teams_blocker"):
         gate_detail = f"{gate_detail}; {pre_build.get('teams_blocker')}"
+    cleanup_detail = str(pre_build.get("cleanup_status") or "").strip()
     physical = context.get("physical_audio") if isinstance(context.get("physical_audio"), dict) else {}
     physical_detail = workboard_physical_audio_detail(physical)
     checkpoints = [
@@ -2240,6 +2286,10 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
         (
             "Pre-build gate",
             gate_detail,
+        ),
+        (
+            "Chrome cleanup proof",
+            cleanup_detail or "Not generated yet; run the pre-build gate or cleanup helper before handoff.",
         ),
         (
             "Physical audio proof",
