@@ -9072,6 +9072,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                         "panel_is_visible": True,
                         "session_locked": True,
                         "window_count": 3,
+                        "window_visibility": [True, False, False],
                     }
                 ]
             }
@@ -9093,6 +9094,39 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("session locked", result.summary)
         self.assertIn("lock screen", result.summary)
+        self.assertIn("visible_windows=1", result.summary)
+        self.assertIn("total_windows=3", result.summary)
+
+    def test_verify_safe_window_self_test_reports_visible_and_total_windows(self):
+        payload = json.dumps(
+            {
+                "snapshots": [
+                    {
+                        "label": "after_refresh",
+                        "panel_is_visible": True,
+                        "session_locked": False,
+                        "window_count": 3,
+                        "window_visibility": [True, False, False],
+                    }
+                ]
+            }
+        )
+
+        def fake_run(args, **kwargs):
+            kwargs["stdout"].write(payload)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with patch("scripts.verify_safe.subprocess.run", side_effect=fake_run):
+            result = verify_safe.run_window_self_test(
+                "output_bundle_window_self_test",
+                ["output/Jarvis.app/Contents/MacOS/jarvis-menu-bar", "--window-self-test"],
+                env={"JARVIS_BASE_URL": "http://127.0.0.1:8765"},
+                timeout=90,
+            )
+
+        self.assertTrue(result.passed)
+        self.assertIn("saw 1 visible Jarvis window(s)", result.summary)
+        self.assertIn("3 total AppKit window object(s)", result.summary)
 
     def test_verify_safe_window_self_test_fails_without_visible_panel_when_unlocked(self):
         payload = json.dumps(

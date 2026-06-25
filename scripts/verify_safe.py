@@ -348,16 +348,26 @@ def run_window_self_test(
         window_count = int(snapshot.get("window_count") or 0)
     except (TypeError, ValueError):
         window_count = 0
+    window_visibility = snapshot.get("window_visibility")
+    visible_window_count = (
+        sum(1 for value in window_visibility if bool(value))
+        if isinstance(window_visibility, list)
+        else (1 if panel_visible else 0)
+    )
 
     if session_locked:
         passed = True
         summary = (
             "session locked; bundled window probe created the Jarvis panel, "
-            f"but live foreground visibility is blocked by the lock screen ({label}, windows={window_count})"
+            f"but live foreground visibility is blocked by the lock screen "
+            f"({label}, visible_windows={visible_window_count}, total_windows={window_count})"
         )
     elif completed.returncode == 0 and panel_visible and window_count > 0:
         passed = True
-        summary = f"bundled window probe saw a visible Jarvis panel at {label} with {window_count} window(s)"
+        summary = (
+            f"bundled window probe saw {visible_window_count} visible Jarvis window(s) at {label} "
+            f"({window_count} total AppKit window object(s))"
+        )
     elif snapshot:
         passed = False
         summary = (

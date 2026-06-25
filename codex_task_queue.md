@@ -63,6 +63,7 @@
 - [x] Improve Teams target-prompt proof transparency: when browser actions are suppressed, the full-loop warning now says whether a safe imported Teams bookmark or deep-link route is ready without opening Chrome or exposing the URL.
 - [x] Surface the same safe Teams bookmark/deep-link route readiness in `scripts/morning_status.py`, so the breakfast report does not hide the useful next step behind the generic Teams blocker line.
 - [x] Make the separate `Latest Teams live navigation` morning-status line also mention when the safe Teams route is ready while Chrome/browser actions remain suppressed.
+- [x] Clarify bundled Jarvis window-probe wording so one visible Jarvis panel plus hidden AppKit windows is not reported as ambiguous `3 window(s)` duplicate-Jarvis evidence.
 - [x] Harden native Music bridge playback confirmation so cold-start/delayed playback is polled before Jarvis claims Music did not start.
 - [x] Preserve the concrete `music_app_library_empty` diagnosis through Jarvis voice-loop/full-loop reporting instead of flattening it into a generic Music failure.
 - [x] Make morning status prefer newer standalone Music proof over stale pre-build-gate Music blocker wording when the full gate is stale.
@@ -86,6 +87,7 @@
 - [x] Improved current Teams failure proof: `teams_music_assignment_honesty` still warns honestly because Jarvis did not inspect the Music assignment, but the warning now records that a safe imported Teams bookmark route is ready while browser actions are suppressed. Focused regressions passed and the Teams-only full-loop artifact is `runtime/full_loop_regression/20260626-054504/summary.json`.
 - [x] Updated morning status to include the same safe Teams route detail: it now says `safe imported Teams bookmark route ready but browser actions suppressed` while still redacting private Teams URLs. Focused morning-status regressions passed.
 - [x] Made the `Latest Teams live navigation` line consistent with the blocker line: it now says `safe imported Teams bookmark route ready` when browser actions were suppressed and Chrome was not opened. Focused regressions passed.
+- [x] Clarified the window self-test report: it now reports visible Jarvis windows separately from total AppKit window objects, so one real Jarvis window plus hidden internal windows does not read like duplicate Jarvis apps. Focused verifier regressions passed.
 - [x] Added a Chrome safety line to `scripts/morning_status.py`: the live
   output now says `Chrome safety from stale gate: cleanup ok; Chrome not
   running; 0 test tab/window targets.` when the cleanup artifact proves Chrome
