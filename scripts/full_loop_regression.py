@@ -347,6 +347,85 @@ def apply_latency_budgets(results: list[dict[str, Any]], cases: list[dict[str, A
         result["status"] = "failed"
 
 
+def chrome_memory_safety_snapshot(limit_mb: float = 12000.0) -> dict[str, Any]:
+    """Return a fail-closed Chrome memory check before live browser automation."""
+    try:
+        completed = subprocess.run(
+            ["/bin/ps", "-axo", "pid=,rss=,command="],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "ok": False,
+            "status": "chrome_memory_unknown",
+            "reason": f"Could not inspect Chrome memory: {type(error).__name__}",
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": None,
+            "processes": [],
+        }
+    if completed.returncode != 0:
+        return {
+            "ok": False,
+            "status": "chrome_memory_unknown",
+            "reason": (completed.stderr.strip() or "ps returned a non-zero exit code.")[-500:],
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": None,
+            "processes": [],
+        }
+
+    processes: list[dict[str, Any]] = []
+    total_kb = 0
+    for line in completed.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid_text, rss_text, command = parts
+        if "Google Chrome" not in command:
+            continue
+        try:
+            rss_kb = int(rss_text)
+        except ValueError:
+            continue
+        total_kb += max(rss_kb, 0)
+        processes.append({
+            "pid": pid_text,
+            "rss_mb": round(max(rss_kb, 0) / 1024.0, 3),
+            "command_preview": command[:240],
+        })
+
+    total_mb = total_kb / 1024.0
+    if not processes:
+        return {
+            "ok": True,
+            "status": "chrome_not_running",
+            "reason": "Google Chrome is not running.",
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": 0.0,
+            "processes": [],
+        }
+    if total_mb > float(limit_mb):
+        return {
+            "ok": False,
+            "status": "chrome_memory_too_high",
+            "reason": f"Google Chrome is using {total_mb:.1f} MB, above the {float(limit_mb):.1f} MB safety limit.",
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": round(total_mb, 3),
+            "processes": processes[:40],
+        }
+    return {
+        "ok": True,
+        "status": "chrome_memory_ok",
+        "reason": f"Google Chrome is using {total_mb:.1f} MB, below the {float(limit_mb):.1f} MB safety limit.",
+        "limit_mb": round(float(limit_mb), 3),
+        "total_mb": round(total_mb, 3),
+        "processes": processes[:40],
+    }
+
+
 def voice_loop_user_latency_seconds(voice_report: dict[str, Any]) -> float | None:
     """Return the user-facing voice loop time, excluding offline proof generation."""
     result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
@@ -1339,6 +1418,34 @@ def run_teams_assignment_case(
 ) -> dict[str, Any]:
     started = time.monotonic()
     run_dir.mkdir(parents=True, exist_ok=True)
+    chrome_memory_guard: dict[str, Any] | None = None
+    if exercise_visible_navigation:
+        chrome_memory_guard = chrome_memory_safety_snapshot()
+        write_json(run_dir / "chrome-memory-safety.json", chrome_memory_guard)
+        if not chrome_memory_guard.get("ok"):
+            reason = str(chrome_memory_guard.get("reason") or "Chrome memory safety check failed.")
+            warning = f"Chrome live navigation skipped for computer safety: {reason}"
+            return {
+                "case_id": case["id"],
+                "status": "warning",
+                "warnings": [warning],
+                "command": case["command"],
+                "voice_loop_status": "skipped_for_chrome_memory_safety",
+                "voice_loop_report": "",
+                "action_proof": {
+                    "passed": True,
+                    "capability_complete": False,
+                    "completion_status": "not_inspected",
+                    "visible_reply_preview": warning,
+                    "chrome_memory_guard": chrome_memory_guard,
+                },
+                "cleanup": {
+                    "required": False,
+                    "reason": "Chrome was not touched because the live-navigation memory guard failed closed.",
+                },
+                "chrome_memory_guard": chrome_memory_guard,
+                "total_seconds": round(time.monotonic() - started, 3),
+            }
     before_tabs = chrome_tab_snapshot()
     write_json(run_dir / "chrome-tabs-before.json", {"tabs": before_tabs})
     cleanup: dict[str, Any] = {}
@@ -1403,6 +1510,7 @@ def run_teams_assignment_case(
             "voice_loop_report": str(run_dir / "voice-loop-report.json"),
             "action_proof": action_proof,
             "cleanup": cleanup,
+            "chrome_memory_guard": chrome_memory_guard or {},
             "total_seconds": round(time.monotonic() - started, 3),
         }
     finally:

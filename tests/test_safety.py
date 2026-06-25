@@ -298,6 +298,33 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn('if windowId is "1" and tabId is "11" then set end of closeList to t', script)
         self.assertNotIn("https://example.test/leo", script)
 
+    def test_full_loop_chrome_memory_guard_blocks_dangerous_chrome(self):
+        output = "\n".join([
+            "101 8388608 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "102 6291456 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=renderer",
+            "201 1024 /bin/zsh",
+        ])
+        completed = subprocess.CompletedProcess(["ps"], 0, output, "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", return_value=completed):
+            result = full_loop_regression.chrome_memory_safety_snapshot(limit_mb=12000.0)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "chrome_memory_too_high")
+        self.assertGreater(result["total_mb"], 12000.0)
+        self.assertEqual(len(result["processes"]), 2)
+        self.assertIn("above the 12000.0 MB safety limit", result["reason"])
+
+    def test_full_loop_chrome_memory_guard_allows_closed_chrome(self):
+        completed = subprocess.CompletedProcess(["ps"], 0, "201 1024 /bin/zsh\n", "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", return_value=completed):
+            result = full_loop_regression.chrome_memory_safety_snapshot(limit_mb=12000.0)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "chrome_not_running")
+        self.assertEqual(result["total_mb"], 0.0)
+
     def test_full_loop_music_proof_accepts_expected_song(self):
         proof = full_loop_regression.verify_waving_playback({
             "playing": True,
@@ -696,6 +723,36 @@ class VerifySafeScriptTests(unittest.TestCase):
     def test_full_loop_chrome_tab_snapshot_timeout_fails_soft(self):
         with patch("scripts.full_loop_regression.subprocess.run", side_effect=subprocess.TimeoutExpired(["osascript"], 10)):
             self.assertEqual(full_loop_regression.chrome_tab_snapshot(), [])
+
+    def test_full_loop_teams_live_navigation_skips_when_chrome_memory_is_unsafe(self):
+        unsafe = {
+            "ok": False,
+            "status": "chrome_memory_too_high",
+            "reason": "Google Chrome is using 46000.0 MB, above the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 46000.0,
+            "processes": [],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=unsafe), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=True,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["voice_loop_status"], "skipped_for_chrome_memory_safety")
+        self.assertEqual(result["chrome_memory_guard"]["status"], "chrome_memory_too_high")
+        self.assertIn("Chrome live navigation skipped for computer safety", result["warnings"][0])
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_not_called()
 
     def test_full_loop_codex_default_uses_voice_routed_alias_command(self):
         fake_voice_report = {
@@ -7452,7 +7509,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
-        self.assertIn("0.1.499", shipped)
+        self.assertIn("0.1.500", shipped)
         self.assertIn("current mute state", shipped)
         self.assertIn("currently muted or unmuted", shipped)
         self.assertIn("0.1.498", shipped)
@@ -7557,8 +7614,11 @@ class VerifySafeScriptTests(unittest.TestCase):
         current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
-        self.assertIn("Last updated: 2026-06-26 03:36 CST", memory)
-        self.assertIn("Jarvis 0.1.499 build 499", current_focus)
+        self.assertIn("Last updated: 2026-06-26 03:55 CST", memory)
+        self.assertIn("Jarvis 0.1.500 build 500", current_focus)
+        self.assertIn("Chrome safety checkpoint", current_focus)
+        self.assertIn("chrome_memory_too_high", current_focus)
+        self.assertIn("does not open or focus Chrome", current_focus)
         self.assertIn("currently muted or unmuted", current_focus)
         self.assertIn("Jarvis 0.1.498 build 498", current_focus)
         self.assertIn("explicit speech still respects Speech Muted", current_focus)
@@ -7588,10 +7648,12 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("298e14a", current_focus)
         self.assertIn("runtime/verification/latest.json", current_focus)
         self.assertNotIn("verify-safe-20260621-132210.json", current_focus)
-        self.assertIn("Jarvis 0.1.499 build 499", section)
-        self.assertIn("TTS status state\n  whether speech is currently muted or unmuted", section)
-        self.assertIn("Jarvis 0.1.498\n  explicit-speech safety explanation", section)
-        self.assertIn("Jarvis 0.1.497 explicit-speech\n  fail-closed", section)
+        self.assertIn("Jarvis 0.1.500 build 500", section)
+        self.assertIn("Chrome memory\n  preflight", section)
+        self.assertIn("TTS status state whether speech is currently muted or unmuted", section)
+        self.assertIn("Jarvis 0.1.498 explicit-speech safety explanation", section)
+        self.assertIn("Jarvis 0.1.497", section)
+        self.assertIn("explicit-speech fail-closed", section)
         self.assertIn("runtime/verification/latest.json", section)
         self.assertIn("passed 106/106", section)
         self.assertIn("distinguish stale", section)
@@ -16752,8 +16814,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.499}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-499}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.500}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-500}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
         self.assertIn("Refusing to build a non-canonical Jarvis app", script)

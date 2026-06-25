@@ -30,6 +30,7 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.500 adds a Chrome memory safety preflight before live browser navigation, so Teams/Chrome tests refuse to run if Chrome is already using dangerous memory.",
     "Jarvis 0.1.499 makes voice diagnostics state the current mute state directly, so TTS status says whether speech is currently muted or unmuted instead of only saying automatic speech is on.",
     "Jarvis 0.1.498 makes voice diagnostics clearer: TTS status now explicitly says explicit speech still respects Speech Muted and the Shut Up safety check.",
     "Jarvis 0.1.497 makes explicit speech safer: `say out loud ...` now refuses clearly when Jarvis is muted or when the Shut Up menu control is unavailable, and it does not start macOS speech in either case.",
