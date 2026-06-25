@@ -2,6 +2,8 @@
 
 ## Active
 
+- [ ] Overnight run for June 25/26, 2026: keep working safely until 8:00 AM CST/Beijing on June 26, 2026, continue Jarvis hardening from the current bug backlog, and keep this queue current.
+- [ ] Chrome safety is mandatory tonight: do not open Chrome tabs/windows unless a task truly needs it; record anything Codex/Jarvis/tests open; close every Codex/Jarvis/test-created Chrome tab or window before switching lanes, before any morning report, and before ending the run.
 - [x] Halt active overnight implementation on Leo's instruction, preserve the checkpoint, and prepare a concise HTML status report before pausing work.
 - [ ] Continue the active Jarvis hardening goal until all known user-reported bugs are fixed or captured by reliable regression tests.
 - [x] Refresh safe verification on current HEAD `b1c6a13` after the inline diagnostics sanitizer commit, then refresh the status/report surfaces if it passes.
@@ -72,6 +74,15 @@
 
 ## Completed This Turn
 
+- [x] Recorded Leo's June 25/26 overnight Chrome safety rule in both
+  `.memory.md` and `codex_task_queue.md`: continue safely until exactly
+  8:00 AM CST/Beijing on June 26, 2026, do not open Chrome tabs/windows unless
+  truly needed, track every Codex/Jarvis/test-created browser surface, and close
+  them before switching lanes or reporting. Focused memory guard passed, full
+  `python3 -m unittest tests.test_safety` passed `1159/1159`, canonical
+  `scripts/verify_safe.py` passed `106/106` at
+  `runtime/verification/verify-safe-20260626-025322.json`, and Chrome cleanup
+  returned `chrome_not_running` with zero targets.
 - [x] Made Teams focus-failure proof more actionable. When Chrome does not
   foreground Teams before OCR and active-tab details are blank, the voice-loop
   artifact now records `browser_focus_expected_host`,

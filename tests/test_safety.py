@@ -7549,7 +7549,12 @@ class VerifySafeScriptTests(unittest.TestCase):
         current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
-        self.assertIn("Last updated: 2026-06-26 01:50 CST", memory)
+        self.assertIn("Last updated: 2026-06-26 02:43 CST", memory)
+        self.assertIn("continue the June\n  25/26 overnight run until exactly 8:00 AM", current_focus)
+        self.assertIn("Computer safety is the top constraint", current_focus)
+        self.assertIn("Do not open Chrome tabs/windows unless\n  a task truly needs it", current_focus)
+        self.assertIn("close every\n  Codex/Jarvis/test-created Chrome tab or window", current_focus)
+        self.assertIn("roughly 46 GB on Leo's 16 GB Mac", current_focus)
         self.assertIn("current Teams safety artifact", current_focus)
         self.assertIn("browser actions were suppressed", current_focus)
         self.assertIn("Chrome was not opened", current_focus)
