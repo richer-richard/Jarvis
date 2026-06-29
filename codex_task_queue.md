@@ -2,6 +2,9 @@
 
 ## Active
 
+- [x] Create a consolidated markdown report inside the Jarvis repo explaining why Jarvis is still not actually usable, how hard the remaining work is, and the known major bugs/blockers.
+- [x] Commit the consolidated Jarvis usability report locally.
+- [x] Push the committed changes to GitHub after Leo provided the secret code for exporting repository data to GitHub.
 - [ ] Overnight run for June 25/26, 2026: keep working safely until 8:00 AM CST/Beijing on June 26, 2026, continue Jarvis hardening from the current bug backlog, and keep this queue current.
 - [ ] Chrome safety is mandatory tonight: do not open Chrome tabs/windows unless a task truly needs it; record anything Codex/Jarvis/tests open; close every Codex/Jarvis/test-created Chrome tab or window before switching lanes, before any morning report, and before ending the run.
 - [x] Make morning status explicitly show Chrome cleanup safety state so Leo can see whether Chrome is running or test tabs remain.
@@ -83,6 +86,7 @@
 
 ## Completed This Turn
 
+- [x] Created `JARVIS_USABILITY_REALITY_CHECK.md`, a consolidated markdown report explaining why Jarvis is still not actually usable, how hard each main blocker is, and the known major bugs/blockers across Teams/browser control, speech loop, Hey Jarvis, TTS/mute safety, Music, model/tool routing, app UI, proof, repo/build state, and release criteria.
 - [x] Refreshed fast-latency proof without opening Chrome or speaking: `python3 scripts/smoke_fast_latency.py --timeout 12 --max-first-visible 3.0 --max-total 8.0` passed and wrote `runtime/model_benchmarks/localhost-fast-latency-20260626-063726.json`; first visible text was 0.007s, 1.143s, and 0.663s across the three prompts, with total times under 1.8s.
 - [x] Added a fail-closed Chrome window/tab-count guard before live browser/Teams navigation: if Chrome is already too crowded or cannot be inspected, the harness skips live navigation and passive snapshots instead of adding more Chrome surfaces. Focused browser-safety tests passed, full `python3 -m unittest tests.test_safety` passed `1177/1177`, canonical `scripts/verify_safe.py` passed `106/106` at `runtime/verification/verify-safe-20260626-064756.json`, and Chrome cleanup returned `chrome_not_running` with zero targets.
 - [x] Refreshed the pre-build gate on current HEAD `03b6473`: `python_safety_suite`, Chrome cleanup, and report refresh passed; the gate remains `3/4` failed only because the all-case full-loop regression still reports the known Teams assignment warning while browser actions are suppressed. Artifact: `runtime/pre_build_gate/20260626-064944/summary.json`; Chrome cleanup again returned `chrome_not_running` with zero targets.
