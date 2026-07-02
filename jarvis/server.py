@@ -39,7 +39,9 @@ from .tools import (
     codex_activity_snapshot,
     localos_music_pending_control,
     reset_audio_actions_suppressed,
+    reset_browser_actions_suppressed,
     set_audio_actions_suppressed,
+    set_browser_actions_suppressed,
     store_localos_music_snapshot,
     outlook_visible_text_summary,
     visible_screen_text_summary,
@@ -96,9 +98,11 @@ class JarvisServer:
         *,
         suppress_speech: bool = False,
         suppress_audio_actions: bool = False,
+        suppress_browser_actions: bool = False,
         defer_final_speech: bool = False,
     ) -> dict[str, Any]:
         audio_token = set_audio_actions_suppressed(suppress_audio_actions)
+        browser_token = set_browser_actions_suppressed(suppress_browser_actions)
         try:
             with self._mode_lock:
                 is_paused = self.paused
@@ -142,6 +146,7 @@ class JarvisServer:
                     "result": _audit_safe_result(data["tool"], data["result"]),
                     "confirmation": data.get("confirmation"),
                     "suppress_audio_actions": bool(suppress_audio_actions),
+                    "suppress_browser_actions": bool(suppress_browser_actions),
                 },
             )
             data["audit_event_id"] = event.id
@@ -152,6 +157,7 @@ class JarvisServer:
             return data
         finally:
             reset_audio_actions_suppressed(audio_token)
+            reset_browser_actions_suppressed(browser_token)
 
     def stream_command(
         self,
@@ -160,17 +166,21 @@ class JarvisServer:
         *,
         suppress_speech: bool = False,
         suppress_audio_actions: bool = False,
+        suppress_browser_actions: bool = False,
     ):
         audio_token = set_audio_actions_suppressed(suppress_audio_actions)
+        browser_token = set_browser_actions_suppressed(suppress_browser_actions)
         try:
             yield from self._stream_command_inner(
                 command,
                 history=history,
                 suppress_speech=suppress_speech,
                 suppress_audio_actions=suppress_audio_actions,
+                suppress_browser_actions=suppress_browser_actions,
             )
         finally:
             reset_audio_actions_suppressed(audio_token)
+            reset_browser_actions_suppressed(browser_token)
 
     def _stream_command_inner(
         self,
@@ -179,6 +189,7 @@ class JarvisServer:
         *,
         suppress_speech: bool = False,
         suppress_audio_actions: bool = False,
+        suppress_browser_actions: bool = False,
     ):
         with self._mode_lock:
             is_paused = self.paused
@@ -189,6 +200,7 @@ class JarvisServer:
                     command,
                     suppress_speech=suppress_speech,
                     suppress_audio_actions=suppress_audio_actions,
+                    suppress_browser_actions=suppress_browser_actions,
                     defer_final_speech=True,
                 ),
             }
@@ -234,6 +246,7 @@ class JarvisServer:
                     history=history,
                     suppress_speech=suppress_speech,
                     suppress_audio_actions=suppress_audio_actions,
+                    suppress_browser_actions=suppress_browser_actions,
                     defer_final_speech=True,
                 ),
             }
@@ -1534,6 +1547,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 history = _conversation_history_from_payload(payload, current_command=command)
                 suppress_speech = _payload_suppresses_speech(payload)
                 suppress_audio_actions = _payload_suppresses_audio_actions(payload)
+                suppress_browser_actions = _payload_suppresses_browser_actions(payload)
             except RequestBodyTooLarge:
                 self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
                 return
@@ -1549,6 +1563,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     history=history,
                     suppress_speech=suppress_speech,
                     suppress_audio_actions=suppress_audio_actions,
+                    suppress_browser_actions=suppress_browser_actions,
                 )
             )
             return
@@ -1564,6 +1579,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             history = _conversation_history_from_payload(payload, current_command=command)
             suppress_speech = _payload_suppresses_speech(payload)
             suppress_audio_actions = _payload_suppresses_audio_actions(payload)
+            suppress_browser_actions = _payload_suppresses_browser_actions(payload)
         except RequestBodyTooLarge:
             self._send_json({"error": "Request body too large"}, status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
@@ -1579,6 +1595,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 history=history,
                 suppress_speech=suppress_speech,
                 suppress_audio_actions=suppress_audio_actions,
+                suppress_browser_actions=suppress_browser_actions,
             )
         )
 
@@ -1771,6 +1788,10 @@ def _payload_suppresses_speech(payload: dict[str, Any]) -> bool:
 
 def _payload_suppresses_audio_actions(payload: dict[str, Any]) -> bool:
     return payload.get("suppress_audio_actions") is True or payload.get("suppress_audio") is True
+
+
+def _payload_suppresses_browser_actions(payload: dict[str, Any]) -> bool:
+    return payload.get("suppress_browser_actions") is True or payload.get("suppress_browser") is True
 
 
 def _payload_speech_mute_source(payload: dict[str, Any]) -> str:

@@ -156,6 +156,7 @@ TTS_PIPER_WARMUP_TIMEOUT_SECONDS = env_int("JARVIS_TTS_PIPER_WARMUP_TIMEOUT_SECO
 TTS_PIPER_LENGTH_SCALE = env_float("JARVIS_TTS_PIPER_LENGTH_SCALE", 0.85, minimum=0.5, maximum=1.4)
 TTS_AFPLAY = os.environ.get("JARVIS_TTS_AFPLAY", "/usr/bin/afplay").strip() or "/usr/bin/afplay"
 TTS_REQUIRE_EMERGENCY_CONTROL = env_bool("JARVIS_TTS_REQUIRE_EMERGENCY_CONTROL", False)
+TTS_EMERGENCY_HELPER_PATH = os.environ.get("JARVIS_TTS_EMERGENCY_HELPER_PATH", "").strip()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_BASE_URL = os.environ.get("JARVIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 GROQ_FAST_MODEL = os.environ.get("JARVIS_GROQ_MODEL", "llama-3.3-70b-versatile")

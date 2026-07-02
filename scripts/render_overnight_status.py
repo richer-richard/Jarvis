@@ -30,6 +30,14 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 SHIPPED_ITEMS = [
+    "Jarvis 0.1.501 extends Chrome memory protection to passive Teams tab snapshots, so even cleanup bookkeeping avoids touching Chrome when memory is unsafe.",
+    "Jarvis 0.1.500 adds a Chrome memory safety preflight before live browser navigation, so Teams/Chrome tests refuse to run if Chrome is already using dangerous memory.",
+    "Jarvis 0.1.499 makes voice diagnostics state the current mute state directly, so TTS status says whether speech is currently muted or unmuted instead of only saying automatic speech is on.",
+    "Jarvis 0.1.498 makes voice diagnostics clearer: TTS status now explicitly says explicit speech still respects Speech Muted and the Shut Up safety check.",
+    "Jarvis 0.1.497 makes explicit speech safer: `say out loud ...` now refuses clearly when Jarvis is muted or when the Shut Up menu control is unavailable, and it does not start macOS speech in either case.",
+    "Jarvis 0.1.496 makes the Shut Up safety path harder to fool: app-launched workers now require the status-helper from the same Jarvis bundle, so an old orphan helper cannot make speech look safely controllable.",
+    "Jarvis 0.1.495 makes overnight QA safer around Chrome: voice-loop tests now suppress browser actions by default, Teams plans do not hand off to Chrome while suppressed, and live browser navigation requires an explicit opt-in.",
+    "Jarvis 0.1.494 keeps code answers readable instead of noisy: fenced code blocks stay visible on screen, but automatic speech says that the code is on screen instead of reading syntax aloud.",
     "Jarvis 0.1.494 makes email tool recovery more reliable without fake keyword routing: if the first model clearly punts a real email-check request into plain chat, Jarvis recovers with the email summary tool and labels the fallback, while generic email conversation still never reads mail.",
     "Jarvis 0.1.493 strengthens the speech firewall: loose internal routing text such as selected tool, status_text, final_result, audit ids, and dotted tool ids are stripped before they can reach the app or TTS.",
     "Jarvis 0.1.492 makes explicit email wording authoritative: if Leo asks for the second email or emails 2 through 4, Jarvis honors the original prompt even when a model lazily suggests the newest email.",
@@ -62,7 +70,7 @@ SHIPPED_ITEMS = [
     "Jarvis 0.1.469 adds a quiet stop-speaking gate: `stop talking` must route to `voice.stop_speaking`, must not queue audio, and must report the real tool reply before a pre-build gate can pass.",
     "Jarvis 0.1.469 makes Hey Jarvis start safer: repeated Start Hey Jarvis triggers reuse the already-running listener instead of stacking another permission or Apple Speech session.",
     "Jarvis 0.1.469 keeps Music proof strict: `Waving Through a Window` selects the Dear Evan Hansen Tony Awards track through the native Music bridge, verifies playback, stops it during cleanup, ignores Piper worker command-line arguments, and still fails real hidden `afplay` playback.",
-    "Jarvis 0.1.469 keeps overnight cleanup less annoying: the Chrome cleanup helper now targets Jarvis report, workboard, wake-audition, and old LocalOS music-player test tabs while preserving normal YouTube, new-tab, and other localhost pages.",
+    "Jarvis 0.1.469 keeps overnight cleanup safer: the Chrome cleanup helper now targets only recorded Jarvis/Codex test surfaces such as reports, workboards, wake-audition pages, LocalOS music-player tabs, and duplicate Teams test tabs while preserving normal YouTube, new-tab, and other personal browsing pages.",
     "Jarvis 0.1.469 keeps speech emergency status visible: morning status reads the speech mute state and now treats the status helper as the required Shut Up control; the app process alone no longer counts as emergency-ready when speech is unmuted.",
     "Jarvis 0.1.467 makes contact-memory privacy explicit: alias lookup/status do not read private metadata, while email-based alias inference reports that it used Mail sender metadata only and did not read email bodies.",
     "Jarvis 0.1.466 fixes the permissions reply: optional Notifications can still appear as an optional tile, but they no longer show up in the required `Missing:` list.",
@@ -575,7 +583,7 @@ SUPPORTING_FILES = [
     ("runtime/overnight_status/capability_questions.html", "Hard Jarvis capability question list"),
     ("scripts/pre_build_gate.py", "Single pre-build proof gate for safety tests, full-loop regressions, cleanup, and report refresh"),
     ("scripts/report_refresh.py", "Standalone master report refresh helper"),
-    ("scripts/cleanup_chrome_test_tabs.py", "Morning handoff helper that closes only Jarvis/Codex LocalOS music-player Chrome tabs"),
+    ("scripts/cleanup_chrome_test_tabs.py", "Morning handoff helper that closes only recorded Jarvis/Codex test tabs and windows"),
     ("http://127.0.0.1:8765/wake-audition/", "Hey Jarvis wake audition lab"),
     ("runtime/wake_audition/samples/", "Locally saved wake samples"),
     ("runtime/verification/", "Safe verifier reports"),
@@ -778,6 +786,7 @@ def build_context(base_url: str) -> dict[str, Any]:
             regression_matrix,
             voice_loop,
             full_loop,
+            pre_build_gate,
             crash,
             version,
             build,
@@ -840,6 +849,7 @@ def proof_items_with_verification(
     regression_matrix: dict[str, Any] | None = None,
     voice_loop: dict[str, Any] | None = None,
     full_loop: dict[str, Any] | None = None,
+    pre_build_gate: dict[str, Any] | None = None,
     crash: dict[str, Any] | None = None,
     current_version: str = "",
     current_build: str = "",
@@ -952,6 +962,11 @@ def proof_items_with_verification(
         teams_live_navigation = str(full_loop.get("teams_live_navigation_diagnostic") or "")
         if teams_live_navigation:
             items.append(f"Teams live navigation diagnostic: {teams_live_navigation}.")
+    if pre_build_gate and pre_build_gate.get("cleanup_status"):
+        items.append(
+            "Latest pre-build Chrome cleanup proof: "
+            f"{pre_build_gate['cleanup_status']} ({pre_build_gate.get('path') or 'runtime/pre_build_gate/latest.json'})."
+        )
     if crash and crash.get("path"):
         crash_version = str(crash.get("version") or "unknown")
         crash_build = str(crash.get("build") or "unknown")
@@ -1539,6 +1554,7 @@ def latest_pre_build_gate() -> dict[str, Any]:
         "stale_text": pre_build_gate_report_stale_text(data),
         "warnings": [str(item) for item in warnings if str(item).strip()],
         "teams_blocker": latest_pre_build_gate_teams_blocker(data),
+        "cleanup_status": latest_pre_build_gate_cleanup_status(data),
     }
 
 
@@ -1574,6 +1590,43 @@ def latest_pre_build_gate_teams_blocker(data: dict[str, Any]) -> str:
         return str(pre_build_gate_teams_blocker(data) or "").strip()
     except Exception:
         return ""
+
+
+def latest_pre_build_gate_cleanup_status(data: dict[str, Any]) -> str:
+    results = data.get("results")
+    if not isinstance(results, list):
+        return ""
+    for item in results:
+        if not isinstance(item, dict) or item.get("id") != "cleanup_chrome_test_tabs" or not item.get("ok"):
+            continue
+        detail = cleanup_stdout_detail(item)
+        reason = str(detail.get("reason") or "").strip()
+        target_count = safe_int(detail.get("target_count"))
+        closed_count = safe_int(detail.get("closed_count"))
+        if reason == "chrome_not_running":
+            return "cleanup ok; Chrome not running; 0 test tab/window targets."
+        if reason:
+            return f"cleanup ok; {closed_count} closed; {target_count} test tab/window target(s); reason {reason}."
+        return f"cleanup ok; {closed_count} closed; {target_count} test tab/window target(s)."
+    return ""
+
+
+def cleanup_stdout_detail(item: dict[str, Any]) -> dict[str, Any]:
+    text = str(item.get("stdout_tail") or item.get("stdout") or "").strip()
+    if not text:
+        return {}
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def local_pre_build_gate_full_loop_report_path(data: dict[str, Any]) -> Path | None:
@@ -2214,6 +2267,7 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
         gate_detail = "not generated"
     if pre_build.get("teams_blocker"):
         gate_detail = f"{gate_detail}; {pre_build.get('teams_blocker')}"
+    cleanup_detail = str(pre_build.get("cleanup_status") or "").strip()
     physical = context.get("physical_audio") if isinstance(context.get("physical_audio"), dict) else {}
     physical_detail = workboard_physical_audio_detail(physical)
     checkpoints = [
@@ -2232,6 +2286,10 @@ def workboard_operator_checkpoint(context: dict[str, Any]) -> str:
         (
             "Pre-build gate",
             gate_detail,
+        ),
+        (
+            "Chrome cleanup proof",
+            cleanup_detail or "Not generated yet; run the pre-build gate or cleanup helper before handoff.",
         ),
         (
             "Physical audio proof",
@@ -2270,7 +2328,9 @@ def workboard_browser_safety_detail() -> str:
     return (
         "Chrome/Teams probes must not launch Chrome or create fresh Chrome windows by default; "
         "fresh-window recovery requires JARVIS_ALLOW_CHROME_WINDOW_CREATION=1, and cleanup only "
-        "closes newly-created Teams windows/tabs by recorded window or tab id."
+        "closes newly-created Teams windows/tabs by recorded window or tab id. Treat this as a "
+        "computer-safety rule: close every Chrome tab/window opened by Codex, Jarvis, or tests so "
+        "Chrome cannot recreate the previous 46 GB memory blow-up on Leo's 16 GB Mac."
     )
 
 

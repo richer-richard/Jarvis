@@ -188,6 +188,7 @@ from scripts.morning_status import (
     latency_smoke_summary,
     latest_teams_live_navigation_diagnostic,
     normalize_base_url,
+    pre_build_gate_cleanup_status,
     pre_build_gate_cleanup_warning,
     pre_build_gate_music_blocker,
     pre_build_gate_stale_suffix,
@@ -297,6 +298,57 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["chrome_windows_closed"], 0)
         self.assertIn('if windowId is "1" and tabId is "11" then set end of closeList to t', script)
         self.assertNotIn("https://example.test/leo", script)
+
+    def test_full_loop_chrome_memory_guard_blocks_dangerous_chrome(self):
+        output = "\n".join([
+            "101 8388608 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "102 6291456 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=renderer",
+            "201 1024 /bin/zsh",
+        ])
+        completed = subprocess.CompletedProcess(["ps"], 0, output, "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", return_value=completed):
+            result = full_loop_regression.chrome_memory_safety_snapshot(limit_mb=12000.0)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "chrome_memory_too_high")
+        self.assertGreater(result["total_mb"], 12000.0)
+        self.assertEqual(len(result["processes"]), 2)
+        self.assertIn("above the 12000.0 MB safety limit", result["reason"])
+
+    def test_full_loop_chrome_memory_guard_allows_closed_chrome(self):
+        completed = subprocess.CompletedProcess(["ps"], 0, "201 1024 /bin/zsh\n", "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", return_value=completed):
+            result = full_loop_regression.chrome_memory_safety_snapshot(limit_mb=12000.0)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "chrome_not_running")
+        self.assertEqual(result["total_mb"], 0.0)
+
+    def test_full_loop_chrome_surface_guard_blocks_crowded_chrome(self):
+        pgrep_result = subprocess.CompletedProcess(["pgrep"], 0, "123\n", "")
+        surface_result = subprocess.CompletedProcess(["osascript"], 0, "12\t64\n", "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", side_effect=[pgrep_result, surface_result]):
+            result = full_loop_regression.chrome_surface_safety_snapshot(max_windows=3, max_tabs=20)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "chrome_surface_too_crowded")
+        self.assertEqual(result["window_count"], 12)
+        self.assertEqual(result["tab_count"], 64)
+        self.assertIn("above the safe live-test limit", result["reason"])
+
+    def test_full_loop_chrome_surface_guard_allows_closed_chrome(self):
+        pgrep_result = subprocess.CompletedProcess(["pgrep"], 1, "", "")
+
+        with patch("scripts.full_loop_regression.subprocess.run", return_value=pgrep_result):
+            result = full_loop_regression.chrome_surface_safety_snapshot(max_windows=3, max_tabs=20)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "chrome_not_running")
+        self.assertEqual(result["window_count"], 0)
+        self.assertEqual(result["tab_count"], 0)
 
     def test_full_loop_music_proof_accepts_expected_song(self):
         proof = full_loop_regression.verify_waving_playback({
@@ -579,7 +631,7 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result["cleanup"]["new_media_surfaces_after"], ["Google Chrome"])
         self.assertIn("Music cleanup left a new media playback surface running.", result["warnings"])
 
-    def test_full_loop_music_case_warns_when_chrome_media_inspection_blocked(self):
+    def test_full_loop_music_case_warns_when_chrome_media_inspection_becomes_blocked(self):
         def fake_music_bridge_request(_base_url, method, path, **_kwargs):
             if method == "GET" and path == "/health":
                 return {"ok": True}
@@ -621,7 +673,53 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "warning")
         self.assertEqual(result["cleanup"]["media_surfaces_after"]["blocked"], ["Google Chrome"])
-        self.assertIn("could not rule out hidden Chrome audio", result["warnings"][0])
+        self.assertEqual(result["cleanup"]["new_blocked_media_inspections_after"], ["Google Chrome"])
+        self.assertIn("became blocked during the test", result["warnings"][0])
+
+    def test_full_loop_music_case_allows_preexisting_chrome_media_inspection_block(self):
+        def fake_music_bridge_request(_base_url, method, path, **_kwargs):
+            if method == "GET" and path == "/health":
+                return {"ok": True}
+            if method == "GET" and path == "/playback-state":
+                return {"ok": True, "playing": False}
+            return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.music_bridge_request", side_effect=fake_music_bridge_request), \
+             patch("scripts.full_loop_regression.afplay_process_snapshot", return_value=[]), \
+             patch(
+                 "scripts.full_loop_regression.media_playback_surface_snapshot",
+                 side_effect=[
+                     {"surfaces": [], "blocked": ["Google Chrome"]},
+                     {"surfaces": [], "blocked": ["Google Chrome"]},
+                 ],
+             ), \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop, \
+             patch("scripts.full_loop_regression.wait_for_music_playback") as wait_for_music_playback:
+            run_voice_loop.return_value = {"result": {"status": "passed"}}
+            wait_for_music_playback.return_value = {
+                "ok": True,
+                "playing": True,
+                "currentTime": 1.0,
+                "nowPlaying": {
+                    "title": "Dear Evan Hansen | 2017 Tony Awards",
+                    "fileName": "Dear Evan Hansen.mp3",
+                },
+            }
+
+            result = full_loop_regression.run_music_waving_case(
+                full_loop_regression.MUSIC_WAVING_CASE,
+                base_url="http://127.0.0.1:8765",
+                music_bridge_url="http://127.0.0.1:47879",
+                run_dir=Path(tmpdir) / "music",
+                timeout=1.0,
+                exercise_live_speech=False,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["cleanup"]["media_surfaces_after"]["blocked"], ["Google Chrome"])
+        self.assertEqual(result["cleanup"]["new_blocked_media_inspections_after"], [])
+        self.assertNotIn("Chrome media-surface inspection", " ".join(result["warnings"]))
 
     def test_full_loop_new_processes_since_ignores_existing_afplay(self):
         before = [{"pid": 11, "command": "/usr/bin/afplay old.wav"}]
@@ -638,9 +736,173 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(full_loop_regression.new_media_surfaces_since(before, after), ["Music"])
 
+    def test_full_loop_new_blocked_media_inspections_since_ignores_preexisting_block(self):
+        before = {"blocked": ["Google Chrome"]}
+        after = {"blocked": ["Google Chrome", "QuickTime Player"]}
+
+        self.assertEqual(
+            full_loop_regression.new_blocked_media_inspections_since(before, after),
+            ["QuickTime Player"],
+        )
+
     def test_full_loop_chrome_tab_snapshot_timeout_fails_soft(self):
         with patch("scripts.full_loop_regression.subprocess.run", side_effect=subprocess.TimeoutExpired(["osascript"], 10)):
             self.assertEqual(full_loop_regression.chrome_tab_snapshot(), [])
+
+    def test_full_loop_teams_live_navigation_skips_when_chrome_memory_is_unsafe(self):
+        unsafe = {
+            "ok": False,
+            "status": "chrome_memory_too_high",
+            "reason": "Google Chrome is using 46000.0 MB, above the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 46000.0,
+            "processes": [],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=unsafe), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=True,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["voice_loop_status"], "skipped_for_chrome_memory_safety")
+        self.assertEqual(result["chrome_memory_guard"]["status"], "chrome_memory_too_high")
+        self.assertIn("Chrome live navigation skipped for computer safety", result["warnings"][0])
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_not_called()
+
+    def test_full_loop_teams_live_navigation_skips_when_chrome_surface_is_crowded(self):
+        safe_memory = {
+            "ok": True,
+            "status": "chrome_memory_ok",
+            "reason": "Google Chrome is using 512.0 MB, below the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 512.0,
+            "processes": [],
+        }
+        crowded_surface = {
+            "ok": False,
+            "status": "chrome_surface_too_crowded",
+            "reason": "Google Chrome already has 12 window(s) and 64 tab(s), above the safe live-test limit.",
+            "max_windows": 3,
+            "max_tabs": 20,
+            "window_count": 12,
+            "tab_count": 64,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=safe_memory), \
+             patch("scripts.full_loop_regression.chrome_surface_safety_snapshot", return_value=crowded_surface), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop") as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=True,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["voice_loop_status"], "skipped_for_chrome_surface_safety")
+        self.assertEqual(result["chrome_surface_guard"]["status"], "chrome_surface_too_crowded")
+        self.assertIn("Chrome live navigation skipped for computer safety", result["warnings"][0])
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_not_called()
+
+    def test_full_loop_teams_skips_passive_chrome_snapshots_when_memory_is_unsafe(self):
+        unsafe = {
+            "ok": False,
+            "status": "chrome_memory_too_high",
+            "reason": "Google Chrome is using 46000.0 MB, above the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 46000.0,
+            "processes": [],
+        }
+        voice_report = {
+            "result": {
+                "status": "passed",
+                "visible_reply_preview": (
+                    "Chrome is blocking Jarvis from controlling the current page. "
+                    "Grant Jarvis Automation access to Chrome and enable Chrome's Allow JavaScript from Apple Events setting, then try again."
+                ),
+                "visible_screen_follow_up": {"status": "browser_permission_blocked", "tool": "browser.read_page"},
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=unsafe), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop", return_value=voice_report) as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=False,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["voice_loop_status"], "passed")
+        self.assertEqual(result["cleanup"]["reason"], "chrome_memory_guard_skipped_tab_snapshot")
+        self.assertTrue(any("Chrome tab snapshot and cleanup were skipped" in warning for warning in result["warnings"]))
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_called_once()
+
+    def test_full_loop_teams_skips_passive_chrome_snapshots_when_surface_is_crowded(self):
+        safe_memory = {
+            "ok": True,
+            "status": "chrome_memory_ok",
+            "reason": "Google Chrome is using 512.0 MB, below the 12000.0 MB safety limit.",
+            "limit_mb": 12000.0,
+            "total_mb": 512.0,
+            "processes": [],
+        }
+        crowded_surface = {
+            "ok": False,
+            "status": "chrome_surface_too_crowded",
+            "reason": "Google Chrome already has 12 window(s) and 64 tab(s), above the safe live-test limit.",
+            "max_windows": 3,
+            "max_tabs": 20,
+            "window_count": 12,
+            "tab_count": 64,
+        }
+        voice_report = {
+            "result": {
+                "status": "passed",
+                "visible_reply_preview": "I have not inspected the newest Music assignment yet.",
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch("scripts.full_loop_regression.chrome_memory_safety_snapshot", return_value=safe_memory), \
+             patch("scripts.full_loop_regression.chrome_surface_safety_snapshot", return_value=crowded_surface), \
+             patch("scripts.full_loop_regression.chrome_tab_snapshot") as tab_snapshot, \
+             patch("scripts.full_loop_regression.voice_loop_qa.run_voice_loop", return_value=voice_report) as run_voice_loop:
+            result = full_loop_regression.run_teams_assignment_case(
+                full_loop_regression.TEAMS_ASSIGNMENT_CASE,
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(tmpdir) / "teams",
+                timeout=1.0,
+                exercise_live_speech=False,
+                exercise_visible_navigation=False,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["cleanup"]["reason"], "chrome_surface_guard_skipped_tab_snapshot")
+        self.assertTrue(any("window/tab-count preflight failed" in warning for warning in result["warnings"]))
+        tab_snapshot.assert_not_called()
+        run_voice_loop.assert_called_once()
 
     def test_full_loop_codex_default_uses_voice_routed_alias_command(self):
         fake_voice_report = {
@@ -1234,6 +1496,34 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertFalse(proof["capability_complete"])
         self.assertEqual(proof["completion_status"], "not_inspected")
 
+    def test_full_loop_teams_honesty_surfaces_safe_bookmark_route_without_url(self):
+        proof = full_loop_regression.verify_teams_assignment_honesty({
+            "result": {
+                "visible_reply_preview": (
+                    "I found a Teams route, but browser actions are suppressed for this QA run, "
+                    "so I did not open Chrome. I have not inspected the newest Music assignment yet."
+                ),
+                "command_response_result": {
+                    "browser_target_available": True,
+                    "uses_imported_bookmark_first": True,
+                    "uses_teams_deeplink_first": False,
+                    "teams_deeplink_route_status": "no_prompt_match",
+                    "teams_deeplink_row_count": 3,
+                    "browser_open_plan_status": "planned",
+                    "teams_page_inspection_status": "browser_actions_suppressed",
+                    "url": "https://teams.microsoft.com/private-team-route",
+                },
+            },
+        })
+
+        self.assertTrue(proof["passed"])
+        self.assertEqual(proof["completion_status"], "not_inspected")
+        self.assertTrue(proof["browser_target_available"])
+        self.assertTrue(proof["uses_imported_bookmark_first"])
+        self.assertFalse(proof["uses_teams_deeplink_first"])
+        self.assertEqual(proof["teams_page_inspection_status"], "browser_actions_suppressed")
+        self.assertNotIn("url", proof)
+
     def test_full_loop_teams_incomplete_warnings_surface_login_gate(self):
         warnings = full_loop_regression.teams_incomplete_detail_warnings({
             "honest_login_gate": True,
@@ -1241,6 +1531,37 @@ class VerifySafeScriptTests(unittest.TestCase):
         })
 
         self.assertIn("Teams is behind a Microsoft sign-in gate in Chrome.", warnings)
+
+    def test_full_loop_teams_incomplete_warnings_surface_suppressed_bookmark_route(self):
+        warnings = full_loop_regression.teams_incomplete_detail_warnings({
+            "browser_target_available": True,
+            "uses_imported_bookmark_first": True,
+            "teams_page_inspection_status": "browser_actions_suppressed",
+        })
+
+        self.assertIn(
+            "A safe imported Teams bookmark route is ready, but browser actions are suppressed for this QA run.",
+            warnings,
+        )
+
+    def test_full_loop_teams_no_click_plan_warnings_follow_sequence_order(self):
+        warnings = full_loop_regression.teams_no_click_plan_warnings({
+            "assignments_navigation_plan_ready": True,
+            "all_teams_navigation_plan_ready": True,
+            "visible_navigation_sequence": [
+                {"key": "assignments"},
+                {"key": "all_teams"},
+                {"key": "requested_class_after_all_teams"},
+            ],
+        })
+
+        self.assertEqual(
+            warnings,
+            [
+                "A non-clicking Assignments navigation plan is ready; live navigation still requires an explicit safe run.",
+                "A non-clicking All teams navigation plan is ready; live navigation still requires an explicit safe run.",
+            ],
+        )
 
     def test_full_loop_teams_unreadable_page_is_honest_permission_block(self):
         proof = full_loop_regression.verify_teams_assignment_honesty({
@@ -2162,7 +2483,39 @@ class VerifySafeScriptTests(unittest.TestCase):
             )
 
         self.assertEqual(captured_payloads[0]["suppress_audio_actions"], False)
+        self.assertEqual(captured_payloads[0]["suppress_browser_actions"], True)
         self.assertEqual(events[-1]["data"]["tool"], "localos.music_play")
+
+    def test_voice_loop_stream_suppresses_browser_actions_by_default(self):
+        captured_payloads = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                return iter([
+                    b"event: final\n",
+                    b'data: {"tool": "teams.assignment", "result": {"reply": "Browser guard checked."}}\n',
+                    b"\n",
+                ])
+
+        def fake_urlopen(request, timeout):
+            captured_payloads.append(json.loads(request.data.decode("utf-8")))
+            return FakeResponse()
+
+        with patch("scripts.voice_loop_qa.urllib.request.urlopen", side_effect=fake_urlopen):
+            events = voice_loop_qa.stream_command_events(
+                "http://127.0.0.1:8765",
+                "Go to Teams and find my Music assignment.",
+                timeout=1,
+            )
+
+        self.assertTrue(captured_payloads[0]["suppress_browser_actions"])
+        self.assertEqual(events[-1]["data"]["tool"], "teams.assignment")
 
     def test_voice_loop_stream_stops_reading_after_final_event(self):
         class EndlessAfterFinalResponse:
@@ -4054,6 +4407,59 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(report["result"]["visible_screen_follow_up"]["status"], "completed")
         self.assertIn("assignment-related text", report["result"]["visible_reply_preview"])
 
+    def test_voice_loop_qa_speech_audit_suppresses_browser_actions_by_default(self):
+        final_events = [
+            {
+                "event": "final",
+                "data": {
+                    "tool": "teams.assignment",
+                    "reply": "I found a Teams route, but browser actions are suppressed for this QA run.",
+                    "result": {
+                        "automatic_teams_page_inspection_supported": False,
+                        "teams_page_inspection_status": "browser_actions_suppressed",
+                    },
+                    "speech": {
+                        "spoken": False,
+                        "status": "suppressed_by_request",
+                        "reason": "final",
+                        "spoken_text": "I found a Teams route, but browser actions are suppressed for this QA run.",
+                    },
+                },
+            }
+        ]
+        stream_calls = []
+
+        def fake_stream(*args, **kwargs):
+            stream_calls.append(kwargs)
+            return final_events
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch("scripts.voice_loop_qa.stream_command_events", side_effect=fake_stream), \
+             patch(
+                 "scripts.voice_loop_qa.audit_spoken_payloads",
+                 return_value={
+                     "status": "passed",
+                     "payload_count": 1,
+                     "leak_count": 0,
+                     "warnings": [],
+                     "items": [],
+                 },
+             ):
+            report = voice_loop_qa.run_speech_audit(
+                command_text="Look in Teams for my newest Music assignment.",
+                base_url="http://127.0.0.1:8765",
+                run_dir=Path(temp_dir),
+                length_scale=0.85,
+                timeout=5.0,
+                stt_provider="local",
+                no_permission_prompts=True,
+            )
+
+        self.assertTrue(stream_calls)
+        self.assertTrue(stream_calls[0]["suppress_browser_actions"])
+        self.assertFalse(report["input"]["allow_browser_actions"])
+        self.assertEqual(report["result"]["visible_screen_follow_up"]["status"], "not_needed")
+
     def test_voice_loop_qa_browser_page_followup_usefulness_rejects_automation_block(self):
         blocked = {
             "tool": "browser.read_page",
@@ -4242,7 +4648,7 @@ class VerifySafeScriptTests(unittest.TestCase):
             ["requested_class", "assignments"],
         )
 
-    def test_voice_loop_qa_visible_navigation_sequence_uses_all_teams_before_assignments_when_class_missing(self):
+    def test_voice_loop_qa_visible_navigation_sequence_uses_assignments_before_all_teams_when_class_missing(self):
         targets = {
             "requested_class_plan": {"planned": False, "will_click": False},
             "all_teams_plan": {
@@ -4261,10 +4667,12 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(
             [step["key"] for step in sequence],
-            ["all_teams", "requested_class_after_all_teams"],
+            ["assignments", "all_teams", "requested_class_after_all_teams"],
         )
-        self.assertEqual(sequence[0]["plan"]["point"], {"x": 257.0, "y": 322.5})
-        self.assertEqual(sequence[1]["plan"]["reason"], "requires_previous_step")
+        self.assertEqual(sequence[0]["plan"]["point"], {"x": 68.0, "y": 577.0})
+        self.assertIn("before backing out", sequence[0]["reason"])
+        self.assertEqual(sequence[1]["plan"]["point"], {"x": 257.0, "y": 322.5})
+        self.assertEqual(sequence[2]["plan"]["reason"], "requires_previous_step")
 
     def test_voice_loop_qa_visible_navigation_sequence_can_search_for_missing_class(self):
         targets = {
@@ -4292,19 +4700,19 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertEqual(
             [step["key"] for step in sequence],
-            ["all_teams", "teams_search", "requested_class_after_all_teams"],
+            ["assignments", "all_teams", "teams_search", "requested_class_after_all_teams"],
         )
         next_plan = voice_loop_qa.next_visible_navigation_plan(
             {"visible_navigation_targets": {"sequence": sequence}},
-            seen_navigation_points={(257.0, 322.5)},
+            seen_navigation_points={(68.0, 577.0), (257.0, 322.5)},
         )
         self.assertEqual(next_plan["action"], "type_search")
         self.assertEqual(next_plan["query"], "Music")
         self.assertEqual(next_plan["navigation_key"], "teams_search")
         exhausted_plan = voice_loop_qa.next_visible_navigation_plan(
             {"visible_navigation_targets": {"sequence": sequence, **targets}},
-            seen_navigation_points={(257.0, 322.5), (474.0, 255.0)},
-            seen_navigation_keys={"all_teams", "teams_search"},
+            seen_navigation_points={(68.0, 577.0), (257.0, 322.5), (474.0, 255.0)},
+            seen_navigation_keys={"assignments", "all_teams", "teams_search"},
         )
         self.assertIsNone(exhausted_plan)
 
@@ -4942,9 +5350,15 @@ class VerifySafeScriptTests(unittest.TestCase):
             'elif case["id"] == EMAIL_SHARPAY_CASE["id"]:',
             1,
         )[0]
+        teams_helper = source.split("def run_teams_assignment_case(", 1)[1].split(
+            "\ndef teams_incomplete_detail_warnings",
+            1,
+        )[0]
 
         self.assertNotIn("exercise_visible_navigation=args.exercise_visible_navigation", music_branch)
+        self.assertNotIn("allow_browser_actions=exercise_visible_navigation", music_branch)
         self.assertIn("exercise_visible_navigation=args.exercise_visible_navigation", teams_branch)
+        self.assertIn("allow_browser_actions=exercise_visible_navigation", teams_helper)
 
     def test_voice_loop_qa_browser_page_usefulness_rejects_generic_screen_tool_for_teams_assignment(self):
         response = {
@@ -6225,6 +6639,22 @@ class VerifySafeScriptTests(unittest.TestCase):
 
         self.assertGreaterEqual(voice_loop_qa.text_similarity(expected, transcript), 0.9)
 
+    def test_voice_loop_qa_similarity_normalizes_long_sharpay_summary_stt_noise(self):
+        expected = (
+            "Sharpay Cao congratulates you on joining the 2026 to 2027 Hongqiao campus "
+            "student council core team and says more information will be shared after the "
+            "September term starts. Sharpay Cao gave 3 links to feedback forms that you may "
+            "need to fill in."
+        )
+        transcript = (
+            "Sharpay Cow congratulates you on joining the 2026-2027 Hong Cho Campus Student "
+            "Council Corps team, and says more information will be shared after the September "
+            "term starts. Sharpay Cow gave three links to feedback forms that you may need to "
+            "fill in."
+        )
+
+        self.assertGreaterEqual(voice_loop_qa.text_similarity(expected, transcript), 0.9)
+
     def test_voice_loop_qa_visible_screen_followup_preserves_assignment_mismatch_after_browser_block(self):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch(
@@ -6714,6 +7144,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                 "path": "runtime/pre_build_gate/latest.json",
                 "label": "failed, 3/4 passed",
                 "teams_blocker": "Teams assignment is not_inspected; Microsoft sign-in gate is visible in Chrome.",
+                "cleanup_status": "cleanup ok; Chrome not running; 0 test tab/window targets.",
             },
             "physical_audio": {
                 "ready_for_physical_capture": False,
@@ -6729,6 +7160,20 @@ class VerifySafeScriptTests(unittest.TestCase):
             "risks": render_overnight_status.RISK_ITEMS,
             "supporting": render_overnight_status.SUPPORTING_FILES,
         }
+        context["proof"] = render_overnight_status.proof_items_with_verification(
+            context["verification"],
+            context["no_prompt_verification"],
+            None,
+            None,
+            None,
+            None,
+            None,
+            context["full_loop"],
+            context["pre_build_gate"],
+            None,
+            context["version"],
+            context["build"],
+        )
 
         report = render_overnight_status.render_report(context)
         workboard = render_overnight_status.render_workboard(context)
@@ -6746,6 +7191,10 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("Pre-build gate", workboard)
         self.assertIn("failed, 3/4 passed", workboard)
         self.assertIn("Microsoft sign-in gate is visible in Chrome", workboard)
+        self.assertIn("Chrome cleanup proof", workboard)
+        self.assertIn("cleanup ok; Chrome not running; 0 test tab/window targets.", workboard)
+        self.assertIn("Latest pre-build Chrome cleanup proof", report)
+        self.assertIn("runtime/pre_build_gate/latest.json", report)
         self.assertIn("Physical audio proof", workboard)
         self.assertIn("Not ready for physical speaker/microphone capture", workboard)
         self.assertIn("Strict physical-capture gates fail closed", workboard)
@@ -6753,6 +7202,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("must not launch Chrome or create fresh Chrome windows by default", workboard)
         self.assertIn("JARVIS_ALLOW_CHROME_WINDOW_CREATION=1", workboard)
         self.assertIn("newly-created Teams windows/tabs by recorded window or tab id", workboard)
+        self.assertIn("previous 46 GB memory blow-up", workboard)
+        self.assertIn("16 GB Mac", workboard)
         self.assertIn("Time checkpoint", workboard)
         self.assertIn("Return point", workboard)
         self.assertIn("JARVIS_BUG_BACKLOG.md plus .memory.md", workboard)
@@ -7137,6 +7588,8 @@ class VerifySafeScriptTests(unittest.TestCase):
                                 "teams_deeplink_route_status": "no_prompt_match",
                                 "teams_deeplink_row_count": 3,
                                 "uses_teams_deeplink_first": False,
+                                "browser_target_available": True,
+                                "uses_imported_bookmark_first": True,
                                 "teams_page_inspection_status": "chrome_handoff_then_native_visible_read",
                                 "url": "https://teams.microsoft.com/private",
                                 "selected_teams_deeplink": {"class_id": "private-class"},
@@ -7200,6 +7653,8 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("must not launch Chrome or create fresh Chrome windows by default", detail)
         self.assertIn("JARVIS_ALLOW_CHROME_WINDOW_CREATION=1", detail)
         self.assertIn("recorded window or tab id", detail)
+        self.assertIn("previous 46 GB memory blow-up", detail)
+        self.assertIn("Leo's 16 GB Mac", detail)
 
     def test_render_overnight_status_script_adds_project_root_to_import_path(self):
         source = (PROJECT_ROOT / "scripts" / "render_overnight_status.py").read_text(encoding="utf-8")
@@ -7281,6 +7736,20 @@ class VerifySafeScriptTests(unittest.TestCase):
                 self.assertIn(version, shipped)
                 self.assertIn(version, proof)
                 self.assertIn(version, workboard)
+        self.assertIn("0.1.501", shipped)
+        self.assertIn("passive Teams tab snapshots", shipped)
+        self.assertIn("0.1.500", shipped)
+        self.assertIn("current mute state", shipped)
+        self.assertIn("currently muted or unmuted", shipped)
+        self.assertIn("0.1.498", shipped)
+        self.assertIn("voice diagnostics clearer", shipped)
+        self.assertIn("explicit speech still respects Speech Muted", shipped)
+        self.assertIn("0.1.497", shipped)
+        self.assertIn("explicit speech safer", shipped)
+        self.assertIn("Shut Up menu control is unavailable", shipped)
+        self.assertIn("status-helper from the same Jarvis bundle", shipped)
+        self.assertIn("0.1.495", shipped)
+        self.assertIn("voice-loop tests now suppress browser actions by default", shipped)
         self.assertIn("0.1.494", shipped)
         self.assertIn("email tool recovery", shipped)
         self.assertIn("0.1.493", shipped)
@@ -7355,13 +7824,16 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("report refresh self-healing", shipped)
         self.assertIn("Codex speed status", shipped)
         self.assertIn("build-and-launch", shipped.lower())
+        self.assertIn("voice-loop tests now suppress browser actions by default", shipped)
+        self.assertIn("fenced code blocks stay visible on screen", shipped)
         self.assertIn("fresh full-loop proof for Leo's target prompt set", shipped)
         self.assertIn("zero warnings", shipped)
         self.assertIn("ignores Piper worker command-line arguments", shipped)
         self.assertIn("suppressed_for_probe", shipped)
         self.assertIn("live_playback_exercised", shipped)
         self.assertIn("--require-live-speech", shipped)
-        self.assertIn("Chrome cleanup helper now targets Jarvis report", shipped)
+        self.assertIn("Chrome cleanup helper now targets only recorded Jarvis/Codex test surfaces", shipped)
+        self.assertIn("duplicate Teams test tabs", shipped)
         self.assertIn("speech emergency status visible", shipped)
         self.assertIn("status helper as the required Shut Up control", shipped)
         self.assertIn("app process alone no longer counts", shipped)
@@ -7371,13 +7843,52 @@ class VerifySafeScriptTests(unittest.TestCase):
         current_focus = memory.split("## Current Focus", 1)[1].split("\n## ", 1)[0]
         section = memory.split("## Current Live State", 1)[1].split("\n## ", 1)[0]
 
-        self.assertIn("Last updated: 2026-06-21 17:37 CST", memory)
+        self.assertIn("Last updated: 2026-06-26 04:10 CST", memory)
+        self.assertIn("Jarvis\n  0.1.501 build 501", current_focus)
+        self.assertIn("chrome_memory_guard_skipped_tab_snapshot", current_focus)
+        self.assertIn("Jarvis 0.1.500 build 500", current_focus)
+        self.assertIn("Chrome safety checkpoint", current_focus)
+        self.assertIn("chrome_memory_too_high", current_focus)
+        self.assertIn("does not open or focus Chrome", current_focus)
+        self.assertIn("currently muted or unmuted", current_focus)
+        self.assertIn("Jarvis 0.1.498 build 498", current_focus)
+        self.assertIn("explicit speech still respects Speech Muted", current_focus)
+        self.assertIn("Shut Up safety\n  check", current_focus)
+        self.assertIn("Jarvis 0.1.497 build 497", current_focus)
+        self.assertIn("makes explicit speech commands fail closed", current_focus)
+        self.assertIn("Jarvis speech is muted", current_focus)
+        self.assertIn("Shut Up control is available", current_focus)
+        self.assertIn("continue the June\n  25/26 overnight run until exactly 8:00 AM", current_focus)
+        self.assertIn("Computer safety is the top constraint", current_focus)
+        self.assertIn("Do not open Chrome tabs/windows unless\n  a task truly needs it", current_focus)
+        self.assertIn("close every\n  Codex/Jarvis/test-created Chrome tab or window", current_focus)
+        self.assertIn("roughly 46 GB on Leo's 16 GB Mac", current_focus)
+        self.assertIn("current Teams safety artifact", current_focus)
+        self.assertIn("browser actions were suppressed", current_focus)
+        self.assertIn("Chrome was not opened", current_focus)
+        self.assertIn("1157/1157", current_focus)
+        self.assertIn("suppress_browser_actions", current_focus)
+        self.assertIn("Chrome cleanup", current_focus)
+        self.assertIn("af0ef40", current_focus)
+        self.assertIn("0387cde", current_focus)
+        self.assertIn("29a2457", current_focus)
+        self.assertIn("db28dfc", current_focus)
+        self.assertIn("6751925", current_focus)
         self.assertIn("b0589ed", current_focus)
         self.assertIn("0386eaf", current_focus)
         self.assertIn("298e14a", current_focus)
         self.assertIn("runtime/verification/latest.json", current_focus)
         self.assertNotIn("verify-safe-20260621-132210.json", current_focus)
-        self.assertIn("Jarvis 0.1.494 build 494", section)
+        self.assertIn("Jarvis 0.1.501 build 501", section)
+        self.assertIn("skips passive Chrome tab\n  snapshots", section)
+        self.assertIn("Jarvis 0.1.500 live-browser\n  Chrome memory preflight", section)
+        self.assertIn("Chrome memory preflight", section)
+        self.assertIn("TTS status state whether\n  speech is currently muted or unmuted", section)
+        self.assertIn("Jarvis 0.1.498", section)
+        self.assertIn("explicit-speech safety explanation", section)
+        self.assertIn("Jarvis 0.1.497", section)
+        self.assertIn("explicit-speech", section)
+        self.assertIn("fail-closed", section)
         self.assertIn("runtime/verification/latest.json", section)
         self.assertIn("passed 106/106", section)
         self.assertIn("distinguish stale", section)
@@ -7387,7 +7898,11 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertIn("loopback_device_missing", section)
         self.assertIn("strict physical speaker/microphone", section)
         self.assertNotIn("verify-safe-20260621-151346.json", section)
-        self.assertIn("Music warning", section)
+        self.assertIn("latest live Music proof passed", section)
+        self.assertIn("no longer marks the proof warning", section)
+        self.assertIn("prefers Assignments before All Teams", section)
+        self.assertIn("test-created tab/window must be closed by recorded ID", section)
+        self.assertNotIn("Music warning", section)
         self.assertNotIn("Jarvis 0.1.444 build 444 is live", section)
         self.assertNotIn("verify-safe-20260618-001149.json", section)
 
@@ -8666,6 +9181,7 @@ class VerifySafeScriptTests(unittest.TestCase):
                         "panel_is_visible": True,
                         "session_locked": True,
                         "window_count": 3,
+                        "window_visibility": [True, False, False],
                     }
                 ]
             }
@@ -8687,6 +9203,39 @@ class VerifySafeScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("session locked", result.summary)
         self.assertIn("lock screen", result.summary)
+        self.assertIn("visible_windows=1", result.summary)
+        self.assertIn("total_windows=3", result.summary)
+
+    def test_verify_safe_window_self_test_reports_visible_and_total_windows(self):
+        payload = json.dumps(
+            {
+                "snapshots": [
+                    {
+                        "label": "after_refresh",
+                        "panel_is_visible": True,
+                        "session_locked": False,
+                        "window_count": 3,
+                        "window_visibility": [True, False, False],
+                    }
+                ]
+            }
+        )
+
+        def fake_run(args, **kwargs):
+            kwargs["stdout"].write(payload)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with patch("scripts.verify_safe.subprocess.run", side_effect=fake_run):
+            result = verify_safe.run_window_self_test(
+                "output_bundle_window_self_test",
+                ["output/Jarvis.app/Contents/MacOS/jarvis-menu-bar", "--window-self-test"],
+                env={"JARVIS_BASE_URL": "http://127.0.0.1:8765"},
+                timeout=90,
+            )
+
+        self.assertTrue(result.passed)
+        self.assertIn("saw 1 visible Jarvis window(s)", result.summary)
+        self.assertIn("3 total AppKit window object(s)", result.summary)
 
     def test_verify_safe_window_self_test_fails_without_visible_panel_when_unlocked(self):
         payload = json.dumps(
@@ -16354,7 +16903,8 @@ Pages occupied by compressor:             10.
     def test_tts_status_does_not_play_audio(self):
         voices = "Alex en_US # sample voice\nSamantha en_US # sample voice\n"
         with patch("jarvis.tools._find_executable", return_value="/usr/bin/say"), \
-             patch("jarvis.tools._command_output", return_value=voices):
+             patch("jarvis.tools._command_output", return_value=voices), \
+             patch("jarvis.tools.SPEECH_MUTED", False):
             result = tts_status()
 
         self.assertEqual(result["tool"], "diagnostics.tts")
@@ -16365,6 +16915,7 @@ Pages occupied by compressor:             10.
         self.assertTrue(result["stop_speaking_available"])
         self.assertEqual(result["stop_speaking_tool"], "voice.stop_speaking")
         self.assertFalse(result["automatic_tts_enabled"])
+        self.assertFalse(result["speech_muted"])
         self.assertFalse(result["spoken_status_enabled"])
         self.assertEqual(result["voice"], "system default")
         self.assertIsNone(result["configured_voice"])
@@ -16374,8 +16925,21 @@ Pages occupied by compressor:             10.
         self.assertTrue(result["uses_system_say_defaults"])
         self.assertEqual(result["voice_count"], 2)
         self.assertIn('matching plain `say "text"`', result["reply"])
+        self.assertIn("Speech is currently unmuted.", result["reply"])
         self.assertIn("stop talking", result["reply"])
+        self.assertIn("Explicit speech still respects Speech Muted and the Shut Up safety check.", result["reply"])
         self.assertIn("did not play audio", result["reply"])
+
+    def test_tts_status_reports_current_muted_state(self):
+        with patch("jarvis.tools._find_executable", return_value="/usr/bin/say"), \
+             patch("jarvis.tools._command_output", return_value="Alex en_US # sample voice\n"), \
+             patch("jarvis.tools.SPEECH_MUTED", True):
+            result = tts_status()
+
+        self.assertTrue(result["speech_muted"])
+        self.assertIn("Speech is currently muted.", result["reply"])
+        self.assertIn("Speech is currently muted.", result["spoken_summary"])
+        self.assertFalse(result["played_audio"])
 
     def test_app_voice_defaults_enable_macos_status_speech_without_cli_default(self):
         env = os.environ.copy()
@@ -16435,6 +16999,8 @@ Pages occupied by compressor:             10.
         self.assertIn('environment["JARVIS_TTS_VOICE"] = ""', source)
         self.assertIn('environment["JARVIS_TTS_RATE"] = ""', source)
         self.assertIn('environment["JARVIS_TTS_REQUIRE_EMERGENCY_CONTROL"] = "1"', source)
+        self.assertIn('environment["JARVIS_TTS_EMERGENCY_HELPER_PATH"]', source)
+        self.assertIn('jarvis-status-helper', source)
         self.assertNotIn('environment["JARVIS_TTS_PROVIDER"] = "piper"', source)
 
     def test_swift_worker_supervisor_rejects_stale_bundle_workers(self):
@@ -16669,8 +17235,8 @@ Pages occupied by compressor:             10.
 
         self.assertIn('APP_NAME="${APP_NAME:-Jarvis}"', script)
         self.assertIn('BUNDLE_ID="${BUNDLE_ID:-local.leo.jarvis}"', script)
-        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.494}"', script)
-        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-494}"', script)
+        self.assertIn('APP_VERSION="${APP_VERSION:-0.1.501}"', script)
+        self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-501}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
         # The canonical-identity hard-refusal gate was removed so APP_NAME/BUNDLE_ID are
         # cleanly overridable for a rebranded build. Defaults above still resolve to
@@ -17716,6 +18282,44 @@ Pages occupied by compressor:             10.
         self.assertNotIn("what's on this page", result["reply"])
         self.assertNotIn("copy Chrome cookies", result["reply"])
         self.assertIn("No Teams assignment was inspected", result["user_facing_safety_summary"])
+
+    def test_teams_assignment_workflow_respects_browser_action_suppression(self):
+        fake_bookmark_plan = {
+            "tool": "browser.bookmark_open",
+            "status": "planned",
+            "planned_only": True,
+            "executed": False,
+            "url": "https://teams.microsoft.com/v2/",
+            "title": "Teams",
+            "selected_bookmark": {
+                "title": "Teams",
+                "url": "https://teams.microsoft.com/v2/",
+                "domain": "teams.microsoft.com",
+            },
+            "preferred_open_lane": "chrome_authenticated",
+            "visible_browser_lane": "jarvis_webkit",
+            "requires_chrome_login": True,
+            "open_chrome_to_reuse_login": True,
+            "read_private_content": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_deeplinks = Path(tmpdir) / "missing-teams-deeplinks.json"
+            token = jarvis_tools.set_browser_actions_suppressed(True)
+            try:
+                with patch("jarvis.tools.chrome_bookmark_open_plan", return_value=fake_bookmark_plan), \
+                     patch("jarvis.tools.CHROME_TEAMS_DEEPLINKS_SNAPSHOT_PATH", missing_deeplinks):
+                    result = teams_assignment_workflow_plan("Look in Teams for my newest Music assignment.")
+            finally:
+                jarvis_tools.reset_browser_actions_suppressed(token)
+
+        self.assertTrue(result["browser_actions_suppressed"])
+        self.assertFalse(result["open_chrome_to_reuse_login"])
+        self.assertFalse(result["automatic_teams_page_inspection_supported"])
+        self.assertFalse(result["defer_stream_final_speech"])
+        self.assertEqual(result["teams_page_inspection_status"], "browser_actions_suppressed")
+        self.assertEqual(result["recommended_next_safe_tool"], "screen.visible_text")
+        self.assertIn("did not open Chrome", result["reply"])
+        self.assertIn("have not inspected", result["reply"])
 
     def test_teams_assignment_workflow_prefers_matching_deeplink_snapshot(self):
         fake_bookmark_plan = {
@@ -20900,7 +21504,9 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("/api/command", script_source)
         self.assertIn('"suppress_speech": True', script_source)
         self.assertIn('"suppress_audio_actions": bool(suppress_audio_actions)', script_source)
+        self.assertIn('"suppress_browser_actions": bool(suppress_browser_actions)', script_source)
         self.assertIn("--allow-audio-actions", script_source)
+        self.assertIn("--allow-browser-actions", script_source)
         self.assertIn("detect_wake_command", script_source)
         self.assertIn("faster_whisper", script_source)
         self.assertIn("LOCAL_STT_PYTHON", script_source)
@@ -22301,6 +22907,37 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["speech"]["reason"], "explicit")
         self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/say", "hello"])
 
+    def test_quick_speech_command_respects_muted_state(self):
+        with patch("jarvis.tools.SPEECH_MUTED", True), \
+             patch("jarvis.tools.subprocess.Popen") as popen_mock:
+            result = quick_local_control("say out loud hello")
+
+        self.assertEqual(result["status"], "muted")
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["action"], "speech.say")
+        self.assertEqual(result["speech"]["status"], "muted")
+        self.assertEqual(result["reply"], "Jarvis speech is muted.")
+        popen_mock.assert_not_called()
+
+    def test_quick_speech_command_requires_emergency_control_when_configured(self):
+        with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+             patch("jarvis.tools._speech_emergency_control_snapshot", return_value={
+                 "emergency_control_required": True,
+                 "emergency_control_available": False,
+                 "emergency_control_process": "jarvis-status-helper",
+                 "emergency_control_detail": "missing_expected_helper",
+                 "emergency_control_expected_path": "/tmp/Jarvis.app/Contents/MacOS/jarvis-status-helper",
+             }), \
+             patch("jarvis.tools.subprocess.Popen") as popen_mock:
+            result = quick_local_control("say out loud hello")
+
+        self.assertEqual(result["status"], "emergency_control_missing")
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["action"], "speech.say")
+        self.assertEqual(result["speech"]["status"], "emergency_control_missing")
+        self.assertIn("Shut Up control", result["reply"])
+        popen_mock.assert_not_called()
+
     def test_quick_speech_command_honors_explicit_macos_voice_override(self):
         class FakeProcess:
             pid = 12345
@@ -22896,6 +23533,28 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertNotIn("(", spoken)
         self.assertNotIn(")", spoken)
 
+    def test_auto_speech_sanitizer_does_not_read_fenced_code_blocks(self):
+        spoken = jarvis_tools._sanitize_spoken_text(
+            "Here is the code:\n"
+            "```python\n"
+            "print('hello')\n"
+            "```\n"
+            "I can adjust it."
+        )
+        visible = jarvis_tools._sanitize_user_visible_text(
+            "Here is the code:\n"
+            "```python\n"
+            "print('hello')\n"
+            "```\n"
+            "I can adjust it."
+        )
+
+        self.assertEqual(spoken, "Here is the code, I put the code on screen. I can adjust it.")
+        self.assertNotIn("print", spoken)
+        self.assertNotIn("python", spoken.lower())
+        self.assertIn("```python", visible)
+        self.assertIn("print('hello')", visible)
+
     def test_visible_reply_sanitizer_removes_raw_links_and_email_addresses(self):
         visible = jarvis_tools._sanitize_user_visible_text(
             "Please fill in [the short feedback form](https://example.test/form?id=123) today. "
@@ -23141,6 +23800,28 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["emergency_control_process"], "jarvis-status-helper")
         popen_mock.assert_not_called()
 
+    def test_auto_speech_rejects_stale_emergency_helper_from_other_bundle(self):
+        stale_helper = subprocess.CompletedProcess(
+            args=["pgrep"],
+            returncode=0,
+            stdout="123 /Applications/Jarvis-LocalOS-Only.app/Contents/MacOS/jarvis-status-helper --app-bundle-path /Applications/Jarvis-LocalOS-Only.app\n",
+            stderr="",
+        )
+
+        with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+             patch("jarvis.tools.TTS_EMERGENCY_HELPER_PATH", "/Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper"), \
+             patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+             patch("jarvis.tools._find_executable", side_effect=lambda name: "/usr/bin/pgrep" if name == "pgrep" else "/usr/bin/say"), \
+             patch("jarvis.tools.subprocess.run", return_value=stale_helper), \
+             patch("jarvis.tools.subprocess.Popen") as popen_mock:
+            result = jarvis_tools.speak_text_async("Jarvis should reject the stale helper.", reason="final")
+
+        self.assertFalse(result["spoken"])
+        self.assertEqual(result["status"], "emergency_control_missing")
+        self.assertEqual(result["emergency_control_detail"], "missing_expected_helper")
+        self.assertEqual(result["emergency_control_expected_path"], "/Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper")
+        popen_mock.assert_not_called()
+
     def test_auto_speech_allows_audio_when_emergency_menu_is_running(self):
         class FakeProcess:
             def poll(self):
@@ -23174,6 +23855,41 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(result["status"], "started")
         self.assertEqual(result["provider"], "macos")
         self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/say", "Jarvis can speak because Shut Up is available."])
+        self.assertTrue(thread_mock.called)
+
+    def test_auto_speech_allows_expected_emergency_helper_bundle(self):
+        class FakeProcess:
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                return 0
+
+        expected_helper = subprocess.CompletedProcess(
+            args=["pgrep"],
+            returncode=0,
+            stdout="123 /Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper --app-bundle-path /Applications/Jarvis.app\n",
+            stderr="",
+        )
+
+        jarvis_tools.SPEECH_PROCESS = None
+        try:
+            with patch("jarvis.tools.TTS_REQUIRE_EMERGENCY_CONTROL", True), \
+                 patch("jarvis.tools.TTS_EMERGENCY_HELPER_PATH", "/Applications/Jarvis.app/Contents/MacOS/jarvis-status-helper"), \
+                 patch("jarvis.tools.TTS_AUTOMATIC_ENABLED", True), \
+                 patch("jarvis.tools.TTS_PROVIDER", "macos"), \
+                 patch("jarvis.tools._find_executable", side_effect=lambda name: "/usr/bin/pgrep" if name == "pgrep" else "/usr/bin/say"), \
+                 patch("jarvis.tools.subprocess.run", return_value=expected_helper) as run_mock, \
+                 patch("jarvis.tools.threading.Thread") as thread_mock, \
+                 patch("jarvis.tools.subprocess.Popen", return_value=FakeProcess()) as popen_mock:
+                result = jarvis_tools.speak_text_async("Jarvis can speak because the matching helper is available.", reason="final")
+        finally:
+            jarvis_tools.SPEECH_PROCESS = None
+            jarvis_tools.SPEECH_PROCESS_REASON = None
+
+        self.assertTrue(result["spoken"])
+        self.assertEqual(run_mock.call_args.args[0], ["/usr/bin/pgrep", "-fl", "jarvis-status-helper"])
+        self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/say", "Jarvis can speak because the matching helper is available."])
         self.assertTrue(thread_mock.called)
 
     def test_speech_diagnostics_include_full_spoken_text_for_echo_detection(self):
@@ -26466,6 +27182,45 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertTrue(events[0]["details"]["suppress_audio_actions"])
         self.assertFalse(events[1]["details"]["suppress_audio_actions"])
 
+    def test_server_scopes_suppressed_browser_actions_to_one_command(self):
+        def fake_handle(command, **kwargs):
+            suppressed = jarvis_tools.browser_actions_are_suppressed()
+            return PlannedResult(
+                command=command,
+                tool="teams.assignment",
+                summary="Browser guard checked.",
+                assessment=classify_command(command).to_dict(),
+                result={
+                    "tool": "teams.assignment",
+                    "status": "browser_suppressed" if suppressed else "planned",
+                    "executed": False,
+                    "reply": "Browser guard checked.",
+                },
+                executed=False,
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = JarvisServer()
+            server.audit = AuditLogger(Path(temp_dir) / "events.jsonl")
+            with patch.object(server.planner, "handle", side_effect=fake_handle) as handle_mock:
+                guarded = server.command(
+                    "Go to Teams and find my Music assignment.",
+                    suppress_speech=True,
+                    suppress_browser_actions=True,
+                )
+                normal = server.command(
+                    "Go to Teams and find my Music assignment.",
+                    suppress_speech=True,
+                    suppress_browser_actions=False,
+                )
+            events = server.audit.recent(2)
+
+        self.assertEqual(guarded["result"]["status"], "browser_suppressed")
+        self.assertEqual(normal["result"]["status"], "planned")
+        self.assertEqual(handle_mock.call_count, 2)
+        self.assertTrue(events[0]["details"]["suppress_browser_actions"])
+        self.assertFalse(events[1]["details"]["suppress_browser_actions"])
+
     def test_stream_command_yields_tool_status_before_email_final(self):
         fake_result = {
             "tool": "outlook.visible_summary",
@@ -28981,6 +29736,28 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertEqual(summary["warnings"], 1)
         self.assertEqual(summary["detail"], "(fatal 1, warnings 1) ")
 
+    def test_morning_status_pre_build_gate_cleanup_status_reports_chrome_not_running(self):
+        status = pre_build_gate_cleanup_status(
+            {
+                "results": [
+                    {
+                        "id": "cleanup_chrome_test_tabs",
+                        "ok": True,
+                        "stdout_tail": json.dumps(
+                            {
+                                "ok": True,
+                                "reason": "chrome_not_running",
+                                "target_count": 0,
+                                "closed_count": 0,
+                            }
+                        ),
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(status, "cleanup ok; Chrome not running; 0 test tab/window targets.")
+
     def test_morning_status_prints_pre_build_gate_warning_counts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -29013,6 +29790,54 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("steps full_loop_regression, cleanup_chrome_test_tabs", printed)
         self.assertIn("Last known Chrome cleanup warning from stale gate:", printed)
         self.assertNotIn("\nChrome cleanup warning: cleanup", printed)
+
+    def test_morning_status_prints_chrome_safety_for_successful_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            gate_dir = root / "runtime" / "pre_build_gate"
+            gate_dir.mkdir(parents=True)
+            latest = gate_dir / "latest.json"
+            latest.write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "failed",
+                        "passed": 3,
+                        "failed": 1,
+                        "total": 4,
+                        "source_commit": "head",
+                        "report_path": str(gate_dir / "summary.json"),
+                        "results": [
+                            {"id": "full_loop_regression", "ok": False, "fatal": True},
+                            {
+                                "id": "cleanup_chrome_test_tabs",
+                                "ok": True,
+                                "fatal": False,
+                                "stdout_tail": json.dumps(
+                                    {
+                                        "ok": True,
+                                        "reason": "chrome_not_running",
+                                        "target_count": 0,
+                                        "closed_count": 0,
+                                    }
+                                ),
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="head"), \
+                 patch("builtins.print") as print_mock:
+                print_latest_pre_build_gate()
+
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Chrome safety: cleanup ok; Chrome not running; 0 test tab/window targets.", printed)
+        self.assertIn(
+            "Chrome live-test guard: fail-closed before live browser navigation; memory cap 12000 MB; window cap 3; tab cap 20; Chrome window creation disabled unless explicitly enabled.",
+            printed,
+        )
 
     def test_morning_status_marks_pre_build_gate_stale_for_head(self):
         with patch("scripts.morning_status.git_commit_short", return_value="newhead"):
@@ -29083,6 +29908,82 @@ class RuntimeSurfaceTests(unittest.TestCase):
 
         printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
         self.assertIn("Last known Teams blocker from stale gate: Teams assignment is wrong_subject.", printed)
+
+    def test_morning_status_supersedes_stale_teams_blocker_with_current_artifact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            gate_dir = root / "runtime" / "pre_build_gate"
+            gate_dir.mkdir(parents=True)
+            stale_report = root / "runtime" / "full_loop_regression" / "stale-summary.json"
+            stale_report.parent.mkdir(parents=True)
+            stale_report.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {"completion_status": "wrong_subject"},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            current_report_dir = root / "runtime" / "full_loop_regression" / "20260626-013905"
+            current_report_dir.mkdir(parents=True)
+            (current_report_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "source_commit": "newhead",
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {
+                                    "completion_status": "not_inspected",
+                                    "honest_not_inspected": True,
+                                    "browser_target_available": True,
+                                    "uses_imported_bookmark_first": True,
+                                    "uses_teams_deeplink_first": False,
+                                    "visible_reply_preview": (
+                                        "I found a Teams route, but browser actions are suppressed for this QA run, "
+                                        "so I did not open Chrome."
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (gate_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "passed": 0,
+                        "total": 1,
+                        "source_commit": "oldgate",
+                        "results": [
+                            {
+                                "id": "full_loop_regression",
+                                "ok": False,
+                                "stdout_tail": f"Report: {stale_report}\nteams_music_assignment_honesty: warning",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="newhead"), \
+                 patch("builtins.print") as print_mock:
+                print_latest_pre_build_gate()
+
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertNotIn("Last known Teams blocker from stale gate", printed)
+        self.assertIn("Stale pre-build Teams blocker superseded by current Teams artifact", printed)
 
     def test_morning_status_pre_build_gate_music_blocker_summary(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -29395,6 +30296,59 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("All teams no-click navigation plan is ready at (257.0, 322.5) in screenshot pixels", blocker)
         self.assertIn("Teams Search no-click plan is ready for Music at (1821.84, 146.25) in screen points", blocker)
         self.assertIn("Assignments no-click navigation plan is ready at (68.13, 577.17) in legacy coordinate space", blocker)
+
+    def test_morning_status_pre_build_gate_teams_blocker_reports_suppressed_bookmark_route(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "summary.json"
+            voice_report_path = Path(temp_dir) / "voice-loop-report.json"
+            voice_report_path.write_text(
+                json.dumps(
+                    {
+                        "result": {
+                            "command_response_result": {
+                                "browser_target_available": True,
+                                "uses_imported_bookmark_first": True,
+                                "uses_teams_deeplink_first": False,
+                                "teams_deeplink_route_status": "no_prompt_match",
+                                "teams_deeplink_row_count": 3,
+                                "teams_page_inspection_status": "browser_actions_suppressed",
+                                "url": "https://teams.microsoft.com/private",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "voice_loop_report": str(voice_report_path),
+                                "action_proof": {"completion_status": "not_inspected"},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            blocker = pre_build_gate_teams_blocker(
+                {
+                    "results": [
+                        {
+                            "id": "full_loop_regression",
+                            "ok": False,
+                            "stdout_tail": f"Report: {report_path}\nteams_music_assignment_honesty: warning",
+                        }
+                    ]
+                }
+            )
+
+        self.assertIn("safe imported Teams bookmark route ready but browser actions suppressed", blocker)
+        self.assertNotIn("teams.microsoft.com/private", blocker)
 
     def test_morning_status_pre_build_gate_teams_blocker_reports_focus_failure(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -29793,6 +30747,47 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("not exercised in latest Teams artifact", diagnostic)
         self.assertIn("stale for HEAD newhead", diagnostic)
         self.assertIn("artifact ran on oldgate", diagnostic)
+
+    def test_morning_status_latest_teams_diagnostic_reports_browser_suppression(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report_dir = root / "runtime" / "full_loop_regression" / "20260626-013905"
+            report_dir.mkdir(parents=True)
+            (report_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "source_commit": "head",
+                        "results": [
+                            {
+                                "case_id": "teams_music_assignment_honesty",
+                                "status": "warning",
+                                "action_proof": {
+                                    "completion_status": "not_inspected",
+                                    "honest_not_inspected": True,
+                                    "browser_target_available": True,
+                                    "uses_imported_bookmark_first": True,
+                                    "uses_teams_deeplink_first": False,
+                                    "visible_reply_preview": (
+                                        "I found a Teams route, but browser actions are suppressed for this QA run, "
+                                        "so I did not open Chrome."
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("scripts.morning_status.PROJECT_ROOT", root), \
+                 patch("scripts.morning_status.git_commit_short", return_value="head"):
+                diagnostic = latest_teams_live_navigation_diagnostic()
+
+        self.assertIn("not_inspected", diagnostic)
+        self.assertIn("browser actions suppressed", diagnostic)
+        self.assertIn("Chrome was not opened", diagnostic)
+        self.assertIn("Teams was not inspected", diagnostic)
+        self.assertIn("safe imported Teams bookmark route ready", diagnostic)
 
     def test_morning_status_full_loop_artifact_stale_text_ignores_missing_or_current_commit(self):
         with patch("scripts.morning_status.git_commit_short", return_value="head"):

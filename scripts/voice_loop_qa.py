@@ -247,6 +247,11 @@ def main() -> int:
         help="Allow live audio/app actions such as Music playback. The default suppresses them for quiet unattended probes.",
     )
     parser.add_argument(
+        "--allow-browser-actions",
+        action="store_true",
+        help="Allow live browser actions such as opening or focusing Chrome. The default suppresses them for quiet unattended probes.",
+    )
+    parser.add_argument(
         "--exercise-visible-navigation",
         action="store_true",
         help="Allow an explicit visible-screen navigation attempt. Also requires JARVIS_ALLOW_LIVE_UI_NAVIGATION=1 before any click is sent.",
@@ -311,6 +316,7 @@ def main() -> int:
             expect_routed_contains=args.expect_routed_contains,
             exercise_live_speech=args.exercise_live_speech,
             allow_audio_actions=args.allow_audio_actions,
+            allow_browser_actions=args.allow_browser_actions,
             exercise_visible_navigation=args.exercise_visible_navigation,
         )
     else:
@@ -327,6 +333,7 @@ def main() -> int:
             expect_routed_contains=args.expect_routed_contains,
             exercise_live_speech=args.exercise_live_speech,
             allow_audio_actions=args.allow_audio_actions,
+            allow_browser_actions=args.allow_browser_actions,
             exercise_visible_navigation=args.exercise_visible_navigation,
         )
 
@@ -498,6 +505,7 @@ def run_voice_loop(
     expect_routed_contains: list[str] | None = None,
     exercise_live_speech: bool = False,
     allow_audio_actions: bool = False,
+    allow_browser_actions: bool = False,
     exercise_visible_navigation: bool = False,
 ) -> dict[str, Any]:
     base_url = normalize_base_url(base_url)
@@ -521,6 +529,7 @@ def run_voice_loop(
             "no_permission_prompts": no_permission_prompts,
             "exercise_live_speech": exercise_live_speech,
             "allow_audio_actions": allow_audio_actions,
+            "allow_browser_actions": allow_browser_actions,
             "exercise_visible_navigation": exercise_visible_navigation,
             "expect_tools": expect_tools or [],
             "expect_visible_contains": expect_visible_contains or [],
@@ -585,6 +594,7 @@ def run_voice_loop(
             timeout=timeout,
             suppress_speech=not exercise_live_speech,
             suppress_audio_actions=not allow_audio_actions,
+            suppress_browser_actions=not allow_browser_actions,
         )
         stage_timings.append(stage_timing("jarvis_stream", stage_started))
         command_response = final_response_from_stream_events(stream_events)
@@ -886,6 +896,7 @@ def run_speech_audit(
     expect_routed_contains: list[str] | None = None,
     exercise_live_speech: bool = False,
     allow_audio_actions: bool = False,
+    allow_browser_actions: bool = False,
     exercise_visible_navigation: bool = False,
 ) -> dict[str, Any]:
     base_url = normalize_base_url(base_url)
@@ -902,6 +913,7 @@ def run_speech_audit(
             "speech_audit_only": True,
             "exercise_live_speech": exercise_live_speech,
             "allow_audio_actions": allow_audio_actions,
+            "allow_browser_actions": allow_browser_actions,
             "exercise_visible_navigation": exercise_visible_navigation,
             "expect_tools": expect_tools or [],
             "expect_visible_contains": expect_visible_contains or [],
@@ -916,6 +928,7 @@ def run_speech_audit(
             timeout=timeout,
             suppress_speech=not exercise_live_speech,
             suppress_audio_actions=not allow_audio_actions,
+            suppress_browser_actions=not allow_browser_actions,
         )
         command_response = final_response_from_stream_events(stream_events)
         visible_screen_follow_up = run_native_visible_screen_follow_up(
@@ -1812,6 +1825,15 @@ def normalize_stt_noise_tokens(tokens: list[str]) -> list[str]:
     index = 0
     while index < len(tokens):
         if (
+            index + 2 < len(tokens)
+            and re.fullmatch(r"20\d{2}", tokens[index] or "")
+            and tokens[index + 1] == "to"
+            and re.fullmatch(r"20\d{2}", tokens[index + 2] or "")
+        ):
+            normalized.extend([tokens[index], tokens[index + 2]])
+            index += 3
+            continue
+        if (
             index + 4 < len(tokens)
             and tokens[index:index + 5] == ["20", "million", "262", "27"]
         ):
@@ -1828,14 +1850,23 @@ def normalize_stt_noise_tokens(tokens: list[str]) -> list[str]:
             normalized.extend(["sharpay", "cao"])
             index += 3
             continue
+        if index + 1 < len(tokens) and tokens[index:index + 2] == ["hong", "cho"]:
+            normalized.append("hongqiao")
+            index += 2
+            continue
         if (
             index + 1 < len(tokens)
             and tokens[index] == "sharpay"
-            and tokens[index + 1] in {"cal", "cao", "cows"}
+            and tokens[index + 1] in {"cal", "cao", "cow", "cows"}
         ):
             normalized.extend(["sharpay", "cao"])
             index += 2
             continue
+        if token := tokens[index]:
+            if token == "corps":
+                normalized.append("core")
+                index += 1
+                continue
         normalized.append(tokens[index])
         index += 1
     return normalized
@@ -1848,11 +1879,13 @@ def stream_command_events(
     timeout: float,
     suppress_speech: bool = True,
     suppress_audio_actions: bool = True,
+    suppress_browser_actions: bool = True,
 ) -> list[dict[str, Any]]:
     payload = {
         "command": command,
         "suppress_speech": True,
         "suppress_audio_actions": bool(suppress_audio_actions),
+        "suppress_browser_actions": bool(suppress_browser_actions),
     }
     if not suppress_speech:
         payload["suppress_speech"] = False
@@ -2906,6 +2939,10 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
     if requested_class:
         return [requested_class, *_visible_navigation_sequence_tail(navigation_targets)]
 
+    assignments = _visible_navigation_assignments_step(
+        navigation_targets,
+        "open the Teams Assignments view before backing out through the class list",
+    )
     all_teams = _visible_navigation_sequence_step(
         navigation_targets,
         "all_teams",
@@ -2914,6 +2951,7 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
     )
     if all_teams:
         return [
+            *([assignments] if assignments else []),
             all_teams,
             *_visible_navigation_search_step(navigation_targets),
             {
@@ -2927,6 +2965,7 @@ def visible_navigation_sequence(navigation_targets: dict[str, Any]) -> list[dict
     search_steps = _visible_navigation_search_step(navigation_targets)
     if search_steps:
         return [
+            *([assignments] if assignments else []),
             *search_steps,
             {
                 "key": "requested_class_after_search",
@@ -3048,17 +3087,23 @@ def _visible_navigation_sequence_step(
 
 
 def _visible_navigation_sequence_tail(navigation_targets: dict[str, Any]) -> list[dict[str, Any]]:
+    assignments = _visible_navigation_assignments_step(
+        navigation_targets,
+        "open Assignments after the requested class is visible",
+    )
+    return [assignments] if assignments else []
+
+
+def _visible_navigation_assignments_step(navigation_targets: dict[str, Any], reason: str) -> dict[str, Any] | None:
     assignments_plan = navigation_targets.get("assignments_plan")
     if not isinstance(assignments_plan, dict) or not assignments_plan.get("planned"):
-        return []
-    return [
-        {
-            "key": "assignments",
-            "label": "Assignments",
-            "reason": "open Assignments after the requested class is visible",
-            "plan": assignments_plan,
-        }
-    ]
+        return None
+    return {
+        "key": "assignments",
+        "label": "Assignments",
+        "reason": reason,
+        "plan": assignments_plan,
+    }
 
 
 def execute_visible_navigation_plan(

@@ -35,6 +35,8 @@ REPORT_DIR = PROJECT_ROOT / "runtime" / "full_loop_regression"
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
 DEFAULT_MUSIC_BRIDGE_URL = "http://127.0.0.1:47879"
 DEFAULT_MUSIC_APP_BUNDLE_PATH = PROJECT_ROOT.parent / "Music App" / "dist" / "Music.app"
+CHROME_SURFACE_MAX_WINDOWS = 3
+CHROME_SURFACE_MAX_TABS = 20
 
 
 MUSIC_WAVING_CASE = {
@@ -347,6 +349,201 @@ def apply_latency_budgets(results: list[dict[str, Any]], cases: list[dict[str, A
         result["status"] = "failed"
 
 
+def chrome_memory_safety_snapshot(limit_mb: float = 12000.0) -> dict[str, Any]:
+    """Return a fail-closed Chrome memory check before live browser automation."""
+    try:
+        completed = subprocess.run(
+            ["/bin/ps", "-axo", "pid=,rss=,command="],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "ok": False,
+            "status": "chrome_memory_unknown",
+            "reason": f"Could not inspect Chrome memory: {type(error).__name__}",
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": None,
+            "processes": [],
+        }
+    if completed.returncode != 0:
+        return {
+            "ok": False,
+            "status": "chrome_memory_unknown",
+            "reason": (completed.stderr.strip() or "ps returned a non-zero exit code.")[-500:],
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": None,
+            "processes": [],
+        }
+
+    processes: list[dict[str, Any]] = []
+    total_kb = 0
+    for line in completed.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid_text, rss_text, command = parts
+        if "Google Chrome" not in command:
+            continue
+        try:
+            rss_kb = int(rss_text)
+        except ValueError:
+            continue
+        total_kb += max(rss_kb, 0)
+        processes.append({
+            "pid": pid_text,
+            "rss_mb": round(max(rss_kb, 0) / 1024.0, 3),
+            "command_preview": command[:240],
+        })
+
+    total_mb = total_kb / 1024.0
+    if not processes:
+        return {
+            "ok": True,
+            "status": "chrome_not_running",
+            "reason": "Google Chrome is not running.",
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": 0.0,
+            "processes": [],
+        }
+    if total_mb > float(limit_mb):
+        return {
+            "ok": False,
+            "status": "chrome_memory_too_high",
+            "reason": f"Google Chrome is using {total_mb:.1f} MB, above the {float(limit_mb):.1f} MB safety limit.",
+            "limit_mb": round(float(limit_mb), 3),
+            "total_mb": round(total_mb, 3),
+            "processes": processes[:40],
+        }
+    return {
+        "ok": True,
+        "status": "chrome_memory_ok",
+        "reason": f"Google Chrome is using {total_mb:.1f} MB, below the {float(limit_mb):.1f} MB safety limit.",
+        "limit_mb": round(float(limit_mb), 3),
+        "total_mb": round(total_mb, 3),
+        "processes": processes[:40],
+    }
+
+
+def chrome_surface_safety_snapshot(
+    *,
+    max_windows: int = CHROME_SURFACE_MAX_WINDOWS,
+    max_tabs: int = CHROME_SURFACE_MAX_TABS,
+) -> dict[str, Any]:
+    """Return a fail-closed Chrome window/tab crowding check before live browser automation."""
+    try:
+        running = subprocess.run(
+            ["/usr/bin/pgrep", "-x", "Google Chrome"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "ok": False,
+            "status": "chrome_surface_unknown",
+            "reason": f"Could not inspect whether Chrome is running: {type(error).__name__}",
+            "max_windows": int(max_windows),
+            "max_tabs": int(max_tabs),
+            "window_count": None,
+            "tab_count": None,
+        }
+    if running.returncode != 0:
+        return {
+            "ok": True,
+            "status": "chrome_not_running",
+            "reason": "Google Chrome is not running.",
+            "max_windows": int(max_windows),
+            "max_tabs": int(max_tabs),
+            "window_count": 0,
+            "tab_count": 0,
+        }
+
+    script = '''
+tell application "Google Chrome"
+  set windowCount to count windows
+  set tabCount to 0
+  repeat with w in windows
+    set tabCount to tabCount + (count tabs of w)
+  end repeat
+end tell
+return (windowCount as text) & tab & (tabCount as text)
+'''
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "ok": False,
+            "status": "chrome_surface_unknown",
+            "reason": f"Could not inspect Chrome window/tab count: {type(error).__name__}",
+            "max_windows": int(max_windows),
+            "max_tabs": int(max_tabs),
+            "window_count": None,
+            "tab_count": None,
+        }
+    if completed.returncode != 0:
+        return {
+            "ok": False,
+            "status": "chrome_surface_unknown",
+            "reason": (completed.stderr.strip() or completed.stdout.strip() or "Chrome window/tab inspection failed.")[-500:],
+            "max_windows": int(max_windows),
+            "max_tabs": int(max_tabs),
+            "window_count": None,
+            "tab_count": None,
+        }
+    parts = completed.stdout.strip().split("\t")
+    try:
+        window_count = int(parts[0])
+        tab_count = int(parts[1])
+    except (IndexError, ValueError):
+        return {
+            "ok": False,
+            "status": "chrome_surface_unknown",
+            "reason": f"Chrome window/tab inspection returned unexpected output: {completed.stdout.strip()!r}",
+            "max_windows": int(max_windows),
+            "max_tabs": int(max_tabs),
+            "window_count": None,
+            "tab_count": None,
+        }
+    if window_count > int(max_windows) or tab_count > int(max_tabs):
+        return {
+            "ok": False,
+            "status": "chrome_surface_too_crowded",
+            "reason": (
+                f"Google Chrome already has {window_count} window(s) and {tab_count} tab(s), "
+                f"above the safe live-test limit of {int(max_windows)} window(s) or {int(max_tabs)} tab(s)."
+            ),
+            "max_windows": int(max_windows),
+            "max_tabs": int(max_tabs),
+            "window_count": window_count,
+            "tab_count": tab_count,
+        }
+    return {
+        "ok": True,
+        "status": "chrome_surface_ok",
+        "reason": (
+            f"Google Chrome has {window_count} window(s) and {tab_count} tab(s), "
+            f"within the safe live-test limit."
+        ),
+        "max_windows": int(max_windows),
+        "max_tabs": int(max_tabs),
+        "window_count": window_count,
+        "tab_count": tab_count,
+    }
+
+
 def voice_loop_user_latency_seconds(voice_report: dict[str, Any]) -> float | None:
     """Return the user-facing voice loop time, excluding offline proof generation."""
     result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
@@ -474,6 +671,10 @@ def run_music_waving_case(
             cleanup["new_afplay_processes_after"] = new_processes_since(before_afplay, after_afplay)
             cleanup["media_surfaces_after"] = after_media_surfaces
             cleanup["new_media_surfaces_after"] = new_media_surfaces_since(before_media_surfaces, after_media_surfaces)
+            cleanup["new_blocked_media_inspections_after"] = new_blocked_media_inspections_since(
+                before_media_surfaces,
+                after_media_surfaces,
+            )
             result["cleanup"] = cleanup
             result["total_seconds"] = round(time.monotonic() - started, 3)
             if not cleanup["verified_stopped"]:
@@ -497,7 +698,7 @@ def run_music_waving_case(
                     warnings = []
                     result["warnings"] = warnings
                 warnings.append("Music cleanup left a new media playback surface running.")
-            blocked_surfaces = after_media_surfaces.get("blocked")
+            blocked_surfaces = cleanup["new_blocked_media_inspections_after"]
             if isinstance(blocked_surfaces, list) and "Google Chrome" in blocked_surfaces:
                 if result.get("status") == "passed":
                     result["status"] = "warning"
@@ -505,7 +706,9 @@ def run_music_waving_case(
                 if not isinstance(warnings, list):
                     warnings = []
                     result["warnings"] = warnings
-                warnings.append("Chrome media-surface inspection was blocked, so this proof could not rule out hidden Chrome audio.")
+                warnings.append(
+                    "Chrome media-surface inspection became blocked during the test, so this proof could not rule out hidden Chrome audio."
+                )
         write_json(run_dir / "cleanup.json", cleanup)
 
 
@@ -701,6 +904,12 @@ def new_media_surfaces_since(before: dict[str, Any], after: dict[str, Any]) -> l
     before_surfaces = {str(item) for item in before.get("surfaces", [])}
     after_surfaces = {str(item) for item in after.get("surfaces", [])}
     return sorted(after_surfaces - before_surfaces)
+
+
+def new_blocked_media_inspections_since(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    before_blocked = {str(item) for item in before.get("blocked", [])}
+    after_blocked = {str(item) for item in after.get("blocked", [])}
+    return sorted(after_blocked - before_blocked)
 
 
 def wait_for_music_playback(music_bridge_url: str, *, timeout: float) -> dict[str, Any]:
@@ -1327,7 +1536,67 @@ def run_teams_assignment_case(
 ) -> dict[str, Any]:
     started = time.monotonic()
     run_dir.mkdir(parents=True, exist_ok=True)
-    before_tabs = chrome_tab_snapshot()
+    chrome_memory_guard = chrome_memory_safety_snapshot()
+    chrome_surface_guard = chrome_surface_safety_snapshot() if chrome_memory_guard.get("ok") else {
+        "ok": False,
+        "status": "skipped_after_chrome_memory_guard",
+        "reason": "Chrome surface count was skipped because the Chrome memory guard failed closed.",
+    }
+    chrome_tab_snapshots_allowed = bool(chrome_memory_guard.get("ok")) and bool(chrome_surface_guard.get("ok"))
+    write_json(run_dir / "chrome-memory-safety.json", chrome_memory_guard)
+    write_json(run_dir / "chrome-surface-safety.json", chrome_surface_guard)
+    if exercise_visible_navigation and not chrome_memory_guard.get("ok"):
+        reason = str(chrome_memory_guard.get("reason") or "Chrome memory safety check failed.")
+        warning = f"Chrome live navigation skipped for computer safety: {reason}"
+        return {
+            "case_id": case["id"],
+            "status": "warning",
+            "warnings": [warning],
+            "command": case["command"],
+            "voice_loop_status": "skipped_for_chrome_memory_safety",
+            "voice_loop_report": "",
+            "action_proof": {
+                "passed": True,
+                "capability_complete": False,
+                "completion_status": "not_inspected",
+                "visible_reply_preview": warning,
+                "chrome_memory_guard": chrome_memory_guard,
+            },
+            "cleanup": {
+                "required": False,
+                "reason": "Chrome was not touched because the live-navigation memory guard failed closed.",
+            },
+            "chrome_memory_guard": chrome_memory_guard,
+            "chrome_surface_guard": chrome_surface_guard,
+            "total_seconds": round(time.monotonic() - started, 3),
+        }
+    if exercise_visible_navigation and not chrome_surface_guard.get("ok"):
+        reason = str(chrome_surface_guard.get("reason") or "Chrome surface safety check failed.")
+        warning = f"Chrome live navigation skipped for computer safety: {reason}"
+        return {
+            "case_id": case["id"],
+            "status": "warning",
+            "warnings": [warning],
+            "command": case["command"],
+            "voice_loop_status": "skipped_for_chrome_surface_safety",
+            "voice_loop_report": "",
+            "action_proof": {
+                "passed": True,
+                "capability_complete": False,
+                "completion_status": "not_inspected",
+                "visible_reply_preview": warning,
+                "chrome_memory_guard": chrome_memory_guard,
+                "chrome_surface_guard": chrome_surface_guard,
+            },
+            "cleanup": {
+                "required": False,
+                "reason": "Chrome was not touched because the live-navigation surface guard failed closed.",
+            },
+            "chrome_memory_guard": chrome_memory_guard,
+            "chrome_surface_guard": chrome_surface_guard,
+            "total_seconds": round(time.monotonic() - started, 3),
+        }
+    before_tabs = chrome_tab_snapshot() if chrome_tab_snapshots_allowed else []
     write_json(run_dir / "chrome-tabs-before.json", {"tabs": before_tabs})
     cleanup: dict[str, Any] = {}
     try:
@@ -1343,6 +1612,7 @@ def run_teams_assignment_case(
             expect_routed_contains=list(case["expect_routed_contains"]),
             exercise_live_speech=exercise_live_speech,
             allow_audio_actions=False,
+            allow_browser_actions=exercise_visible_navigation,
             exercise_visible_navigation=exercise_visible_navigation,
         )
         write_json(run_dir / "voice-loop-report.json", voice_report)
@@ -1369,23 +1639,29 @@ def run_teams_assignment_case(
                 warnings.append(teams_focus_warning(action_proof))
             if action_proof.get("requested_class_target_found"):
                 warnings.append("Visible requested-class navigation target was found for the next safe navigation step.")
-            if action_proof.get("all_teams_target_found"):
-                warnings.append("Visible All teams navigation target was found for the next safe navigation step.")
             if action_proof.get("assignments_target_found"):
                 warnings.append("Visible Assignments navigation target was found for the next safe navigation step.")
+            if action_proof.get("all_teams_target_found"):
+                warnings.append("Visible All teams navigation target was found for the next safe navigation step.")
             live_navigation_summary = visible_navigation_execution_warning(action_proof)
             if live_navigation_summary:
                 warnings.append(live_navigation_summary)
             else:
-                if action_proof.get("requested_class_navigation_plan_ready"):
-                    warnings.append("A non-clicking requested-class navigation plan is ready; live navigation still requires an explicit safe run.")
-                if action_proof.get("all_teams_navigation_plan_ready"):
-                    warnings.append("A non-clicking All teams navigation plan is ready; live navigation still requires an explicit safe run.")
-                if action_proof.get("assignments_navigation_plan_ready"):
-                    warnings.append("A non-clicking Assignments navigation plan is ready; live navigation still requires an explicit safe run.")
+                warnings.extend(teams_no_click_plan_warnings(action_proof))
         if not action_proof["passed"]:
             status = "failed"
             warnings.extend(action_proof["failures"])
+        if not chrome_tab_snapshots_allowed:
+            if chrome_memory_guard.get("ok") and not chrome_surface_guard.get("ok"):
+                warnings.append(
+                    "Chrome tab snapshot and cleanup were skipped for computer safety because the Chrome window/tab-count preflight failed."
+                )
+            else:
+                warnings.append(
+                    "Chrome tab snapshot and cleanup were skipped for computer safety because the Chrome memory preflight failed."
+                )
+            if status == "passed":
+                status = "warning"
         return {
             "case_id": case["id"],
             "status": status,
@@ -1395,11 +1671,29 @@ def run_teams_assignment_case(
             "voice_loop_report": str(run_dir / "voice-loop-report.json"),
             "action_proof": action_proof,
             "cleanup": cleanup,
+            "chrome_memory_guard": chrome_memory_guard or {},
+            "chrome_surface_guard": chrome_surface_guard or {},
             "total_seconds": round(time.monotonic() - started, 3),
         }
     finally:
-        after_tabs = chrome_tab_snapshot()
-        cleanup.update(clean_new_chrome_tabs(before_tabs, after_tabs, hosts=("teams.microsoft.com", "teams.cloud.microsoft")))
+        after_tabs = chrome_tab_snapshot() if chrome_tab_snapshots_allowed else []
+        if chrome_tab_snapshots_allowed:
+            cleanup.update(clean_new_chrome_tabs(before_tabs, after_tabs, hosts=("teams.microsoft.com", "teams.cloud.microsoft")))
+        else:
+            skipped_reason = (
+                "chrome_surface_guard_skipped_tab_snapshot"
+                if chrome_memory_guard.get("ok") and not chrome_surface_guard.get("ok")
+                else "chrome_memory_guard_skipped_tab_snapshot"
+            )
+            cleanup.update({
+                "chrome_tabs_closed": 0,
+                "chrome_windows_closed": 0,
+                "new_target_tabs": 0,
+                "new_target_windows": 0,
+                "reason": skipped_reason,
+                "chrome_memory_guard_status": str(chrome_memory_guard.get("status") or ""),
+                "chrome_surface_guard_status": str(chrome_surface_guard.get("status") or ""),
+            })
         write_json(run_dir / "chrome-tabs-after.json", {"tabs": after_tabs})
         write_json(run_dir / "cleanup.json", cleanup)
 
@@ -1408,7 +1702,39 @@ def teams_incomplete_detail_warnings(action_proof: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
     if action_proof.get("honest_login_gate") or action_proof.get("browser_open_login_gate"):
         warnings.append("Teams is behind a Microsoft sign-in gate in Chrome.")
+    if action_proof.get("browser_target_available") and action_proof.get("teams_page_inspection_status") == "browser_actions_suppressed":
+        route = "Teams deep link" if action_proof.get("uses_teams_deeplink_first") else "imported Teams bookmark"
+        warnings.append(f"A safe {route} route is ready, but browser actions are suppressed for this QA run.")
     return warnings
+
+
+def teams_no_click_plan_warnings(action_proof: dict[str, Any]) -> list[str]:
+    labels = {
+        "requested_class": "requested-class",
+        "assignments": "Assignments",
+        "all_teams": "All teams",
+        "teams_search": "Teams Search",
+    }
+    ready_flags = {
+        "requested_class": "requested_class_navigation_plan_ready",
+        "assignments": "assignments_navigation_plan_ready",
+        "all_teams": "all_teams_navigation_plan_ready",
+        "teams_search": "teams_search_navigation_plan_ready",
+    }
+    ordered_keys: list[str] = []
+    sequence = action_proof.get("visible_navigation_sequence")
+    if isinstance(sequence, list):
+        for step in sequence:
+            key = str(step.get("key") or "") if isinstance(step, dict) else ""
+            if key in labels and action_proof.get(ready_flags[key]) and key not in ordered_keys:
+                ordered_keys.append(key)
+    for key in ("requested_class", "assignments", "all_teams", "teams_search"):
+        if action_proof.get(ready_flags[key]) and key not in ordered_keys:
+            ordered_keys.append(key)
+    return [
+        f"A non-clicking {labels[key]} navigation plan is ready; live navigation still requires an explicit safe run."
+        for key in ordered_keys
+    ]
 
 
 def teams_focus_warning(action_proof: dict[str, Any]) -> str:
@@ -1447,6 +1773,7 @@ def join_unique_reply_fragments(*fragments: str) -> str:
 
 def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, Any]:
     result = voice_report.get("result") if isinstance(voice_report.get("result"), dict) else {}
+    command_result = result.get("command_response_result") if isinstance(result.get("command_response_result"), dict) else {}
     visible_reply = str(result.get("visible_reply_preview") or "")
     follow_up = result.get("visible_screen_follow_up") if isinstance(result.get("visible_screen_follow_up"), dict) else {}
     follow_up_reply = str(follow_up.get("visible_reply_preview") or "")
@@ -1581,6 +1908,13 @@ def verify_teams_assignment_honesty(voice_report: dict[str, Any]) -> dict[str, A
         "browser_focus_expected_host": str(follow_up.get("browser_focus_expected_host") or ""),
         "browser_focus_attempted_url": str(follow_up.get("browser_focus_attempted_url") or ""),
         "browser_focus_detail": str(follow_up.get("browser_focus_detail") or ""),
+        "browser_target_available": bool(command_result.get("browser_target_available")),
+        "uses_imported_bookmark_first": bool(command_result.get("uses_imported_bookmark_first")),
+        "uses_teams_deeplink_first": bool(command_result.get("uses_teams_deeplink_first")),
+        "teams_deeplink_route_status": str(command_result.get("teams_deeplink_route_status") or ""),
+        "teams_deeplink_row_count": int(command_result.get("teams_deeplink_row_count") or 0),
+        "browser_open_plan_status": str(command_result.get("browser_open_plan_status") or ""),
+        "teams_page_inspection_status": str(command_result.get("teams_page_inspection_status") or ""),
         "capture_status": str(follow_up.get("capture_status") or ""),
         "capture_window_title": str(follow_up.get("capture_window_title") or ""),
         "capture_method": str(
