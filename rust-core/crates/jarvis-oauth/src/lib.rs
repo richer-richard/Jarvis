@@ -71,6 +71,14 @@ const PROACTIVE_REFRESH_DAYS: i64 = 8;
 /// Default access-token lifetime if the token response omits `expires_in`.
 const DEFAULT_TOKEN_TTL_SECONDS: i64 = 3600;
 
+/// Upper bound applied to a token response's `expires_in` before it is used in
+/// `chrono` duration/date arithmetic. `ChronoDuration::seconds` and the
+/// subsequent `DateTime + Duration` both panic on values near `i64::MAX`, so a
+/// malformed/hostile response must be clamped rather than trusted. 365 days is
+/// far beyond any legitimate access-token TTL yet comfortably within chrono's
+/// representable range.
+const MAX_SAFE_TTL_SECONDS: i64 = 365 * 24 * 60 * 60;
+
 /// How long [`login`] waits for the browser to redirect back before giving up.
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -165,7 +173,7 @@ pub async fn login_with(
 
     let client = http_client()?;
     let token = token::exchange_code(&client, &params.code, &redirect, &pkce.verifier).await?;
-    let creds = credentials_from_token(token, None)?;
+    let creds = credentials_from_token(token, None, None)?;
     storage.save(&creds)?;
     Ok(creds)
 }
@@ -207,31 +215,46 @@ async fn ensure_fresh(storage: &Storage, creds: StoredCredentials) -> Result<Sto
         Err(OAuthError::TokenEndpoint { .. }) => return Err(OAuthError::RefreshRejected),
         Err(other) => return Err(other),
     };
-    // A refresh response may omit a rotated refresh_token; keep the prior one.
-    let refreshed = credentials_from_token(token, Some(creds.refresh_token.clone()))?;
+    // A refresh response may omit a rotated refresh_token or re-derivable
+    // account_id; keep the prior values rather than dropping them.
+    let refreshed = credentials_from_token(
+        token,
+        Some(creds.refresh_token.clone()),
+        creds.account_id.clone(),
+    )?;
     storage.save(&refreshed)?;
     Ok(refreshed)
 }
 
 /// Builds [`StoredCredentials`] from a token response: derives `account_id` from
 /// the id_token, computes absolute `expires_at`, stamps `last_refresh`, and
-/// carries over `prior_refresh_token` when the response omits one.
+/// carries over `prior_refresh_token`/`prior_account_id` when the response omits
+/// or cannot re-derive one.
 fn credentials_from_token(
     token: token::TokenResponse,
     prior_refresh_token: Option<String>,
+    prior_account_id: Option<String>,
 ) -> Result<StoredCredentials> {
     let now = Utc::now();
-    let ttl = token.expires_in.unwrap_or(DEFAULT_TOKEN_TTL_SECONDS);
+    // Clamp before any chrono arithmetic: a negative TTL means "already expired,
+    // refresh immediately" (not an underflow), and an absurdly large one from a
+    // malformed/hostile response must not be allowed to panic `ChronoDuration`.
+    let ttl = token
+        .expires_in
+        .unwrap_or(DEFAULT_TOKEN_TTL_SECONDS)
+        .clamp(0, MAX_SAFE_TTL_SECONDS);
     let expires_at = now + ChronoDuration::seconds(ttl);
 
     // account_id is best-effort: store it when present, but a missing claim does
     // not fail login (the token is still usable; the claim is only needed for the
-    // not-yet-built Responses-API caller). We log so it's visible if absent.
+    // not-yet-built Responses-API caller). We log so it's visible if absent. On a
+    // refresh whose id_token drops the claim, fall back to the prior value rather
+    // than clobbering a previously-known-good account_id with None.
     let account_id = match account::account_id_from_id_token(&token.id_token) {
         Ok(id) => Some(id),
         Err(e) => {
             tracing::warn!("id_token has no chatgpt_account_id claim: {e}");
-            None
+            prior_account_id
         }
     };
 
@@ -284,6 +307,34 @@ fn open_in_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+
+    /// Builds a minimal, valid-shaped id_token JWT whose payload is the given
+    /// JSON. The signature is a throwaway string because the crate decodes but
+    /// never verifies id_tokens (see `account.rs`).
+    fn fake_id_token(payload_json: &str) -> String {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
+        format!("{header}.{payload}.sig-not-verified")
+    }
+
+    fn token_response(
+        id_token: String,
+        refresh_token: Option<String>,
+        expires_in: Option<i64>,
+    ) -> token::TokenResponse {
+        token::TokenResponse {
+            id_token,
+            access_token: "fresh-at".to_string(),
+            refresh_token,
+            expires_in,
+            token_type: Some("Bearer".to_string()),
+            scope: None,
+        }
+    }
+
+    const ID_TOKEN_NO_CLAIM: &str = r#"{"sub":"user-1"}"#;
 
     fn creds_expiring_in(minutes: i64, last_refresh_days_ago: i64) -> StoredCredentials {
         let now = Utc::now();
@@ -360,5 +411,120 @@ mod tests {
             DEFAULT_CALLBACK_PORT
         );
         assert_eq!(resolve_callback_port(None), DEFAULT_CALLBACK_PORT);
+    }
+
+    #[test]
+    fn refresh_without_account_claim_retains_prior_account_id() {
+        // The refreshed id_token drops the chatgpt_account_id claim.
+        let token = token_response(
+            fake_id_token(ID_TOKEN_NO_CLAIM),
+            Some("rt-new".to_string()),
+            Some(3600),
+        );
+        let creds = credentials_from_token(
+            token,
+            Some("rt-prior".to_string()),
+            Some("acc-prior".to_string()),
+        )
+        .unwrap();
+        // The previously-known-good account_id survives instead of becoming None.
+        assert_eq!(creds.account_id.as_deref(), Some("acc-prior"));
+    }
+
+    #[test]
+    fn refresh_with_account_claim_replaces_account_id() {
+        let token = token_response(
+            fake_id_token(r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"acc-new"}}"#),
+            None,
+            Some(3600),
+        );
+        let creds = credentials_from_token(
+            token,
+            Some("rt-prior".to_string()),
+            Some("acc-prior".to_string()),
+        )
+        .unwrap();
+        // A real claim on the response replaces the prior value.
+        assert_eq!(creds.account_id.as_deref(), Some("acc-new"));
+    }
+
+    #[test]
+    fn fresh_login_without_account_claim_yields_none() {
+        // Fresh login has no prior account_id to fall back to.
+        let token = token_response(
+            fake_id_token(ID_TOKEN_NO_CLAIM),
+            Some("rt".to_string()),
+            Some(3600),
+        );
+        let creds = credentials_from_token(token, None, None).unwrap();
+        assert!(creds.account_id.is_none());
+    }
+
+    #[test]
+    fn refresh_response_omitting_refresh_token_carries_prior() {
+        let token = token_response(fake_id_token(ID_TOKEN_NO_CLAIM), None, Some(3600));
+        let creds =
+            credentials_from_token(token, Some("rt-prior".to_string()), Some("acc".to_string()))
+                .unwrap();
+        assert_eq!(creds.refresh_token, "rt-prior");
+    }
+
+    #[test]
+    fn rotated_refresh_token_supersedes_prior() {
+        let token = token_response(
+            fake_id_token(ID_TOKEN_NO_CLAIM),
+            Some("rt-new".to_string()),
+            Some(3600),
+        );
+        let creds =
+            credentials_from_token(token, Some("rt-prior".to_string()), Some("acc".to_string()))
+                .unwrap();
+        assert_eq!(creds.refresh_token, "rt-new");
+    }
+
+    #[test]
+    fn absurd_expires_in_does_not_panic_and_clamps() {
+        // i64::MAX would previously overflow ChronoDuration::seconds / the
+        // DateTime addition and panic; it must now clamp to MAX_SAFE_TTL_SECONDS.
+        let before = Utc::now();
+        let token = token_response(
+            fake_id_token(ID_TOKEN_NO_CLAIM),
+            Some("rt".to_string()),
+            Some(i64::MAX),
+        );
+        let creds = credentials_from_token(token, None, None).unwrap();
+        let after = Utc::now();
+        let expected_low = before + ChronoDuration::seconds(MAX_SAFE_TTL_SECONDS);
+        let expected_high = after + ChronoDuration::seconds(MAX_SAFE_TTL_SECONDS);
+        assert!(creds.expires_at >= expected_low && creds.expires_at <= expected_high);
+    }
+
+    #[test]
+    fn negative_expires_in_clamps_to_already_expired() {
+        // A negative TTL means "already expired, refresh now", not an underflow.
+        let before = Utc::now();
+        let token = token_response(
+            fake_id_token(ID_TOKEN_NO_CLAIM),
+            Some("rt".to_string()),
+            Some(-100),
+        );
+        let creds = credentials_from_token(token, None, None).unwrap();
+        let after = Utc::now();
+        assert!(creds.expires_at >= before && creds.expires_at <= after);
+    }
+
+    #[test]
+    fn normal_expires_in_is_preserved() {
+        let before = Utc::now();
+        let token = token_response(
+            fake_id_token(ID_TOKEN_NO_CLAIM),
+            Some("rt".to_string()),
+            Some(3600),
+        );
+        let creds = credentials_from_token(token, None, None).unwrap();
+        let after = Utc::now();
+        let expected_low = before + ChronoDuration::seconds(3600);
+        let expected_high = after + ChronoDuration::seconds(3600);
+        assert!(creds.expires_at >= expected_low && creds.expires_at <= expected_high);
     }
 }

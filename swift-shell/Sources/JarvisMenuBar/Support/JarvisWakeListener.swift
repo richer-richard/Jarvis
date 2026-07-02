@@ -448,6 +448,12 @@ final class JarvisWakeListener {
         restartTask = nil
         captureTask?.cancel()
         captureTask = nil
+        // Clear any open barge-in window too (mirroring stop()/expireBargeInCommandWindow()):
+        // leaking the flag/timer into the next wake cycle would apply stop-phrase stripping
+        // to an unrelated command and let a stale timeout abort a legitimate capture.
+        bargeInCommandWindow = false
+        bargeInWindowTask?.cancel()
+        bargeInWindowTask = nil
         pendingCommand = ""
         stopRecognitionSession()
         phase = .restarting
@@ -470,12 +476,26 @@ final class JarvisWakeListener {
         guard phase == .waitingForWake || phase == .restarting else {
             return
         }
+        // `.waitingForWake` already has a live recognition session we can reuse in place.
+        // `.restarting` does not: the session was torn down and only a delayed `restartTask`
+        // is pending, so opening the window as-is would capture no audio until that task
+        // happens to fire, silently losing the interrupting utterance. Cancel the pending
+        // restart and bring a fresh session up now so a live session is guaranteed by the
+        // time we start listening, exactly as when entering from `.waitingForWake`.
+        let needsFreshSession = phase == .restarting
+        if needsFreshSession {
+            restartTask?.cancel()
+            restartTask = nil
+        }
         bargeInCommandWindow = true
         pendingCommand = ""
         captureTask?.cancel()
         captureTask = nil
         phase = .awaitingCommand
         status = "Listening for your command"
+        if needsFreshSession {
+            startRecognitionSession()
+        }
         publish()
         armBargeInWindowTimeout(timeoutSeconds)
     }
@@ -689,6 +709,39 @@ final class JarvisWakeListener {
         return captured
     }
 
+    /// Barge-in entered mid-restart (`.restarting`, no live session, a delayed restart
+    /// pending) must cancel that pending restart and bring a fresh recognition session up in
+    /// place, so the interrupting utterance is captured instead of the window opening deaf.
+    /// Returns (enteredAwaiting, sessionLive, pendingRestartCleared).
+    func testBargeInFromRestartingStartsSession() -> (enteredAwaiting: Bool, sessionLive: Bool, pendingRestartCleared: Bool) {
+        shouldKeepRunning = true
+        phase = .restarting
+        status = "Test listener resetting"
+        // Stand in for the delayed restart that is always pending during `.restarting`.
+        scheduleRestart(after: 30, countsTowardStability: false)
+        beginBargeInCommandCapture(timeoutSeconds: 60)
+        let enteredAwaiting = phase == .awaitingCommand && bargeInCommandWindow
+        let sessionLive = recognitionTask != nil
+        let pendingRestartCleared = restartTask == nil
+        stop()
+        return (enteredAwaiting, sessionLive, pendingRestartCleared)
+    }
+
+    /// A recognition hiccup while a barge-in window is open must not leak the window flag or
+    /// its pending timeout into the next wake cycle. Returns (windowActive, windowTaskCleared,
+    /// phaseLabel) after simulating a recovery during an open window.
+    func testRecoveryClearsBargeInWindow() -> (windowActive: Bool, windowTaskCleared: Bool, phase: String) {
+        shouldKeepRunning = true
+        phase = .awaitingCommand
+        bargeInCommandWindow = true
+        status = "Test listener running"
+        armBargeInWindowTimeout(60)
+        recoverAfterRecognitionIssue(status: "Simulated recognition hiccup")
+        let result = (bargeInCommandWindow, bargeInWindowTask == nil, phase.label)
+        stop()
+        return result
+    }
+
     #if canImport(Speech)
     static func testPermissionCallbackPath() async -> Bool {
         await requestPermissions()
@@ -854,7 +907,9 @@ final class JarvisWakeListener {
         ["yes", "yes sir", "yes sir yes sir"].contains(normalized(value))
     }
 
-    // Longer phrases first so "stop talking" is trimmed before the bare "stop".
+    // Pure interruption filler: stripped both when bare and when leading a real command.
+    // Longer phrases first so "stop talking" is trimmed before the bare "stop". These words
+    // are rarely someone's intended command verb, so stripping them as a prefix is safe.
     private static let bargeInStopPrefixes = [
         "stop talking",
         "shut up",
@@ -863,19 +918,34 @@ final class JarvisWakeListener {
         "one second",
         "stop",
         "quiet",
-        "pause",
+    ]
+
+    // Words that signal "stop" only when said entirely alone. As a leading prefix they are
+    // almost always part of a genuine command ("cancel my 4pm meeting", "pause the timer",
+    // "wait for the results"), so they are matched exact-only and never prefix-stripped.
+    private static let bargeInStopExactPhrases = [
         "cancel",
+        "pause",
         "wait",
     ]
 
-    /// Trim a leading explicit stop-phrase from a normalized barge-in command so a
-    /// bare "stop" yields "" (window ends, nothing submitted) while "stop what's the
-    /// weather" yields "what s the weather". Input is expected already normalized.
+    /// Trim a leading explicit stop-phrase from a normalized barge-in command. Filler words
+    /// in `bargeInStopPrefixes` ("stop", "quiet", "shut up", ...) are stripped both when bare
+    /// (a lone "stop" yields "" so the window ends with nothing submitted) and when they lead
+    /// a real command ("stop what's the weather" -> "what s the weather"), because they are
+    /// rarely a user's intended command verb. Words in `bargeInStopExactPhrases` ("cancel",
+    /// "pause", "wait") only end the window when said entirely alone; as a leading prefix they
+    /// are left untouched, since "cancel my 4pm meeting" is a real command far more often than
+    /// pure interruption filler and must not be mangled into "my 4pm meeting". Input is
+    /// expected already normalized.
     static func stripLeadingBargeInStopPhrase(_ command: String) -> String {
         var result = command.trimmingCharacters(in: .whitespaces)
         var changed = true
         while changed {
             changed = false
+            if bargeInStopExactPhrases.contains(result) {
+                return ""
+            }
             for phrase in bargeInStopPrefixes {
                 if result == phrase {
                     return ""

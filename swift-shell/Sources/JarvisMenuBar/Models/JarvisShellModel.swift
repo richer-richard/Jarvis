@@ -75,6 +75,7 @@ final class JarvisShellModel: ObservableObject {
     private var speechPlaybackPollTask: Task<Void, Never>?
     private var speechPlaybackConfirmed: SpeechPlaybackPollState = .unknown
     private var speechPlaybackObserved = false
+    private var speechPlaybackStartedAt: Date?
     private var browserStatusPinned = false
     var onSpeechMuteStateChanged: (() -> Void)?
     var onSpeechPlaybackMayStart: (() -> Void)?
@@ -87,6 +88,16 @@ final class JarvisShellModel: ObservableObject {
     private static let speechBargeInGraceSeconds: TimeInterval = 3.5
     private static let speechBargeInMinimumTokenCount = 4
     private static let speechPlaybackPollNanoseconds: UInt64 = 300_000_000
+    /// Grace right after a reply's playback window opens during which a backend
+    /// `speaking: false` poll is NOT treated as authoritative disarm — it gives
+    /// Piper's `first_audio` event time to arrive before an early explicit "stop"
+    /// would otherwise be dropped. Generous enough to cover typical first-chunk
+    /// synthesis latency without noticeably lagging a real early interruption.
+    static let speechPlaybackFirstAudioGraceSeconds: TimeInterval = 1.2
+    /// Hard ceiling on a single playback poll loop. Even if the backend keeps
+    /// reporting `speaking: true` forever (e.g. a hung worker), polling force-exits
+    /// after this long so the 300ms loop can never run unbounded.
+    static let speechPlaybackMaxPollingSeconds: TimeInterval = 60
 
     /// Last observed answer from the backend `/api/speech/playing` real-audio signal.
     /// `.unknown` when polling has not returned yet or the endpoint is unreachable, in
@@ -220,6 +231,7 @@ final class JarvisShellModel: ObservableObject {
 
     func stopWorkerMonitoring() {
         stopSpeechMuteStatusSync()
+        clearSpeechPlaybackWindow()
         wakeListener.stop()
         codexActivityTask?.cancel()
         codexActivityTask = nil
@@ -232,6 +244,7 @@ final class JarvisShellModel: ObservableObject {
             recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
             setWakeListenerPreferenceEnabled(false)
             hideSummonSurface()
+            clearSpeechPlaybackWindow()
             wakeListener.stop()
         } else {
             startWakeListenerRespectingPreflight(persistPreference: true)
@@ -242,6 +255,7 @@ final class JarvisShellModel: ObservableObject {
         recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
         setWakeListenerPreferenceEnabled(false)
         hideSummonSurface()
+        clearSpeechPlaybackWindow()
         wakeListener.stop()
     }
 
@@ -725,6 +739,7 @@ final class JarvisShellModel: ObservableObject {
         }
         speechPlaybackConfirmed = .unknown
         speechPlaybackObserved = false
+        speechPlaybackStartedAt = Date()
         speechPlaybackPollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else {
@@ -744,6 +759,7 @@ final class JarvisShellModel: ObservableObject {
         speechPlaybackPollTask = nil
         speechPlaybackConfirmed = .unknown
         speechPlaybackObserved = false
+        speechPlaybackStartedAt = nil
     }
 
     /// Poll the backend real-playback signal once. Returns whether polling should
@@ -764,14 +780,59 @@ final class JarvisShellModel: ObservableObject {
         } catch {
             speechPlaybackConfirmed = .unknown
         }
-        if speechPlaybackObserved, speechPlaybackConfirmed == .notSpeaking {
+        let decision = Self.speechPlaybackPollDecision(
+            pollState: speechPlaybackConfirmed,
+            observed: speechPlaybackObserved,
+            estimatedActiveUntil: latestSpeechLikelyActiveUntil,
+            pollingStartedAt: speechPlaybackStartedAt,
+            maxPollingSeconds: Self.speechPlaybackMaxPollingSeconds,
+            now: Date()
+        )
+        switch decision {
+        case .keepPolling:
+            return true
+        case .stopAndClear:
+            // Every stop path resets the window and the poll task (via
+            // clearSpeechPlaybackWindow -> stopSpeechPlaybackPolling) so the
+            // next reply can start a fresh loop. Previously the
+            // estimate-elapsed-without-observation exit returned without
+            // clearing, permanently pinning speechPlaybackPollTask non-nil and
+            // silently blocking all later polling for the session.
             clearSpeechPlaybackWindow()
             return false
         }
-        if let activeUntil = latestSpeechLikelyActiveUntil, Date() >= activeUntil, !speechPlaybackObserved {
-            return false
+    }
+
+    /// Pure decision for whether the playback poll loop should keep running.
+    /// Stops (and clears) once the window is gone, the server confirms playback
+    /// finished after it started, the estimate window elapsed without playback
+    /// ever being observed, or the hard total-duration ceiling is hit.
+    enum SpeechPlaybackPollDecision: Equatable {
+        case keepPolling
+        case stopAndClear
+    }
+
+    static func speechPlaybackPollDecision(
+        pollState: SpeechPlaybackPollState,
+        observed: Bool,
+        estimatedActiveUntil: Date?,
+        pollingStartedAt: Date?,
+        maxPollingSeconds: TimeInterval,
+        now: Date
+    ) -> SpeechPlaybackPollDecision {
+        guard let estimatedActiveUntil else {
+            return .stopAndClear
         }
-        return true
+        if let pollingStartedAt, now.timeIntervalSince(pollingStartedAt) >= maxPollingSeconds {
+            return .stopAndClear
+        }
+        if observed, pollState == .notSpeaking {
+            return .stopAndClear
+        }
+        if !observed, now >= estimatedActiveUntil {
+            return .stopAndClear
+        }
+        return .keepPolling
     }
 
     private func prepareEmergencySpeechControls() {
@@ -792,6 +853,8 @@ final class JarvisShellModel: ObservableObject {
         guard Self.isSpeechBargeInWindowArmed(
             pollState: speechPlaybackConfirmed,
             estimatedActiveUntil: latestSpeechLikelyActiveUntil,
+            speechStartedAt: speechPlaybackStartedAt,
+            graceInterval: Self.speechPlaybackFirstAudioGraceSeconds,
             now: Date()
         ) else {
             return
@@ -1285,33 +1348,73 @@ final class JarvisShellModel: ObservableObject {
     /// not ignored) and `.notSpeaking` disarms (so a stop after playback ended is not
     /// mistaken for an interruption). Only when the signal is `.unknown` — no poll yet
     /// or the endpoint is unreachable — does it fall back to the estimate window.
+    ///
+    /// Exception: within `graceInterval` of a reply's playback window opening, a
+    /// `.notSpeaking` poll is not yet authoritative — Piper's `first_audio` event may
+    /// not have arrived, so the backend transiently reports silence. During that grace
+    /// it falls back to the same estimate check as `.unknown`, so an early explicit
+    /// "stop" spoken before first audio still arms (and stops) instead of being dropped.
     static func isSpeechBargeInWindowArmed(
         pollState: SpeechPlaybackPollState,
         estimatedActiveUntil: Date?,
+        speechStartedAt: Date?,
+        graceInterval: TimeInterval,
         now: Date
     ) -> Bool {
         switch pollState {
         case .speaking:
             return true
         case .notSpeaking:
+            if let speechStartedAt, now < speechStartedAt.addingTimeInterval(graceInterval) {
+                return isWithinEstimateWindow(estimatedActiveUntil: estimatedActiveUntil, now: now)
+            }
             return false
         case .unknown:
-            guard let estimatedActiveUntil else {
-                return false
-            }
-            return now < estimatedActiveUntil
+            return isWithinEstimateWindow(estimatedActiveUntil: estimatedActiveUntil, now: now)
         }
+    }
+
+    private static func isWithinEstimateWindow(estimatedActiveUntil: Date?, now: Date) -> Bool {
+        guard let estimatedActiveUntil else {
+            return false
+        }
+        return now < estimatedActiveUntil
     }
 
     static func testIsSpeechBargeInWindowArmed(
         pollState: SpeechPlaybackPollState,
-        estimatedActiveSeconds: TimeInterval?
+        estimatedActiveSeconds: TimeInterval?,
+        speechStartedSecondsAgo: TimeInterval? = nil,
+        graceInterval: TimeInterval = speechPlaybackFirstAudioGraceSeconds
     ) -> Bool {
         let now = Date(timeIntervalSince1970: 1000)
         let estimatedActiveUntil = estimatedActiveSeconds.map { now.addingTimeInterval($0) }
+        let speechStartedAt = speechStartedSecondsAgo.map { now.addingTimeInterval(-$0) }
         return isSpeechBargeInWindowArmed(
             pollState: pollState,
             estimatedActiveUntil: estimatedActiveUntil,
+            speechStartedAt: speechStartedAt,
+            graceInterval: graceInterval,
+            now: now
+        )
+    }
+
+    static func testSpeechPlaybackPollDecision(
+        pollState: SpeechPlaybackPollState,
+        observed: Bool,
+        estimatedActiveSeconds: TimeInterval?,
+        pollingStartedSecondsAgo: TimeInterval?,
+        maxPollingSeconds: TimeInterval = speechPlaybackMaxPollingSeconds
+    ) -> SpeechPlaybackPollDecision {
+        let now = Date(timeIntervalSince1970: 1000)
+        let estimatedActiveUntil = estimatedActiveSeconds.map { now.addingTimeInterval($0) }
+        let pollingStartedAt = pollingStartedSecondsAgo.map { now.addingTimeInterval(-$0) }
+        return speechPlaybackPollDecision(
+            pollState: pollState,
+            observed: observed,
+            estimatedActiveUntil: estimatedActiveUntil,
+            pollingStartedAt: pollingStartedAt,
+            maxPollingSeconds: maxPollingSeconds,
             now: now
         )
     }

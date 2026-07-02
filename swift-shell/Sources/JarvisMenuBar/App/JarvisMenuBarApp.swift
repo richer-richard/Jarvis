@@ -888,6 +888,18 @@ private enum MainAppNotification: String {
     case speechMuteChanged = "statusHelper.speechMuteChanged"
     case quit = "statusHelper.quit"
 
+    // SYNC WITH: JarvisStatusHelper/main.swift, which keeps its OWN identical copy
+    // of this enum. The status helper and this main app are two separate
+    // executable targets, so neither can import the other's private enum -- the
+    // duplication is deliberate. The two copies MUST stay identical: same case
+    // rawValues, same `fallbackBundleIdentifier` literal, and same `name`
+    // computation. If they diverge, the two processes derive different
+    // DistributedNotificationCenter names and silently stop talking to each other.
+    // Nothing verifies this match across the process boundary at build or run time
+    // (the helper's --self-test only checks its own internal self-consistency plus
+    // the pinned fallback literal), so any edit here MUST be mirrored by hand in
+    // JarvisStatusHelper/main.swift's copy, and vice versa.
+    //
     // Keep the legacy bundle id as the fallback so `swift run` (no bundle, nil
     // bundleIdentifier) and the default `local.leo.jarvis` build produce the exact
     // same notification names they did before, while a rebranded BUNDLE_ID keeps the
