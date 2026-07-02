@@ -238,6 +238,16 @@ pub fn classify_command(command: &str) -> SafetyAssessment {
             vec!["Command checks local Codex status only.".into()],
         );
     }
+    if looks_like_codex_write_delegation(&lower) {
+        return SafetyAssessment::new(
+            RiskLevel::ExternalDestructiveSensitive,
+            "needs_typed_confirmation",
+            vec![
+                "Command asks Codex to make and save real changes to project files (workspace-write)."
+                    .into(),
+            ],
+        );
+    }
     if looks_like_app_quit(&lower) {
         return SafetyAssessment::new(
             RiskLevel::ReversibleChange,
@@ -253,7 +263,9 @@ pub fn classify_command(command: &str) -> SafetyAssessment {
             high_risk_reasons.into_iter().map(String::from).collect(),
         );
     }
-    if lower.starts_with("find ") || lower.starts_with("search ") {
+    if (lower.starts_with("find ") || lower.starts_with("search "))
+        && !looks_like_shell_invocation(text)
+    {
         return SafetyAssessment::new(
             RiskLevel::ReadOnlyLocalContext,
             "allowed",
@@ -773,6 +785,35 @@ fn looks_like_shell(command: &str) -> bool {
     }
 }
 
+/// True when `command` is not merely an English phrase that begins with a word
+/// which happens to be a shell command (e.g. "find my tax documents"), but an
+/// actual shell invocation carrying command-line structure: an option flag, a
+/// path separator, a dangerous executable, or shell-control syntax.
+///
+/// Used to keep the natural-language `find `/`search ` read-only shortcut from
+/// swallowing real shell `find` commands (e.g. `find . -exec osascript {} +`),
+/// which must instead fall through to `classify_shell_command` and its
+/// awk/sed/find deviation. `looks_like_shell` alone is too coarse here: it only
+/// inspects the first token, so it treats plain prose starting with "find" as
+/// shell-like too.
+fn looks_like_shell_invocation(command: &str) -> bool {
+    if !looks_like_shell(command) {
+        return false;
+    }
+    let parts = match shlex_split(command) {
+        Ok(parts) => parts,
+        Err(()) => return true,
+    };
+    if has_shell_control(command, &parts) {
+        return true;
+    }
+    parts.iter().skip(1).any(|token| {
+        token.starts_with('-')
+            || token.contains('/')
+            || DANGEROUS_SHELL_TOKENS.contains(&token.as_str())
+    })
+}
+
 /// POSIX-ish `shlex.split` equivalent (with `whitespace_split=True` semantics):
 /// splits on whitespace, honoring single quotes, double quotes with backslash
 /// escapes, and backslash escaping outside quotes. Shell operators are NOT split
@@ -1025,6 +1066,153 @@ fn word_ws_any(text: &str, head: &str, tails: &[&str]) -> bool {
         }
         if let Some(k) = skip_ws1(text, i + head.len()) {
             if tails.iter().any(|&tail| matches_alt_at(text, k, tail)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Like `matches_alt_at` but WITHOUT requiring a leading word boundary: true if
+/// `text[pos..]` starts with `word` and a word boundary follows it. Mirrors
+/// Python groups such as `(det)?\s*(target)` where `\s*` may consume zero
+/// characters between an optional determiner and the target word.
+fn starts_word_at(text: &str, pos: usize, word: &str) -> bool {
+    if pos > text.len() || !text[pos..].starts_with(word) {
+        return false;
+    }
+    word_boundary(word.chars().last(), char_at(text, pos + word.len()))
+}
+
+/// Regex `\b(head)\s+(det)?\s*(target)\b` for any head / determiner / target.
+fn word_optdet_target(text: &str, heads: &[&str], dets: &[&str], targets: &[&str]) -> bool {
+    for &head in heads {
+        let hfirst = head.chars().next().unwrap();
+        for i in occurrences(text, head) {
+            if !word_boundary(char_before(text, i), Some(hfirst)) {
+                continue;
+            }
+            let Some(k) = skip_ws1(text, i + head.len()) else {
+                continue;
+            };
+            // Determiner absent: `\s*` collapses into the preceding `\s+`.
+            if targets.iter().any(|&t| starts_word_at(text, k, t)) {
+                return true;
+            }
+            // Determiner present: `(det)` has no trailing `\b` in Python, then
+            // `\s*` (possibly empty) precedes the target.
+            for &det in dets {
+                if text[k..].starts_with(det) {
+                    let m = skip_ws(text, k + det.len());
+                    if targets.iter().any(|&t| starts_word_at(text, m, t)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Regex `\b(head)\s+(mid)\s+(tail)\b` for any mid / tail.
+fn word_ws2_any(text: &str, head: &str, mids: &[&str], tails: &[&str]) -> bool {
+    let hfirst = head.chars().next().unwrap();
+    for i in occurrences(text, head) {
+        if !word_boundary(char_before(text, i), Some(hfirst)) {
+            continue;
+        }
+        let Some(k) = skip_ws1(text, i + head.len()) else {
+            continue;
+        };
+        for &mid in mids {
+            if !matches_alt_at(text, k, mid) {
+                continue;
+            }
+            if let Some(m) = skip_ws1(text, k + mid.len()) {
+                if tails.iter().any(|&t| matches_alt_at(text, m, t)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Scans `[^.]{0,gap}` forward from `start`, returning true as soon as `pred`
+/// holds at a scanned position. Mirrors a Python `[^.]{0,gap}` gap: the scan
+/// stops at a literal `.` (or end of string) just as `[^.]` cannot cross one.
+fn scan_gap_period<F: Fn(usize) -> bool>(text: &str, start: usize, gap: usize, pred: F) -> bool {
+    let mut byte = 0usize;
+    let mut count = 0usize;
+    loop {
+        let pos = start + byte;
+        if pred(pos) {
+            return true;
+        }
+        if count >= gap {
+            return false;
+        }
+        match text[pos..].chars().next() {
+            Some('.') | None => return false,
+            Some(c) => {
+                byte += c.len_utf8();
+                count += 1;
+            }
+        }
+    }
+}
+
+/// Regex `\b(head)\s+(det)\b[^.]{0,gap}\b(target)\b` (determiner required).
+fn head_det_gap_target(
+    text: &str,
+    head: &str,
+    dets: &[&str],
+    gap: usize,
+    targets: &[&str],
+) -> bool {
+    let hfirst = head.chars().next().unwrap();
+    for i in occurrences(text, head) {
+        if !word_boundary(char_before(text, i), Some(hfirst)) {
+            continue;
+        }
+        let Some(k) = skip_ws1(text, i + head.len()) else {
+            continue;
+        };
+        for &det in dets {
+            if matches_alt_at(text, k, det)
+                && scan_gap_period(text, k + det.len(), gap, |pos| {
+                    targets.iter().any(|&t| matches_alt_at(text, pos, t))
+                })
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Regex `\b(conj)\s+(tail)\b` anchored at `pos` (leading `\b` from `conj`).
+fn conj_ws_tail_at(text: &str, pos: usize, conj: &str, tails: &[&str]) -> bool {
+    if !matches_alt_at(text, pos, conj) {
+        return false;
+    }
+    skip_ws1(text, pos + conj.len())
+        .is_some_and(|m| tails.iter().any(|&t| matches_alt_at(text, m, t)))
+}
+
+/// Regex `\b(head)\b[^.]{0,gap}\b(conj)\s+(tail)\b` for any head / tail.
+fn head_gap_conj_tail(text: &str, heads: &[&str], gap: usize, conj: &str, tails: &[&str]) -> bool {
+    for &head in heads {
+        let hfirst = head.chars().next().unwrap();
+        let hlast = head.chars().last().unwrap();
+        for i in occurrences(text, head) {
+            let end = i + head.len();
+            if word_boundary(char_before(text, i), Some(hfirst))
+                && word_boundary(Some(hlast), char_at(text, end))
+                && scan_gap_period(text, end, gap, |pos| {
+                    conj_ws_tail_at(text, pos, conj, tails)
+                })
+            {
                 return true;
             }
         }
@@ -1287,6 +1475,12 @@ fn codex_verb_job_id(s: &str) -> bool {
 
 /// Regex `^(check|get|show|what|which)\b.*\bcodex\b.*\b(status|speed|latency|chat|chats|default|memory)\b`.
 fn codex_verb_status(s: &str) -> bool {
+    // The Python regex (safety.py:439) uses `.` which never crosses a `\n`, so
+    // the whole `^prefix ... codex ... status` match is confined to the first
+    // line. Restrict to it here; otherwise `"check\ncodex status\nsend my
+    // password"` is misread as a level-1 status query instead of falling through
+    // to the level-4 external/sensitive check.
+    let s = s.split('\n').next().unwrap_or("");
     let prefix_ok = ["check", "get", "show", "what", "which"]
         .iter()
         .any(|&v| s.starts_with(v) && s[v.len()..].chars().next().is_none_or(|c| !is_word_char(c)));
@@ -1317,13 +1511,110 @@ fn codex_verb_status(s: &str) -> bool {
     false
 }
 
+/// Port of `_looks_like_codex_write_delegation` (operates on lowercased text).
+/// Gated on an explicit "codex" mention so ordinary write requests routed to
+/// other tools keep their existing classification, and never fires for a plain
+/// Codex status query.
+fn looks_like_codex_write_delegation(lower: &str) -> bool {
+    if !lower.contains("codex") {
+        return false;
+    }
+    if looks_like_codex_job_status_query(lower) {
+        return false;
+    }
+    matches_codex_write_delegation(lower)
+}
+
+/// Port of `CODEX_WRITE_DELEGATION_PATTERNS`. Each `||` arm mirrors one Python
+/// regex, in list order (jarvis/safety.py:59-72).
+fn matches_codex_write_delegation(text: &str) -> bool {
+    // \bactually\s+(implement|write|fix|build|edit|change|apply|create|refactor|make|code|patch)\b
+    word_ws_any(
+        text,
+        "actually",
+        &[
+            "implement", "write", "fix", "build", "edit", "change", "apply", "create", "refactor",
+            "make", "code", "patch",
+        ],
+    )
+    // \bsave\s+(it|them|this|that|everything)\b
+    || word_ws_any(text, "save", &["it", "them", "this", "that", "everything"])
+    // \bsave\s+(the|your|these|those|all|any)?\s*(file|files|change|changes|edit|edits|code|work|progress|project)\b
+    || word_optdet_target(
+        text,
+        &["save"],
+        &["the", "your", "these", "those", "all", "any"],
+        &[
+            "file", "files", "change", "changes", "edit", "edits", "code", "work", "progress",
+            "project",
+        ],
+    )
+    // \b(and|then)\s+(save|commit|apply|persist|write)\b
+    || word_ws_any(text, "and", &["save", "commit", "apply", "persist", "write"])
+    || word_ws_any(text, "then", &["save", "commit", "apply", "persist", "write"])
+    // \bapply\s+(the|these|those|its|your|all)?\s*(change|changes|fix|fixes|edit|edits|patch|diff|it|them)\b
+    || word_optdet_target(
+        text,
+        &["apply"],
+        &["the", "these", "those", "its", "your", "all"],
+        &[
+            "change", "changes", "fix", "fixes", "edit", "edits", "patch", "diff", "it", "them",
+        ],
+    )
+    // \bcommit\s+(the|it|them|this|that|these|those|changes?|your)\b
+    || word_ws_any(
+        text,
+        "commit",
+        &[
+            "the", "it", "them", "this", "that", "these", "those", "changes", "change", "your",
+        ],
+    )
+    // \bwrite\s+(the|this|that|these|those|its|out|it)\b[^.]{0,25}\b(file|files|change|changes|fix|fixes|code|disk)\b
+    || head_det_gap_target(
+        text,
+        "write",
+        &["the", "this", "that", "these", "those", "its", "out", "it"],
+        25,
+        &["file", "files", "change", "changes", "fix", "fixes", "code", "disk"],
+    )
+    // \bwrite\s+(it|them)\s+to\b
+    || word_ws2_any(text, "write", &["it", "them"], &["to"])
+    // \b(edit|modify|overwrite|update|create|patch)\s+(the|a|some|those|these|my|your)?\s*files?\b
+    || word_optdet_target(
+        text,
+        &["edit", "modify", "overwrite", "update", "create", "patch"],
+        &["the", "a", "some", "those", "these", "my", "your"],
+        &["files", "file"],
+    )
+    // \bmake\s+(the|real|actual)\s+(change|changes|edit|edits|fix|fixes)\b
+    || word_ws2_any(
+        text,
+        "make",
+        &["the", "real", "actual"],
+        &["change", "changes", "edit", "edits", "fix", "fixes"],
+    )
+    // \b(implement|fix|refactor|build)\b[^.]{0,40}\band\s+(save|commit|apply|write|persist)\b
+    || head_gap_conj_tail(
+        text,
+        &["implement", "fix", "refactor", "build"],
+        40,
+        "and",
+        &["save", "commit", "apply", "write", "persist"],
+    )
+    // \bpersist\b
+    || bounded_word(text, "persist")
+}
+
 /// Port of `_looks_like_app_quit_command`.
 fn looks_like_app_quit(lower: &str) -> bool {
     if app_quit_pattern1(lower) {
+        // Mirror jarvis/safety.py:476-479: once pattern1 matches, its cue check is
+        // the final answer -- pattern2 is only consulted when pattern1 did NOT
+        // match. Falling through to pattern2 here could downgrade a level-4
+        // external/sensitive action (e.g. "close the upload document app") to
+        // level 3.
         let cues = [" window", " tab", " document", " file"];
-        if !cues.iter().any(|cue| lower.contains(cue)) {
-            return true;
-        }
+        return !cues.iter().any(|cue| lower.contains(cue));
     }
     app_quit_pattern2(lower)
 }
@@ -1720,5 +2011,91 @@ mod tests {
         assert_level(&a, RiskLevel::ExternalDestructiveSensitive);
         let b = classify_command("$ ls -la");
         assert_level(&b, RiskLevel::ReadOnlyLocalContext);
+    }
+
+    // Fix 1: a real shell `find` invocation must not take the natural-language
+    // read-only shortcut ahead of the shell classifier's awk/sed/find deviation.
+    #[test]
+    fn shell_find_invocation_is_not_read_only_shortcut() {
+        for cmd in [
+            "find . -exec osascript {} +",
+            "find . -delete",
+            "find ~/.ssh/id_rsa",
+            "find /etc -name shadow",
+        ] {
+            let a = classify_command(cmd);
+            assert_level(&a, RiskLevel::ExternalDestructiveSensitive);
+            assert!(a.requires_typed_confirmation, "{cmd}");
+        }
+        // A genuine natural-language search still classifies as read-only.
+        assert!(!looks_like_shell_invocation("find my tax documents"));
+        let nl = classify_command("find my tax documents");
+        assert_level(&nl, RiskLevel::ReadOnlyLocalContext);
+        // "search ..." is never a shell command, so it stays read-only too.
+        assert!(!looks_like_shell_invocation("search the meeting notes"));
+        let s = classify_command("search the meeting notes");
+        assert_level(&s, RiskLevel::ReadOnlyLocalContext);
+    }
+
+    // Fix 2: when app_quit_pattern1 matches but a disqualifying cue is present,
+    // the function must return false rather than falling through to pattern2 and
+    // downgrading a level-4 action to level 3.
+    #[test]
+    fn app_quit_cue_does_not_downgrade_external_action() {
+        assert!(!looks_like_app_quit("close the upload document app"));
+        let a = classify_command("close the upload document app");
+        assert_level(&a, RiskLevel::ExternalDestructiveSensitive);
+        assert!(a.requires_typed_confirmation);
+        // The plain app-quit path is unchanged.
+        assert_level(
+            &classify_command("quit Safari"),
+            RiskLevel::ReversibleChange,
+        );
+        assert_level(
+            &classify_command("close the notes app"),
+            RiskLevel::ReversibleChange,
+        );
+    }
+
+    // Fix 3: natural-language requests that ask Codex to make and persist real
+    // changes require typed confirmation (workspace-write).
+    #[test]
+    fn codex_write_delegation_requires_typed_confirmation() {
+        for cmd in [
+            "ask codex to save everything",
+            "have codex apply the changes",
+            "tell codex to actually implement the parser and commit",
+            "codex, edit the files and persist",
+            "get codex to write it to disk",
+            "codex make real changes",
+        ] {
+            let a = classify_command(cmd);
+            assert_level(&a, RiskLevel::ExternalDestructiveSensitive);
+            assert_eq!(a.decision, "needs_typed_confirmation", "{cmd}");
+            assert!(a.requires_typed_confirmation, "{cmd}");
+            assert!(
+                a.reasons.iter().any(|r| r.contains("workspace-write")),
+                "{cmd}"
+            );
+        }
+        // A status query that mentions codex is NOT a write delegation.
+        assert!(!looks_like_codex_write_delegation("codex status"));
+        assert_level(
+            &classify_command("codex status"),
+            RiskLevel::ReadOnlyLocalContext,
+        );
+        // Without an explicit "codex" mention, the write-delegation gate is off.
+        assert!(!looks_like_codex_write_delegation("save everything"));
+    }
+
+    // Fix 4: a status keyword on a later line must not make a multi-line command
+    // look like a level-1 codex status query.
+    #[test]
+    fn codex_verb_status_is_confined_to_first_line() {
+        assert!(codex_verb_status("check codex status"));
+        assert!(!codex_verb_status("check\ncodex status\nsend my password"));
+        let a = classify_command("check\ncodex status\nsend my password");
+        assert_level(&a, RiskLevel::ExternalDestructiveSensitive);
+        assert!(a.requires_typed_confirmation);
     }
 }

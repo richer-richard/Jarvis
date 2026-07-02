@@ -9094,6 +9094,43 @@ class CodexWritePlanTests(unittest.TestCase):
         self.assertEqual(result["status"], "write_disabled")
         self.assertFalse(result["executed"])
 
+    def test_write_run_gate_allows_normal_prompt_to_reach_execution(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "_run_codex_delegate_from_plan", return_value={"sentinel": True}
+        ) as run_from_plan:
+            result = jarvis_tools.run_codex_delegate_write("fix the bug and save the file")
+        self.assertTrue(run_from_plan.called)
+        self.assertEqual(result, {"sentinel": True})
+
+    def test_write_job_gate_allows_normal_prompt_to_reach_execution(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "start_codex_delegate_job", return_value={"sentinel": True}
+        ) as start_job:
+            result = jarvis_tools.start_codex_delegate_write_job("fix the bug and save the file")
+        self.assertTrue(start_job.called)
+        self.assertTrue(start_job.call_args.kwargs.get("write_capable"))
+        self.assertEqual(result, {"sentinel": True})
+
+    def test_write_run_gate_blocks_prompt_that_base_classifier_blocks(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "_run_codex_delegate_from_plan"
+        ) as run_from_plan:
+            result = jarvis_tools.run_codex_delegate_write("x" * 5000)
+        self.assertEqual(result["tool"], "codex.delegate_write")
+        self.assertEqual(result["status"], "blocked")
+        self.assertFalse(result["executed"])
+        self.assertFalse(run_from_plan.called)
+
+    def test_write_job_gate_blocks_prompt_that_base_classifier_blocks(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "start_codex_delegate_job"
+        ) as start_job:
+            result = jarvis_tools.start_codex_delegate_write_job("x" * 5000)
+        self.assertEqual(result["tool"], "codex.job_write")
+        self.assertEqual(result["status"], "blocked")
+        self.assertFalse(result["executed"])
+        self.assertFalse(start_job.called)
+
     def test_write_tools_registered_distinctly_from_read_only(self):
         registry_ids = {tool["id"] for tool in tool_registry()["tools"]}
         self.assertIn("codex.delegate", registry_ids)

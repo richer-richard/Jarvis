@@ -5,7 +5,7 @@
 //! [`delegate_plan`] only builds the command line (so a caller can preview it),
 //! while [`delegate_execute`] actually spawns the subprocess.
 //!
-//! Two safety properties from the Python original are preserved here:
+//! Three safety properties from the Python original are preserved here:
 //!   1. The read-only path (`write_capable: false`) is the default and always
 //!      sets `--sandbox read-only --ask-for-approval never`.
 //!   2. The write-capable path (`--sandbox workspace-write`) can only be reached
@@ -18,6 +18,13 @@
 //!      as structural defense-in-depth: you cannot request a write-capable run
 //!      without naming the confirmation at the call site. See
 //!      [`ConfirmationToken`] and [`DelegateMode`].
+//!   3. The write-capable path additionally honours the
+//!      `JARVIS_CODEX_WRITE_ENABLED` runtime kill-switch
+//!      (`CodexConfig::write_enabled`): when it is off, [`delegate_execute`]
+//!      refuses a [`DelegateMode::WriteCapable`] request with
+//!      [`ExecStatus::WriteDisabled`] before locating or spawning `codex`,
+//!      mirroring `run_codex_delegate_write`'s `write_disabled` early return
+//!      (jarvis/tools.py:18560). Read-only delegation is never affected.
 //!
 //! NOT PORTED (out of scope for this pass): the async fire-and-forget job system
 //! (`start_codex_delegate_job` / `start_codex_continue_job` and the
@@ -114,6 +121,9 @@ pub struct CodexPlan {
 pub enum ExecStatus {
     /// The `codex` executable could not be located (Python: `codex_not_found`).
     CodexNotFound,
+    /// A write-capable delegation was refused because the
+    /// `JARVIS_CODEX_WRITE_ENABLED` kill-switch is off (Python: `write_disabled`).
+    WriteDisabled,
     /// Ran to completion with exit code 0.
     Completed,
     /// Ran to completion with a non-zero exit code.
@@ -170,6 +180,34 @@ impl CodexExecution {
         let mut exec = Self::base(plan, ExecStatus::CodexNotFound, false, 0.0);
         exec.reply = "Codex CLI is not available on this machine.".to_string();
         exec
+    }
+
+    /// Mirrors the `write_disabled` early return in `run_codex_delegate_write`
+    /// (jarvis/tools.py:18560): when the `JARVIS_CODEX_WRITE_ENABLED` kill-switch
+    /// is off, a write-capable delegation refuses before locating or spawning
+    /// `codex`. Built without a [`CodexPlan`] on purpose so no `find_executable`
+    /// probe happens on the refused path.
+    fn write_disabled(config: &CodexConfig) -> Self {
+        CodexExecution {
+            tool: "codex.delegate_write",
+            available: false,
+            codex_path: None,
+            model: config.model.clone(),
+            sandbox: Sandbox::WorkspaceWrite.as_flag().to_string(),
+            write_capable: true,
+            status: ExecStatus::WriteDisabled,
+            executed: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            last_message: String::new(),
+            error: None,
+            duration_seconds: 0.0,
+            duration_human: format_seconds(0.0),
+            reply: "Write-capable Codex delegation is disabled. Set \
+                JARVIS_CODEX_WRITE_ENABLED=1 to enable it."
+                .to_string(),
+        }
     }
 }
 
@@ -240,6 +278,9 @@ pub async fn delegate_execute(
     config: &CodexConfig,
     mode: DelegateMode,
 ) -> CodexExecution {
+    if let Some(refusal) = write_disabled_guard(config, mode) {
+        return refusal;
+    }
     let plan = delegate_plan(prompt, project_dir, config, mode.write_capable());
     if !plan.available {
         return CodexExecution::not_found(&plan);
@@ -253,6 +294,20 @@ pub async fn delegate_execute(
         DELEGATE_STDERR_MAX,
     )
     .await
+}
+
+/// Enforces the `JARVIS_CODEX_WRITE_ENABLED` runtime kill-switch. Returns a
+/// [`ExecStatus::WriteDisabled`] refusal only when a write-capable delegation is
+/// requested while `config.write_enabled` is off; read-only delegation and the
+/// enabled write path both return `None` so the caller proceeds unchanged. The
+/// refusal is produced before [`delegate_plan`] runs, so no `codex` binary is
+/// located or spawned -- matching `run_codex_delegate_write`'s early return.
+fn write_disabled_guard(config: &CodexConfig, mode: DelegateMode) -> Option<CodexExecution> {
+    if mode.write_capable() && !config.write_enabled {
+        Some(CodexExecution::write_disabled(config))
+    } else {
+        None
+    }
 }
 
 /// Mirrors `run_codex_chat()` (jarvis/tools.py:16442): a simpler, ALWAYS
@@ -527,6 +582,72 @@ mod tests {
         // this call would not compile without one, which is the whole point.
         let mode = DelegateMode::WriteCapable(ConfirmationToken::confirmed_by_caller());
         assert!(mode.write_capable());
+    }
+
+    #[test]
+    fn write_disabled_guard_blocks_write_capable_when_kill_switch_off() {
+        let mut codex = test_config().codex;
+        codex.write_enabled = false;
+        let mode = DelegateMode::WriteCapable(ConfirmationToken::confirmed_by_caller());
+        let refusal =
+            write_disabled_guard(&codex, mode).expect("write-capable run must be refused");
+        assert_eq!(refusal.status, ExecStatus::WriteDisabled);
+        assert!(!refusal.executed);
+        assert!(!refusal.available);
+        assert!(refusal.write_capable);
+        assert_eq!(refusal.tool, "codex.delegate_write");
+        assert!(
+            refusal.codex_path.is_none(),
+            "refusal must not probe for codex"
+        );
+        assert!(refusal.reply.contains("disabled"));
+    }
+
+    #[test]
+    fn write_disabled_guard_allows_write_capable_when_enabled() {
+        let mut codex = test_config().codex;
+        codex.write_enabled = true;
+        // The default (enabled) write path must fall through to execution exactly
+        // as before -- guarding here would be a regression.
+        let mode = DelegateMode::WriteCapable(ConfirmationToken::confirmed_by_caller());
+        assert!(
+            write_disabled_guard(&codex, mode).is_none(),
+            "enabled write path must not be refused"
+        );
+    }
+
+    #[test]
+    fn write_disabled_guard_never_gates_read_only() {
+        // Read-only must be unaffected by the write kill-switch even when it is off.
+        let mut codex = test_config().codex;
+        codex.write_enabled = false;
+        assert!(
+            write_disabled_guard(&codex, DelegateMode::ReadOnly).is_none(),
+            "read-only delegation must never be gated by the write kill-switch"
+        );
+    }
+
+    #[tokio::test]
+    async fn delegate_execute_refuses_write_capable_when_kill_switch_off() {
+        // End-to-end: with the kill-switch off, delegate_execute returns the
+        // disabled result WITHOUT locating or spawning `codex`. Because `codex`
+        // is actually installed in this sandbox, delegate_plan would set
+        // `available = true` and a `codex_path`; seeing neither proves the guard
+        // fired before delegate_plan ran.
+        let mut codex = test_config().codex;
+        codex.write_enabled = false;
+        let mode = DelegateMode::WriteCapable(ConfirmationToken::confirmed_by_caller());
+        let exec = delegate_execute("test prompt", Path::new("/tmp"), &codex, mode).await;
+        assert_eq!(exec.status, ExecStatus::WriteDisabled);
+        assert!(!exec.executed);
+        assert!(!exec.available);
+        assert!(exec.write_capable);
+        assert!(
+            exec.codex_path.is_none(),
+            "must not locate the codex binary"
+        );
+        assert_eq!(exec.exit_code, None);
+        assert_eq!(exec.tool, "codex.delegate_write");
     }
 
     #[test]

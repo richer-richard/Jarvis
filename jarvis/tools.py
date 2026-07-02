@@ -97,7 +97,7 @@ from .config import (
     TTS_VOICE,
 )
 from .injection import scan_untrusted_text
-from .safety import classify_command, classify_shell_command, is_shell_allowed
+from .safety import classify_codex_delegation, classify_command, classify_shell_command, is_shell_allowed
 from .wake import (
     DEFAULT_WAKE_THRESHOLD,
     WAKE_PHRASES,
@@ -18557,7 +18557,38 @@ def run_codex_delegate(prompt: str, project_dir: str | None = None, model: str |
     return _run_codex_delegate_from_plan(plan)
 
 
+def _codex_write_safety_gate(prompt: str, tool_id: str) -> dict[str, Any] | None:
+    """Independently re-verify the guaranteed level-4 typed-confirmation gate for a
+    write-capable Codex delegation before any subprocess work runs.
+
+    `classify_codex_delegation(text, write_capable=True)` is designed to always return a
+    level-4 typed-confirmation assessment for any non-blocked prompt, so this is a no-op
+    safety net for legitimate calls. It only refuses when that invariant is broken by a
+    future refactor, or when the base classifier blocks the text outright (e.g. oversized),
+    so that these execution functions never trust an unverified caller for write access.
+    Returns a blocked-status result when execution must be refused, or None to proceed.
+    """
+    assessment = classify_codex_delegation(prompt, write_capable=True)
+    if assessment.risk_level == 4 and assessment.requires_typed_confirmation and not assessment.blocked:
+        return None
+    return {
+        "tool": tool_id,
+        "status": "blocked",
+        "executed": False,
+        "available": False,
+        "write_capable": True,
+        "safety": assessment.to_dict(),
+        "reply": (
+            "Blocked this write-capable Codex delegation: it did not pass the required "
+            "level-4 typed-confirmation safety gate."
+        ),
+    }
+
+
 def run_codex_delegate_write(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
+    blocked = _codex_write_safety_gate(prompt, "codex.delegate_write")
+    if blocked is not None:
+        return blocked
     if not CODEX_WRITE_ENABLED:
         return {
             "tool": "codex.delegate_write",
@@ -18643,6 +18674,9 @@ def _run_codex_delegate_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def start_codex_delegate_write_job(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
+    blocked = _codex_write_safety_gate(prompt, "codex.job_write")
+    if blocked is not None:
+        return blocked
     if not CODEX_WRITE_ENABLED:
         return {
             "tool": "codex.job_write",
