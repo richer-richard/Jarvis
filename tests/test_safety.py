@@ -19052,6 +19052,63 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("phase = .awaitingCommand", listener_source)
         self.assertIn("wakeListener.beginBargeInCommandCapture()", model_source)
 
+    def test_swift_implicit_barge_in_is_off_by_default(self):
+        # docs/VOICE_LOOP_AUDIT.md section 2d: implicit/substantial-utterance barge-in
+        # has no acoustic echo cancellation, only text-level matching against what
+        # Jarvis is currently saying -- an imperfectly transcribed echo of Jarvis's
+        # own voice could false-trigger a stop, potentially in a loop. That risk has
+        # never been measured against a real microphone, so this tier must default to
+        # off (a setting-gated opt-in) while explicit stop-words stay always-on.
+        model_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Models" / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'private static let implicitBargeInEnabledDefaultsKey = "JarvisImplicitBargeInEnabled"',
+            model_source,
+        )
+        # UserDefaults.standard.bool(forKey:) reads an absent key as false -- the gate
+        # must read that key directly (not e.g. register(defaults:) with true) so an
+        # unset default is off.
+        self.assertIn(
+            "UserDefaults.standard.bool(forKey: implicitBargeInEnabledDefaultsKey)",
+            model_source,
+        )
+        self.assertNotIn(
+            'UserDefaults.standard.register(defaults: ["JarvisImplicitBargeInEnabled": true]',
+            model_source,
+        )
+        # The gated 2-argument overload: explicit stop-words checked before the flag
+        # guard, so they remain always-on regardless of the setting.
+        self.assertIn(
+            "static func looksLikeIntentionalSpeechBargeIn(_ transcript: String, implicitBargeInEnabled: Bool) -> Bool {",
+            model_source,
+        )
+        explicit_check = model_source.index("if looksLikeExplicitSpeechBargeIn(transcript) {")
+        flag_guard = model_source.index("guard implicitBargeInEnabled else {")
+        self.assertLess(
+            explicit_check,
+            flag_guard,
+            "explicit stop-words must be checked before the implicit-tier flag guard",
+        )
+
+    def test_swift_self_test_exercises_implicit_barge_in_gate_behavior(self):
+        # Real behavioral coverage (not just source-text matching): the CLI self-test
+        # harness calls the pure 2-argument overload directly with an implicit-only
+        # phrase (no explicit stop-word) under both flag values, proving the gate
+        # actually suppresses/allows the substantial-utterance heuristic rather than
+        # just asserting the guard exists in source.
+        self_test_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Support" / "JarvisMenuBarSelfTest.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "JarvisShellModel.looksLikeIntentionalSpeechBargeIn(",
+            self_test_source,
+        )
+        self.assertIn("implicitBargeInEnabled: false", self_test_source)
+        self.assertIn("implicitBargeInEnabled: true", self_test_source)
+
     def test_swift_smoke_tests_cover_current_loop_regressions(self):
         model_source = (
             PROJECT_ROOT

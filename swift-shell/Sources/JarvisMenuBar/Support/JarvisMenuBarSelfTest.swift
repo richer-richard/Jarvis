@@ -239,6 +239,27 @@ enum JarvisMenuBarSelfTest {
         guard JarvisShellModel.testShouldIgnoreBargeInDuringGrace(transcript: "hello") else {
             throw SelfTestError.failed("Short wake-listener fragments should still be ignored inside the wake grace period.")
         }
+        // Implicit/substantial-utterance barge-in (no explicit stop-word) must be
+        // suppressed when the setting is off, and allowed when explicitly turned on --
+        // proves the gate itself works, not just that the setting exists in source.
+        guard !JarvisShellModel.looksLikeIntentionalSpeechBargeIn(
+            "the weather today is quite nice actually",
+            implicitBargeInEnabled: false
+        ) else {
+            throw SelfTestError.failed("Implicit barge-in must be suppressed while the setting is off.")
+        }
+        guard JarvisShellModel.looksLikeIntentionalSpeechBargeIn(
+            "the weather today is quite nice actually",
+            implicitBargeInEnabled: true
+        ) else {
+            throw SelfTestError.failed("Implicit barge-in should fire for a substantial utterance once explicitly enabled.")
+        }
+        guard JarvisShellModel.looksLikeIntentionalSpeechBargeIn(
+            "wait stop for a second",
+            implicitBargeInEnabled: false
+        ) else {
+            throw SelfTestError.failed("Explicit stop-words must fire regardless of the implicit-barge-in setting.")
+        }
         guard JarvisShellModel.shouldUseNativeHotKeyStatus("hotkey status") else {
             throw SelfTestError.failed("Hotkey status should use the native Swift hotkey snapshot.")
         }

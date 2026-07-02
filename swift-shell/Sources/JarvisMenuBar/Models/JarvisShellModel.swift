@@ -3271,13 +3271,39 @@ final class JarvisShellModel: ObservableObject {
         return !looksLikeExplicitSpeechBargeIn(transcript)
     }
 
+    /// Setting key for the implicit/substantial-utterance barge-in tier. Absent key
+    /// reads as `false` via `UserDefaults.standard.bool(forKey:)`, so this tier is
+    /// OFF by default -- see the doc comment on the 2-argument overload below for why.
+    private static let implicitBargeInEnabledDefaultsKey = "JarvisImplicitBargeInEnabled"
+
     private static func looksLikeIntentionalSpeechBargeIn(_ transcript: String) -> Bool {
+        looksLikeIntentionalSpeechBargeIn(
+            transcript,
+            implicitBargeInEnabled: UserDefaults.standard.bool(forKey: implicitBargeInEnabledDefaultsKey)
+        )
+    }
+
+    /// Explicit stop-words ("stop", "shut up", "be quiet", ...) always fire, at any
+    /// time. The broader "substantial new utterance" heuristic (≥4 tokens, ≥14 chars,
+    /// ≥3 content words) only fires when `implicitBargeInEnabled` is true, which
+    /// defaults to false. Per docs/VOICE_LOOP_AUDIT.md section 2d: this tier's only
+    /// echo suppression is text-level matching against what Jarvis is currently
+    /// saying (`looksLikeCurrentJarvisSpeechEcho`) -- there is no acoustic echo
+    /// cancellation, so an imperfectly transcribed echo of Jarvis's own TTS voice
+    /// could fail to text-match and falsely trigger a stop, potentially in a loop.
+    /// That risk has never been measured against a real microphone. Flip
+    /// `JarvisImplicitBargeInEnabled` in UserDefaults only after a real live-mic
+    /// session confirms self-echo does not false-trigger this path.
+    static func looksLikeIntentionalSpeechBargeIn(_ transcript: String, implicitBargeInEnabled: Bool) -> Bool {
         let normalized = normalizeSpeechCheckText(transcript)
         guard !normalized.isEmpty else {
             return false
         }
         if looksLikeExplicitSpeechBargeIn(transcript) {
             return true
+        }
+        guard implicitBargeInEnabled else {
+            return false
         }
         let tokens = normalized.split(separator: " ").map(String.init)
         guard tokens.count >= speechBargeInMinimumTokenCount, normalized.count >= 14 else {
