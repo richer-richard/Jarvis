@@ -362,6 +362,10 @@ public struct JarvisClient: Sendable {
         try await get(["api", "speech", "mute"], as: SpeechMuteResponse.self)
     }
 
+    public func speechPlaying() async throws -> SpeechPlayingResponse {
+        try await get(["api", "speech", "playing"], as: SpeechPlayingResponse.self)
+    }
+
     public func setSpeechMuted(_ muted: Bool, source: String = "main_app") async throws -> SpeechMuteResponse {
         let url = baseURL
             .appendingPathComponent("api")

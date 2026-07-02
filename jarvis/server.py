@@ -44,6 +44,7 @@ from .tools import (
     outlook_visible_text_summary,
     visible_screen_text_summary,
     prewarm_tts_async,
+    current_speech_state,
     set_speech_muted,
     speech_mute_status,
     speak_text_async,
@@ -598,6 +599,9 @@ class JarvisServer:
     def speech_mute_status(self) -> dict[str, Any]:
         return speech_mute_status()
 
+    def speech_playing(self) -> dict[str, Any]:
+        return current_speech_state()
+
     def set_speech_muted(self, muted: bool, *, source: str = "api") -> dict[str, Any]:
         return set_speech_muted(muted, source=source)
 
@@ -623,6 +627,7 @@ class JarvisServer:
                     "GET /api/audit",
                     "GET /api/self-check",
                     "GET /api/speech/mute",
+                    "GET /api/speech/playing",
                     "GET /api/integrations/localos/music/control",
                     "GET /overnight-report/",
                     "GET /overnight-workboard/",
@@ -1316,6 +1321,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         if route.path == "/api/speech/mute":
             self._send_json(STATE.speech_mute_status(), head_only=head_only)
+            return
+        if route.path == "/api/speech/playing":
+            self._send_json(STATE.speech_playing(), head_only=head_only)
             return
         if route.path == "/api/integrations/localos/music/control":
             query = parse_qs(route.query)

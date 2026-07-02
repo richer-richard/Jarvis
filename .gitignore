@@ -22,3 +22,8 @@ output/
 # OneDrive conflict copies from synced Macs
 *-Hongyi's MacBook Air.*
 *-Hongyi’s MacBook Air.*
+
+CLAUDE.local.md
+
+# Rust core build artifacts
+rust-core/target/

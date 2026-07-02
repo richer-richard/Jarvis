@@ -4,11 +4,18 @@ These ideas are important, but they are not part of the first localhost prototyp
 
 ## Voice
 
-- Real local "Hey Jarvis" wake-word listener.
-- Speaker verification so only Leo can wake Jarvis.
-- Leo-only continuous voice authority.
+- Speaker verification so only the owner's voice can wake Jarvis (still deferred).
+- Owner-only continuous voice authority (still deferred).
 - Cloud or local speech-to-text selection.
 - Spoken responses and voice settings.
+
+Note: the real local "Hey Jarvis" wake-word listener is **no longer deferred** —
+it ships in `swift-shell/Sources/JarvisMenuBar/Support/JarvisWakeListener.swift`
+(Apple on-device Speech), persists the user's enable/disable choice, and
+auto-resumes on launch once opted in. Its one open gap is that it has only been
+verified against synthetic transcript / TTS-file tests, never a live human voice
+through a real microphone. Speaker verification (above) remains genuinely
+deferred.
 
 ## macOS Shell
 
