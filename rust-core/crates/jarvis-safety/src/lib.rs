@@ -682,12 +682,33 @@ fn is_option_or_pattern(token: &str) -> bool {
 }
 
 fn project_root() -> PathBuf {
-    let raw = std::env::var("JARVIS_WORKSPACE_ROOT")
+    let raw_env = std::env::var("JARVIS_WORKSPACE_ROOT")
         .ok()
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty());
+    resolve_project_root(raw_env.as_deref(), std::env::current_dir().ok())
+}
+
+/// Pure core of [`project_root`], split out so tests can exercise it without
+/// mutating the process-global `JARVIS_WORKSPACE_ROOT`/cwd.
+///
+/// Must resolve to an absolute path before `normalize_path()` collapses
+/// `..`/`.` components: a relative root (e.g. `JARVIS_WORKSPACE_ROOT="."` or a
+/// failed `current_dir()` fallback) normalizes to an empty `PathBuf`, and
+/// `is_outside_project()` treats every relative candidate as starting with
+/// `""` — silently disabling the traversal check it exists to enforce.
+fn resolve_project_root(raw_env: Option<&str>, cwd: Option<PathBuf>) -> PathBuf {
+    let raw = raw_env
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    normalize_path(&expand_tilde(&raw))
+        .unwrap_or_else(|| cwd.clone().unwrap_or_else(|| PathBuf::from(".")));
+    let expanded = expand_tilde(&raw);
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else if let Some(cwd) = cwd {
+        cwd.join(expanded)
+    } else {
+        expanded
+    };
+    normalize_path(&absolute)
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -1884,6 +1905,34 @@ mod tests {
         assert!(is_outside_project("/etc/passwd", root));
         assert!(!is_outside_project("src/lib.rs", root));
         assert!(!is_outside_project("./src/../src/lib.rs", root));
+    }
+
+    #[test]
+    fn project_root_resolves_relative_workspace_root_to_absolute() {
+        // Gemini Code Assist finding on PR #3: JARVIS_WORKSPACE_ROOT="." (or any
+        // relative value) must not normalize to an empty PathBuf, because
+        // is_outside_project() treats every relative candidate as starting
+        // with "" and silently disables the traversal check.
+        let cwd = PathBuf::from("/Users/example/Jarvis/rust-core");
+        let root = resolve_project_root(Some("."), Some(cwd.clone()));
+        assert_eq!(root, cwd);
+        assert!(root.is_absolute());
+        assert!(is_outside_project("../../etc/passwd", &root));
+        assert!(!is_outside_project("src/lib.rs", &root));
+
+        // A relative (non-".") value joins onto cwd rather than being treated
+        // as already-rooted.
+        let sub = resolve_project_root(Some("workspaces/jarvis"), Some(cwd.clone()));
+        assert_eq!(sub, cwd.join("workspaces/jarvis"));
+
+        // Absolute JARVIS_WORKSPACE_ROOT values pass through unchanged.
+        let abs = resolve_project_root(Some("/opt/jarvis"), Some(cwd.clone()));
+        assert_eq!(abs, PathBuf::from("/opt/jarvis"));
+
+        // No env override and no discoverable cwd still falls back to a
+        // (relative) "." rather than panicking.
+        let no_cwd = resolve_project_root(None, None);
+        assert_eq!(no_cwd, PathBuf::new());
     }
 
     #[test]

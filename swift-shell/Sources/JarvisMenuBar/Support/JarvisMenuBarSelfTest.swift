@@ -318,6 +318,20 @@ enum JarvisMenuBarSelfTest {
         guard !recoveryResult.windowActive, recoveryResult.windowTaskCleared else {
             throw SelfTestError.failed("Recovering from a recognition issue must clear any open barge-in window.")
         }
+        // Fix (Gemini Code Assist finding on PR #3): the hard 9s barge-in window
+        // timeout must not cut off a command that's still actively being spoken —
+        // it should defer (re-arm a short grace check) instead of discarding it.
+        let bargeInDeferProbe = JarvisWakeListener()
+        let deferResult = bargeInDeferProbe.testExpireBargeInWindowDefersWhileCaptureTaskActive()
+        guard deferResult.windowActive, deferResult.phase == "Awake", deferResult.rearmed else {
+            throw SelfTestError.failed("Barge-in window expiry must defer, not discard, while a command is still being actively debounced.")
+        }
+        // The deferral above must still be bounded: a stuck capture can't hold the
+        // window open forever once the hard ceiling has elapsed.
+        let bargeInCeilingProbe = JarvisWakeListener()
+        guard bargeInCeilingProbe.testExpireBargeInWindowHonorsHardCeilingDespiteActiveCapture() else {
+            throw SelfTestError.failed("Barge-in window must still close once the hard ceiling elapses, even with an active capture task.")
+        }
         guard JarvisShellModel.shouldUseNativeHotKeyStatus("hotkey status") else {
             throw SelfTestError.failed("Hotkey status should use the native Swift hotkey snapshot.")
         }

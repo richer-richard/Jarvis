@@ -200,6 +200,15 @@ pub fn logout() -> Result<()> {
     Storage::default_location()?.delete()
 }
 
+/// Whether a token-endpoint HTTP status on a refresh attempt means the refresh
+/// token itself was rejected (expired/revoked/reused) rather than a transient
+/// server-side failure. Only 4xx client errors are terminal; a 5xx (outage,
+/// maintenance, rate limiting) must be retried, not treated as "please
+/// re-link your account".
+fn is_terminal_refresh_rejection(status: u16) -> bool {
+    (400..500).contains(&status)
+}
+
 /// Refreshes `creds` if [`needs_refresh`] says so, persisting the result; returns
 /// the credentials that should be used now.
 async fn ensure_fresh(storage: &Storage, creds: StoredCredentials) -> Result<StoredCredentials> {
@@ -211,8 +220,13 @@ async fn ensure_fresh(storage: &Storage, creds: StoredCredentials) -> Result<Sto
         Ok(token) => token,
         // A 4xx from the token endpoint on refresh is terminal (expired / revoked
         // / reused). Surface the distinct "re-link" state rather than a raw HTTP
-        // error so the caller can prompt a fresh interactive login.
-        Err(OAuthError::TokenEndpoint { .. }) => return Err(OAuthError::RefreshRejected),
+        // error so the caller can prompt a fresh interactive login. A 5xx is a
+        // temporary server-side failure (or an outage) and must NOT be treated
+        // as rejection — that would force a needless re-link every time the
+        // auth server hiccups. Propagate it as-is so the caller can retry.
+        Err(OAuthError::TokenEndpoint { status, .. }) if is_terminal_refresh_rejection(status) => {
+            return Err(OAuthError::RefreshRejected);
+        }
         Err(other) => return Err(other),
     };
     // A refresh response may omit a rotated refresh_token or re-derivable
@@ -377,6 +391,20 @@ mod tests {
     fn boundary_just_outside_window_does_not_refresh() {
         // Expires in 6 minutes, refreshed 7 days ago -> neither trigger fires.
         assert!(!needs_refresh(&creds_expiring_in(6, 7), Utc::now()));
+    }
+
+    #[test]
+    fn only_4xx_token_endpoint_statuses_are_terminal_refresh_rejections() {
+        // Gemini Code Assist finding on PR #3: a 5xx from the token endpoint
+        // (outage, maintenance, rate limiting) must be retried, not treated
+        // as "the refresh token was rejected, please re-link your account".
+        assert!(!is_terminal_refresh_rejection(399));
+        assert!(is_terminal_refresh_rejection(400));
+        assert!(is_terminal_refresh_rejection(401));
+        assert!(is_terminal_refresh_rejection(499));
+        assert!(!is_terminal_refresh_rejection(500));
+        assert!(!is_terminal_refresh_rejection(502));
+        assert!(!is_terminal_refresh_rejection(503));
     }
 
     #[test]
