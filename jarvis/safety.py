@@ -53,6 +53,24 @@ REVERSIBLE_CHANGE_PATTERNS = [
     r"\barchive\b",
 ]
 
+# Phrasing that signals the user wants Codex to make and persist real changes (workspace-write),
+# not just answer or read. Detection requires an explicit "codex" mention so ordinary write requests
+# routed to other tools keep their existing classification.
+CODEX_WRITE_DELEGATION_PATTERNS = [
+    r"\bactually\s+(implement|write|fix|build|edit|change|apply|create|refactor|make|code|patch)\b",
+    r"\bsave\s+(it|them|this|that|everything)\b",
+    r"\bsave\s+(the|your|these|those|all|any)?\s*(file|files|change|changes|edit|edits|code|work|progress|project)\b",
+    r"\b(and|then)\s+(save|commit|apply|persist|write)\b",
+    r"\bapply\s+(the|these|those|its|your|all)?\s*(change|changes|fix|fixes|edit|edits|patch|diff|it|them)\b",
+    r"\bcommit\s+(the|it|them|this|that|these|those|changes?|your)\b",
+    r"\bwrite\s+(the|this|that|these|those|its|out|it)\b[^.]{0,25}\b(file|files|change|changes|fix|fixes|code|disk)\b",
+    r"\bwrite\s+(it|them)\s+to\b",
+    r"\b(edit|modify|overwrite|update|create|patch)\s+(the|a|some|those|these|my|your)?\s*files?\b",
+    r"\bmake\s+(the|real|actual)\s+(change|changes|edit|edits|fix|fixes)\b",
+    r"\b(implement|fix|refactor|build)\b[^.]{0,40}\band\s+(save|commit|apply|write|persist)\b",
+    r"\bpersist\b",
+]
+
 READ_ONLY_SHELL_COMMANDS = {
     "pwd",
     "ls",
@@ -269,6 +287,9 @@ def classify_command(command: str) -> SafetyAssessment:
     if _looks_like_codex_job_status_query(text):
         reasons.append("Command checks local Codex status only.")
         return SafetyAssessment(1, RISK_LABELS[1], "allowed", False, False, False, reasons)
+    if _looks_like_codex_write_delegation(lower):
+        reasons.append("Command asks Codex to make and save real changes to project files (workspace-write).")
+        return SafetyAssessment(4, RISK_LABELS[4], "needs_typed_confirmation", True, True, False, reasons)
     if _looks_like_app_quit_command(lower):
         reasons.append("Command may close or quit a local app, which can lose unsaved work.")
         return SafetyAssessment(3, RISK_LABELS[3], "needs_confirmation", True, False, False, reasons)
@@ -418,6 +439,29 @@ def _looks_like_codex_job_status_query(command: str) -> bool:
     if re.match(r"(?i)^(?:check|get|show|what|which)\b.*\bcodex\b.*\b(?:status|speed|latency|chat|chats|default|memory)\b", stripped):
         return True
     return False
+
+
+def _looks_like_codex_write_delegation(lower: str) -> bool:
+    if "codex" not in lower:
+        return False
+    if _looks_like_codex_job_status_query(lower):
+        return False
+    return _matches_any(lower, CODEX_WRITE_DELEGATION_PATTERNS)
+
+
+def classify_codex_delegation(text: str, *, write_capable: bool = False) -> SafetyAssessment:
+    """Classify a Codex delegation request.
+
+    Read-only delegations defer to the general text classifier. Write-capable delegations run
+    Codex with a workspace-write sandbox, so they are always level-4 typed-confirmation actions
+    (unless the base classifier already blocks the text outright, e.g. it is too long).
+    """
+    base = classify_command(text)
+    if not write_capable or base.blocked:
+        return base
+    reasons = ["Write-capable Codex delegation can create, edit, or overwrite files in the project folder."]
+    reasons.extend(reason for reason in base.reasons if reason not in reasons)
+    return SafetyAssessment(4, RISK_LABELS[4], "needs_typed_confirmation", True, True, False, reasons)
 
 
 def is_shell_allowed(command: str) -> bool:

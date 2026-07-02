@@ -53,7 +53,11 @@ Deliverables:
 Status: local dashboard shortcut simulation implemented with `Cmd+K` / `Ctrl+K`.
 Text-only wake phrase simulation is also implemented through
 `voice.wake_simulation` for transcript tests, including extracted-command
-safety assessment, but real microphone wake-word listening remains deferred.
+safety assessment. Real microphone wake-word listening is now **implemented**
+too — see `JarvisWakeListener.swift` (Apple on-device Speech), which persists the
+user's enable/disable choice and auto-resumes on launch once opted in. It has
+only been verified against synthetic transcript / TTS-file tests, so live-mic
+reliability remains an open verification item.
 
 ## Milestone 2: Push-to-Talk Voice Prototype
 
@@ -71,13 +75,21 @@ Deliverables:
 
 Goal: local "Hey Jarvis" trigger.
 
+Status: largely implemented in `JarvisWakeListener.swift` (Apple on-device
+Speech). The listener detects "Hey Jarvis" / "OK Jarvis", extracts the trailing
+command, changes menu-bar state, persists the user's enable/disable choice, and
+auto-resumes on launch once opted in. Remaining open item: it has only been
+verified against synthetic transcript / TTS-file tests
+(`scripts/smoke_wake_threshold.py`, `scripts/physical_audio_preflight.py`,
+`--wake-*-self-test`), never a live human voice through a real microphone.
+
 Deliverables:
 
-- Local wake-word listener.
-- False-positive testing.
-- Wake sound or menu bar state change.
-- Command timeout.
-- Privacy indicator.
+- Local wake-word listener. (Done — Apple on-device Speech.)
+- False-positive testing. (Synthetic-transcript coverage; live-mic testing open.)
+- Wake sound or menu bar state change. (Done — menu-bar state.)
+- Command timeout. (Done — post-wake command capture window.)
+- Privacy indicator. (Menu-bar wake state; on-device only, no room audio streamed.)
 
 ## Milestone 3.5: Remote Worker Design
 

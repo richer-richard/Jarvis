@@ -85,6 +85,11 @@
 
    My response: Sure. Like I said last time(probably later down there in this file somewhere), our Jarvis can decide that a coding task is too much for it to do and instead leverage a better model like 5.5 xhigh in something like Codex CLI. 
 
+   Status (implemented): Jarvis delegates coding/project work to the Codex CLI as a specialist tool via
+   `codex.delegate`/`codex.job` (read-only) and now a write-capable tier `codex.delegate_write`/`codex.job_write`
+   (workspace-write sandbox, confined to the project folder, gated behind typed confirmation). See
+   `docs/SAFETY_MODEL.md` and `codex_delegate_plan(..., write_capable=True)` in `jarvis/tools.py`.
+
 3. Should Realtime API be used early, or only after command execution works?
 
    It's not an API key we are using anyway. And I don't really understand your question anyway. What do you mean after command execution works? Isn't the command itself written and issued by the AI? And the AI will come back after the command finishes or if it times out, right?
@@ -165,6 +170,13 @@
 
    My response: 
    This sounds solid to me. If Jarvis can 'default to the project folder' like you said, meaning it will provide its own project folder based on my commands and keep itself in there, then beautiful. Good luck with that, and I hope you can make it happen. But if you can't, tell me and we need to change this. 
+
+   Status (implemented): The write-capable Codex tier (`codex.delegate_write`/`codex.job_write`) runs the Codex CLI
+   with a `workspace-write` sandbox whose working directory is resolved through `_safe_root()`, so any project
+   directory that escapes the Jarvis workspace root falls back to the workspace root — Codex can create/edit/overwrite
+   files only inside the project folder. It stays behind the level-4 typed-confirmation gate and can be disabled with
+   `JARVIS_CODEX_WRITE_ENABLED=0`. This delivers the "default to the project folder and keep itself in there" behavior
+   for coding tasks. Broader capability sandboxes for other action classes remain future work.
 
 ## Technical
 

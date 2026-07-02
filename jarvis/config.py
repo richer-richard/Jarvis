@@ -84,15 +84,25 @@ ALLOW_NON_LOOPBACK = env_bool("JARVIS_ALLOW_NON_LOOPBACK", False)
 AUDIT_RETENTION_DAYS = env_int("JARVIS_AUDIT_RETENTION_DAYS", 90, minimum=1)
 AUDIT_MAX_BYTES = env_int("JARVIS_AUDIT_MAX_BYTES", 1024 * 1024 * 1024, minimum=1024 * 1024)
 
+# Name Jarvis uses for the user in model prompts. Empty string omits the name and uses generic wording.
+USER_NAME = os.environ.get("JARVIS_USER_NAME", "").strip()
+# Bundle id of the Jarvis macOS app, used for self-identity checks. Override for a rebranded build.
+APP_BUNDLE_ID = os.environ.get("JARVIS_BUNDLE_ID", "local.leo.jarvis").strip() or "local.leo.jarvis"
+
 SAFE_SHELL_TIMEOUT_SECONDS = 8
 MAX_COMMAND_CHARS = 4000
 MAX_REQUEST_BYTES = 16 * 1024
 MAX_AUDIT_EVENTS = 200
 MAX_FILE_SEARCH_RESULTS = 50
 
+# NOTE: verify this against `codex --model` output on a machine with the Codex CLI installed;
+# a wrong/hallucinated model id silently breaks every Codex call.
 DEFAULT_CODEX_MODEL = os.environ.get("JARVIS_CODEX_MODEL", "gpt-5.4-mini")
 DEFAULT_CODEX_REASONING_EFFORT = os.environ.get("JARVIS_CODEX_REASONING_EFFORT", "low")
 CODEX_TIMEOUT_SECONDS = env_int("JARVIS_CODEX_TIMEOUT_SECONDS", 210, minimum=10, maximum=300)
+# Write-capable Codex delegation (workspace-write sandbox) is pre-approved by the project owner
+# but stays behind Jarvis's typed-confirmation gate. Set JARVIS_CODEX_WRITE_ENABLED=0 to disable it.
+CODEX_WRITE_ENABLED = env_bool("JARVIS_CODEX_WRITE_ENABLED", True)
 CODEX_CHAT_TIMEOUT_SECONDS = env_int("JARVIS_CODEX_CHAT_TIMEOUT_SECONDS", 12, minimum=3, maximum=90)
 CODEX_CHAT_REGISTRY_PATH = Path(
     os.environ.get("JARVIS_CODEX_CHAT_REGISTRY", str(RUNTIME_DIR / "codex_chats.json"))

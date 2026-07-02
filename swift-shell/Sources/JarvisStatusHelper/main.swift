@@ -82,12 +82,13 @@ struct JarvisStatusHelperApp {
             fputs("Jarvis status helper self-test failed: Control-click should open the emergency menu.\n", stderr)
             Foundation.exit(1)
         }
-        guard MainAppNotification.openPanel.rawValue == "local.leo.jarvis.statusHelper.openPanel",
-              MainAppNotification.runStatus.rawValue == "local.leo.jarvis.statusHelper.runStatus",
-              MainAppNotification.toggleWakeListener.rawValue == "local.leo.jarvis.statusHelper.toggleWakeListener",
-              MainAppNotification.stopMusic.rawValue == "local.leo.jarvis.statusHelper.stopMusic",
-              MainAppNotification.speechMuteChanged.rawValue == "local.leo.jarvis.statusHelper.speechMuteChanged",
-              MainAppNotification.quit.rawValue == "local.leo.jarvis.statusHelper.quit" else {
+        let notificationPrefix = Bundle.main.bundleIdentifier ?? MainAppNotification.fallbackBundleIdentifier
+        guard MainAppNotification.openPanel.name.rawValue == "\(notificationPrefix).statusHelper.openPanel",
+              MainAppNotification.runStatus.name.rawValue == "\(notificationPrefix).statusHelper.runStatus",
+              MainAppNotification.toggleWakeListener.name.rawValue == "\(notificationPrefix).statusHelper.toggleWakeListener",
+              MainAppNotification.stopMusic.name.rawValue == "\(notificationPrefix).statusHelper.stopMusic",
+              MainAppNotification.speechMuteChanged.name.rawValue == "\(notificationPrefix).statusHelper.speechMuteChanged",
+              MainAppNotification.quit.name.rawValue == "\(notificationPrefix).statusHelper.quit" else {
             fputs("Jarvis status helper self-test failed: notification names changed.\n", stderr)
             Foundation.exit(1)
         }
@@ -386,14 +387,33 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
 }
 
 private enum MainAppNotification: String {
-    case openPanel = "local.leo.jarvis.statusHelper.openPanel"
-    case runStatus = "local.leo.jarvis.statusHelper.runStatus"
-    case toggleWakeListener = "local.leo.jarvis.statusHelper.toggleWakeListener"
-    case stopMusic = "local.leo.jarvis.statusHelper.stopMusic"
-    case speechMuteChanged = "local.leo.jarvis.statusHelper.speechMuteChanged"
-    case quit = "local.leo.jarvis.statusHelper.quit"
+    case openPanel = "statusHelper.openPanel"
+    case runStatus = "statusHelper.runStatus"
+    case toggleWakeListener = "statusHelper.toggleWakeListener"
+    case stopMusic = "statusHelper.stopMusic"
+    case speechMuteChanged = "statusHelper.speechMuteChanged"
+    case quit = "statusHelper.quit"
+
+    // Keep the legacy bundle id as the fallback so `swift run` (no bundle, nil
+    // bundleIdentifier) and the default `local.leo.jarvis` build produce the exact
+    // same notification names as before, while a rebranded BUNDLE_ID keeps the main
+    // app and this separate status-helper process routed to matching names.
+    //
+    // IMPORTANT: this only works because this helper binary is launched from
+    // inside the app bundle's own Contents/MacOS/ (see build_app_bundle.sh and
+    // JarvisMenuBarApp.swift's startStatusHelper()), which makes `Bundle.main`
+    // here resolve to the ENCLOSING .app and report the app's own
+    // CFBundleIdentifier. If this helper is ever moved elsewhere (its own
+    // Contents/Helpers/ location, its own Info.plist, an XPC service, etc.),
+    // `Bundle.main.bundleIdentifier` here would silently stop matching the main
+    // app's, and every cross-process notification below would silently stop
+    // firing -- with no compile error and no test catching it (the --self-test
+    // below only checks internal self-consistency, not a match against the
+    // running main app). Keep this helper inside the main app's Contents/MacOS/.
+    fileprivate static let fallbackBundleIdentifier = "local.leo.jarvis"
 
     var name: Notification.Name {
-        Notification.Name(rawValue)
+        let prefix = Bundle.main.bundleIdentifier ?? Self.fallbackBundleIdentifier
+        return Notification.Name("\(prefix).\(rawValue)")
     }
 }

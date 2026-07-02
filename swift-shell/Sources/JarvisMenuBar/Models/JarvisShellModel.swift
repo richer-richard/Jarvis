@@ -77,6 +77,7 @@ final class JarvisShellModel: ObservableObject {
     var onSpeechPlaybackMayStart: (() -> Void)?
     var onSpeechPlaybackLikelyStarted: (() -> Void)?
     private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
+    private static let wakeListenerEnabledDefaultsKey = "JarvisWakeListenerEnabled"
     private static let speechMuteStatusPollNanoseconds: UInt64 = 2_000_000_000
     private static let teamsVisibleReadRetryAttempts = 4
     private static let teamsVisibleReadRetryDelayNanoseconds: UInt64 = 1_600_000_000
@@ -216,28 +217,58 @@ final class JarvisShellModel: ObservableObject {
     func toggleWakeListener() {
         if isWakeListening {
             recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
+            setWakeListenerPreferenceEnabled(false)
             hideSummonSurface()
             wakeListener.stop()
         } else {
-            let preflight = JarvisPermissionService.wakeStartPreflight()
-            guard preflight.allowed else {
-                isWakeListening = false
-                wakeModeText = "Wake Off"
-                wakeDetailText = preflight.detail
-                recordWakeEvent("listener_start_blocked", detail: preflight.detail)
-                messages.append(ChatMessage(role: .jarvis, text: preflight.message, detail: "Wake not started"))
-                return
-            }
-            wakeDetailText = preflight.detail
-            recordWakeEvent("listener_start_requested", detail: wakeDetailText)
-            wakeListener.start()
+            startWakeListenerRespectingPreflight(persistPreference: true)
         }
     }
 
     func stopWakeListener() {
         recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
+        setWakeListenerPreferenceEnabled(false)
         hideSummonSurface()
         wakeListener.stop()
+    }
+
+    /// Starts the wake listener at launch only when the user has previously opted in.
+    /// Never forces the microphone/speech permission prompt on a first-ever launch:
+    /// the preference defaults to unset, so this is a no-op until the user starts it once.
+    func autoStartWakeListenerIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: Self.wakeListenerEnabledDefaultsKey) else {
+            return
+        }
+        startWakeListenerRespectingPreflight(persistPreference: false, isAutoStart: true)
+    }
+
+    @discardableResult
+    private func startWakeListenerRespectingPreflight(
+        persistPreference: Bool,
+        isAutoStart: Bool = false
+    ) -> Bool {
+        let preflight = JarvisPermissionService.wakeStartPreflight()
+        guard preflight.allowed else {
+            isWakeListening = false
+            wakeModeText = "Wake Off"
+            wakeDetailText = preflight.detail
+            recordWakeEvent(isAutoStart ? "listener_autostart_blocked" : "listener_start_blocked", detail: preflight.detail)
+            if !isAutoStart {
+                messages.append(ChatMessage(role: .jarvis, text: preflight.message, detail: "Wake not started"))
+            }
+            return false
+        }
+        wakeDetailText = preflight.detail
+        recordWakeEvent(isAutoStart ? "listener_autostart_requested" : "listener_start_requested", detail: wakeDetailText)
+        if persistPreference {
+            setWakeListenerPreferenceEnabled(true)
+        }
+        wakeListener.start()
+        return true
+    }
+
+    private func setWakeListenerPreferenceEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.wakeListenerEnabledDefaultsKey)
     }
 
     func toggleSpeechMuted() {
@@ -717,7 +748,7 @@ final class JarvisShellModel: ObservableObject {
         clearSpeechPlaybackWindow()
         recordWakeEvent(
             "speech_barge_in",
-            detail: "Stopped current Jarvis speech because Leo started speaking.",
+            detail: "Stopped current Jarvis speech because the user started speaking.",
             transcript: cleanTranscript
         )
         Task { [client] in
@@ -1770,7 +1801,7 @@ final class JarvisShellModel: ObservableObject {
             "- Speech Recognition: \(speech?.state ?? "Unknown"). \(speech?.detail ?? "No speech-recognition status available.")",
             "- Keyboard wake/focus: \(shortcut).",
             "- Typed wake simulation: available for Hey Jarvis, OK Jarvis, and Okay Jarvis.",
-            "- Experimental Hey Jarvis microphone listener: \(isWakeListening ? "running" : "available but off").",
+            "- Hey Jarvis microphone listener (Apple Speech; auto-resumes your last choice on launch, not yet verified against live mic audio): \(isWakeListening ? "running" : "off").",
             "- Speech-to-text command transcription: available through the experimental listener; dictated text is treated as punctuation-poor input.",
             "- TTS: \(isSpeechMuted ? "muted from the app menu" : "automatic final spoken replies are enabled for supported routes, and explicit local `speak ...` / `say out loud ...` commands still exist").",
             "This did not record audio, transcribe audio, or request new permissions.",

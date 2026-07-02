@@ -37,10 +37,12 @@ from typing import Any
 
 from .audit import redact_sensitive_text
 from .config import (
+    APP_BUNDLE_ID,
     CODEX_CHAT_REGISTRY_PATH,
     CODEX_CHAT_TIMEOUT_SECONDS,
     CODEX_DAILY_MEMORY_PATH,
     CODEX_TIMEOUT_SECONDS,
+    CODEX_WRITE_ENABLED,
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_REASONING_EFFORT,
     EMAIL_DEFAULT_SCAN_MESSAGES,
@@ -73,6 +75,7 @@ from .config import (
     PROJECT_ROOT,
     RUNTIME_DIR,
     SAFE_SHELL_TIMEOUT_SECONDS,
+    USER_NAME,
     TTS_AFPLAY,
     TTS_AUTOMATIC_ENABLED,
     TTS_FALLBACK_PROVIDER,
@@ -1256,7 +1259,23 @@ def tool_registry() -> dict[str, Any]:
                 "mode": "execute",
                 "risk": "external_model_possible",
                 "available": bool(codex_path),
-                "description": "Starts a background read-only Codex CLI job for broad coding/project requests and lets Leo query the result later.",
+                "description": "Starts a background read-only Codex CLI job for broad coding/project requests and lets the user query the result later.",
+            },
+            {
+                "id": "codex.delegate_write",
+                "label": "Codex Write Delegation",
+                "mode": "execute",
+                "risk": "external_model_workspace_write",
+                "available": bool(codex_path) and CODEX_WRITE_ENABLED,
+                "description": "Runs an explicit Codex CLI request with a workspace-write sandbox so Codex can create, edit, and overwrite files in the project folder. Requires typed confirmation.",
+            },
+            {
+                "id": "codex.job_write",
+                "label": "Async Codex Write Job",
+                "mode": "execute",
+                "risk": "external_model_workspace_write",
+                "available": bool(codex_path) and CODEX_WRITE_ENABLED,
+                "description": "Starts a background Codex CLI job with a workspace-write sandbox for broad coding tasks that must save real changes to the project folder. Requires typed confirmation.",
             },
             {
                 "id": "control.pause",
@@ -6622,11 +6641,13 @@ def _middle_tools_prompt(prompt: str, *, history: list[dict[str, str]] | None = 
         f"- {tool['id']} ({tool['kind']}): {tool['description']}"
         for tool in _middle_tool_catalog()
     )
+    subject, _poss, poss_cap, has_name = _user_ref()
+    says_label = subject if has_name else "The user"
     return (
         "You are Jarvis's middle planning model. You are slower and smarter than the first chat model, "
         "but you still do not execute tools. Choose the best next tool or say that ordinary chat is enough. "
-        "Leo's current request may come from speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended punctuation while preserving his words and meaning. "
-        "Visible Jarvis text may be spoken aloud, so keep user-facing wording natural and concise. "
+        + f"{poss_cap} current request may come from speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended punctuation while preserving the original words and meaning. "
+        + "Visible Jarvis text may be spoken aloud, so keep user-facing wording natural and concise. "
         "Never recommend sending, submitting, deleting, purchasing, changing settings, or exporting private data without explicit confirmation. "
         "Return JSON only.\n\n"
         "JSON schema: {\"recommended_tool\":\"tool.id or conversation.fast_local\",\"confidence\":0.0,\"entities\":{},\"user_status\":\"short natural status if a tool should run\",\"reason\":\"short\",\"safety\":\"short\"}\n\n"
@@ -6634,7 +6655,7 @@ def _middle_tools_prompt(prompt: str, *, history: list[dict[str, str]] | None = 
         f"{catalog}\n\n"
         "Recent conversation:\n"
         f"{chr(10).join(history_lines) if history_lines else '(none)'}\n\n"
-        f"Leo says:\n{prompt.strip()[:1600]}"
+        + f"{says_label} says:\n{prompt.strip()[:1600]}"
     )
 
 
@@ -7370,7 +7391,7 @@ def _app_identity_matches(app_name: str, metadata: dict[str, Any]) -> bool:
         str(metadata.get("display_name") or "").casefold(),
     }
     bundle_id = str(metadata.get("bundle_id") or "").casefold()
-    if target == "jarvis" and bundle_id == "local.leo.jarvis":
+    if target == "jarvis" and bundle_id == APP_BUNDLE_ID.casefold():
         return True
     return target in names
 
@@ -7590,7 +7611,7 @@ def _frontmost_display_name(process_name: str, bundle_id: str, app_path: str) ->
     process = re.sub(r"\s+", " ", str(process_name or "")).strip()
     bundle = str(bundle_id or "").strip()
     path = str(app_path or "").strip()
-    if bundle == "local.leo.jarvis" or process == "jarvis-menu-bar" or path.endswith("/Jarvis.app/"):
+    if bundle.casefold() == APP_BUNDLE_ID.casefold() or process == "jarvis-menu-bar" or path.endswith("/Jarvis.app/"):
         return "Jarvis"
     if path.endswith(".app/") or path.endswith(".app"):
         name = Path(path.rstrip("/")).stem.strip()
@@ -16396,12 +16417,14 @@ def codex_delegate_plan(
     model: str | None = None,
     *,
     ephemeral: bool = True,
+    write_capable: bool = False,
 ) -> dict[str, Any]:
     codex_path = _find_executable("codex")
     workdir = str(_safe_root(project_dir))
     selected_model = (model or DEFAULT_CODEX_MODEL).strip() or DEFAULT_CODEX_MODEL
     delegated_prompt = _codex_fast_prompt(prompt)
     proxy_plan = _codex_proxy_plan()
+    sandbox = "workspace-write" if write_capable else "read-only"
     command = [
         codex_path or "codex",
         "--model",
@@ -16409,7 +16432,7 @@ def codex_delegate_plan(
         "-c",
         f"model_reasoning_effort={DEFAULT_CODEX_REASONING_EFFORT}",
         "--sandbox",
-        "read-only",
+        sandbox,
         "--ask-for-approval",
         "never",
         "exec",
@@ -16420,19 +16443,32 @@ def codex_delegate_plan(
     if ephemeral:
         command.append("--ephemeral")
     command.append(delegated_prompt)
+    if write_capable:
+        note = (
+            "Codex CLI execution sends the prompt and any files it chooses to read to the configured model. "
+            f"This route uses a workspace-write sandbox confined to {workdir}, so Codex can create, edit, and "
+            "overwrite files there. Jarvis gates it behind typed confirmation."
+        )
+    else:
+        note = (
+            "Codex CLI execution sends the prompt and any files it chooses to read to the configured model. "
+            "This route uses a read-only sandbox."
+        )
     return {
-        "tool": "codex.delegate",
+        "tool": "codex.delegate_write" if write_capable else "codex.delegate",
         "available": bool(codex_path),
         "codex_path": codex_path,
         "model": selected_model,
         "timeout_seconds": CODEX_TIMEOUT_SECONDS,
-        "sandbox": "read-only",
+        "sandbox": sandbox,
+        "write_capable": write_capable,
+        "workdir": workdir,
         "reasoning_effort": DEFAULT_CODEX_REASONING_EFFORT,
         "ephemeral": ephemeral,
         "proxy": proxy_plan,
         "planned_command": command,
         "status": "dry_run",
-        "note": "Codex CLI execution sends the prompt and any files it chooses to read to the configured model. This route uses a read-only sandbox.",
+        "note": note,
     }
 
 
@@ -17969,29 +18005,45 @@ def _rate_limit_fallback_metadata(
     }
 
 
+def _user_ref() -> tuple[str, str, str, bool]:
+    """Return (subject, possessive, sentence-start possessive, has_name) for model-prompt phrasing.
+
+    Uses JARVIS_USER_NAME so prompts are not hardcoded to one person; an empty name falls back
+    to generic wording ("the user").
+    """
+    name = (USER_NAME or "").strip()
+    if name:
+        return name, f"{name}'s", f"{name}'s", True
+    return "the user", "the user's", "The user's", False
+
+
 def _fast_chat_system_prompt(tool_specs: list[dict[str, Any]] | None = None) -> str:
+    subject, poss, poss_cap, has_name = _user_ref()
+    opening = f"You are Jarvis, {poss} local Mac assistant prototype. " if has_name else "You are Jarvis, a local Mac assistant prototype. "
+    name_line = f"{subject} is the user's real name for profile context. " if has_name else ""
     prompt = (
-        "You are Jarvis, Leo's local Mac assistant prototype. "
-        "Leo is the user's real name for profile context. Do not add routine 'Yes sir' acknowledgements. "
-        f"Current local date/time: {_current_local_datetime_label()}. "
-        "Answer directly and briefly unless he asks for more. "
-        "Follow Leo's requested output format, including exact text or bullet counts. "
-        "Displayed or spoken aloud words must be natural, concise, English-first, and voice-friendly. "
-        "Write replies in English unless Leo asks otherwise; preserve only necessary non-English names or titles and explain the rest in English. "
-        "Leo's latest message may be raw speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended wording from context without adding new meaning. "
-        "No internal headings: Actions, What I did, Steps taken, Reasoning, Notes, Tool results. "
-        "Avoid raw URLs, opaque IDs, markdown-heavy formatting, and internal routing words unless Leo explicitly asks for technical detail. "
-        "Be useful and natural. Do not claim you performed computer actions unless a tool result is given to you. "
-        "Do not invent schedule, email, weather, app, file, or system facts. "
-        "Use the conversation history to resolve follow-ups, pronouns, and answers to earlier questions. "
-        "For a simple greeting, only say hello and ask what he wants done. "
-        "For jokes, give one short joke directly without unrelated follow-up text. "
-        "Do not mention that you are a language model. Do not use emojis."
+        opening
+        + name_line
+        + "Do not add routine 'Yes sir' acknowledgements. "
+        + f"Current local date/time: {_current_local_datetime_label()}. "
+        + "Answer directly and briefly unless he asks for more. "
+        + f"Follow {poss} requested output format, including exact text or bullet counts. "
+        + "Displayed or spoken aloud words must be natural, concise, English-first, and voice-friendly. "
+        + f"Write replies in English unless {subject} asks otherwise; preserve only necessary non-English names or titles and explain the rest in English. "
+        + f"{poss_cap} latest message may be raw speech dictation with missing punctuation, missing capitalization, or mild homophone errors; infer the intended wording from context without adding new meaning. "
+        + "No internal headings: Actions, What I did, Steps taken, Reasoning, Notes, Tool results. "
+        + f"Avoid raw URLs, opaque IDs, markdown-heavy formatting, and internal routing words unless {subject} explicitly asks for technical detail. "
+        + "Be useful and natural. Do not claim you performed computer actions unless a tool result is given to you. "
+        + "Do not invent schedule, email, weather, app, file, or system facts. "
+        + "Use the conversation history to resolve follow-ups, pronouns, and answers to earlier questions. "
+        + "For a simple greeting, only say hello and ask what he wants done. "
+        + "For jokes, give one short joke directly without unrelated follow-up text. "
+        + "Do not mention that you are a language model. Do not use emojis."
     )
     if tool_specs:
         prompt += (
             "\n\nIf and only if the user needs Jarvis to use a real tool, do not answer normally. "
-            "First write the short natural words Leo should see and hear, then include exactly one hidden machine tool call. "
+            f"First write the short natural words {subject} should see and hear, then include exactly one hidden machine tool call. "
             "The preferred hidden call is \\tool({\"tool\":\"tool.id\",\"entities\":{}}). "
             "Jarvis will remove the hidden call before display and speech, so the visible words must make sense by themselves. "
             "Do not use internal implementation labels in visible text. Do not explain that you are choosing tools. "
@@ -18455,6 +18507,26 @@ def _https_context() -> ssl.SSLContext:
 
 def run_codex_delegate(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
     plan = codex_delegate_plan(_clean_codex_prompt(prompt), project_dir=project_dir, model=model)
+    return _run_codex_delegate_from_plan(plan)
+
+
+def run_codex_delegate_write(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
+    if not CODEX_WRITE_ENABLED:
+        return {
+            "tool": "codex.delegate_write",
+            "available": False,
+            "write_capable": True,
+            "status": "write_disabled",
+            "executed": False,
+            "duration_seconds": 0.0,
+            "duration_human": "0.0s",
+            "reply": "Write-capable Codex delegation is disabled. Set JARVIS_CODEX_WRITE_ENABLED=1 to enable it.",
+        }
+    plan = codex_delegate_plan(_clean_codex_prompt(prompt), project_dir=project_dir, model=model, write_capable=True)
+    return _run_codex_delegate_from_plan(plan)
+
+
+def _run_codex_delegate_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if not plan["available"]:
         return {
             **plan,
@@ -18523,12 +18595,32 @@ def run_codex_delegate(prompt: str, project_dir: str | None = None, model: str |
     }
 
 
-def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
+def start_codex_delegate_write_job(prompt: str, project_dir: str | None = None, model: str | None = None) -> dict[str, Any]:
+    if not CODEX_WRITE_ENABLED:
+        return {
+            "tool": "codex.job_write",
+            "status": "write_disabled",
+            "executed": False,
+            "available": False,
+            "write_capable": True,
+            "reply": "Write-capable Codex delegation is disabled. Set JARVIS_CODEX_WRITE_ENABLED=1 to enable it.",
+        }
+    return start_codex_delegate_job(prompt, project_dir=project_dir, model=model, write_capable=True)
+
+
+def start_codex_delegate_job(
+    prompt: str,
+    project_dir: str | None = None,
+    model: str | None = None,
+    *,
+    write_capable: bool = False,
+) -> dict[str, Any]:
     cleaned = _clean_codex_prompt(prompt)
-    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model, ephemeral=False)
+    tool_id = "codex.job_write" if write_capable else "codex.job"
+    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model, ephemeral=False, write_capable=write_capable)
     if not plan["available"]:
         return {
-            "tool": "codex.job",
+            "tool": tool_id,
             "status": "codex_not_found",
             "executed": False,
             "available": False,
@@ -18549,7 +18641,7 @@ def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model:
 
     job_id = f"codex-{uuid.uuid4().hex[:8]}"
     job = {
-        "tool": "codex.job",
+        "tool": tool_id,
         "job_id": job_id,
         "status": "running",
         "phase": "queued",
@@ -18558,6 +18650,8 @@ def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model:
         "last_activity_at": time.time(),
         "prompt_summary": prompt_summary,
         "ephemeral": False,
+        "write_capable": write_capable,
+        "sandbox": plan["sandbox"],
         "jarvis_generated_prompt": bool(selected_session_id),
         "cli_tail": cli_tail,
         "conversation_tail": "",
@@ -18590,10 +18684,11 @@ def start_codex_delegate_job(prompt: str, project_dir: str | None = None, model:
         model,
         resume_session_id=selected_session_id or None,
         sensitive_stdin=False,
+        write_capable=write_capable,
     )
     return {
         **_codex_activity_job(job),
-        "tool": "codex.job",
+        "tool": tool_id,
         "available": True,
         "executed": True,
         "session_ids_hidden": bool(selected_session_id),
@@ -19559,11 +19654,16 @@ def _start_codex_job_thread(
     *,
     resume_session_id: str | None,
     sensitive_stdin: bool,
+    write_capable: bool = False,
 ) -> None:
     thread = threading.Thread(
         target=_codex_delegate_job_worker,
         args=(job_id, prompt, project_dir, model),
-        kwargs={"resume_session_id": resume_session_id, "sensitive_stdin": sensitive_stdin},
+        kwargs={
+            "resume_session_id": resume_session_id,
+            "sensitive_stdin": sensitive_stdin,
+            "write_capable": write_capable,
+        },
         daemon=True,
     )
     thread.start()
@@ -19577,12 +19677,13 @@ def _codex_delegate_job_worker(
     *,
     resume_session_id: str | None = None,
     sensitive_stdin: bool = False,
+    write_capable: bool = False,
 ) -> None:
     cleaned = _clean_codex_prompt(prompt)
     if sensitive_stdin:
         _remember_codex_sensitive_text(prompt)
         _remember_codex_sensitive_text(cleaned)
-    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model, ephemeral=False)
+    plan = codex_delegate_plan(cleaned, project_dir=project_dir, model=model, ephemeral=False, write_capable=write_capable)
     started_at = time.monotonic()
     if not plan["available"]:
         _update_codex_job_activity(
@@ -21541,7 +21642,8 @@ def _fast_local_prompt(
             label = "Jarvis" if item["role"] == "assistant" else item["role"].title()
             lines.append(f"{label}: {item['content']}")
         lines.append("")
-    lines.append("Leo says:")
+    _subject, _poss, _poss_cap, _has_name = _user_ref()
+    lines.append(f"{_subject if _has_name else 'The user'} says:")
     lines.append(prompt.strip()[:1200])
     return "\n".join(lines)
 
