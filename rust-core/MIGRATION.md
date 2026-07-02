@@ -51,6 +51,46 @@ slice reaches parity and is verified.
   folded into a `DelegateMode::WriteCapable(token)` enum variant -- the illegal
   state (write-capable with no proof of confirmation) is unrepresentable at
   the type level. 17 tests.
+- `jarvis-oauth`: NEW crate (not a Python port -- there is no Python source for
+  this; it's a clean-room implementation of `docs/DIRECT_MODEL_OAUTH_DESIGN.md`).
+  An independent "Sign in with ChatGPT" OAuth client so Jarvis's FAST path can
+  eventually call the user's ChatGPT subscription directly instead of spawning
+  `codex exec` per turn. Modules: `pkce` (S256 verifier/challenge), `authorize`
+  (authorize-URL builder + the shared public `client_id`/scopes/endpoints),
+  `callback` (loopback listener + pure request-line/query parser), `token`
+  (code->token + refresh exchanges, request bodies built by pure functions),
+  `account` (decode-only `chatgpt_account_id` extraction from the id_token JWT --
+  no signature verification, since the token arrives over TLS from OpenAI's own
+  token endpoint), `storage` (atomic write to `~/.jarvis/auth/openai_oauth.json`,
+  file `0600` / dir `0700`), and the `lib.rs` orchestration (`login`/`load`/
+  `access_token`/`logout` + the 5-minute/8-day refresh-window math). Uses `reqwest`
+  (json feature, native-tls -> macOS Security.framework, no OpenSSL), `sha2`,
+  `base64`, `rand`. **Deliberately independent of Codex:** never reads/writes
+  `~/.codex/auth.json`, and binds its own dedicated callback port (default 1717,
+  env `JARVIS_OAUTH_CALLBACK_PORT`) instead of Codex's `1455`, to avoid login
+  collisions. Callback listener is a hand-rolled one-shot `tokio` TCP listener
+  rather than an `axum` route -- chosen for clean accept-parse-reply-return
+  semantics and to keep the query parser a pure unit-testable function (see the
+  module doc for the rationale). 41 tests.
+
+  **What is genuinely verified vs. what needs a live login:** All the
+  deterministic logic is unit-tested and passing -- PKCE S256 (incl. the RFC 7636
+  test vector), authorize-URL construction (every required param + percent
+  encoding + byte-stable redirect_uri), callback request parsing (code/state
+  extraction, percent-decoding, missing-param and provider-`error=` handling,
+  loopback timeout), JWT `account_id` extraction (nested-claim happy path +
+  malformed/missing-claim errors with no panics), storage round-trip with an
+  actual `0600`/`0700` permission assertion via `std::fs::metadata`, and the
+  refresh-window math (3-min-to-expiry -> refresh, 2-hr -> no, 9-days-stale ->
+  proactive refresh). The token-endpoint *request bodies* are unit-tested as pure
+  functions, but the **live network round trip cannot be verified in this
+  sandbox** (no browser, no real ChatGPT session): the actual `/authorize`
+  browser redirect and the `/token` code-exchange + refresh against
+  `auth.openai.com` need Richard to run one real interactive login once to
+  confirm end-to-end (and to confirm OpenAI accepts the port-1717 loopback
+  redirect_uri for the public `client_id`). No Responses-API caller is built yet
+  -- this crate only mints and maintains the credential; the FAST-path adapter
+  that consumes `access_token()` + `account_id` is a separate future piece.
 
 **Not yet ported (explicitly out of scope for this pass):**
 - `/api/readiness`, `/api/preflight`, `/api/plan`, `/api/command` -- the
@@ -87,5 +127,5 @@ do not run both simultaneously against the same port.
 ```
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace   # 62 passed, 0 failed across 5 crates
+cargo test --workspace   # 103 passed, 0 failed across 6 crates
 ```
