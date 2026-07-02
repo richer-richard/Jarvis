@@ -46,6 +46,12 @@ public struct SpeechMuteResponse: Decodable, Sendable {
     public let reply: String?
 }
 
+public struct SpeechPlayingResponse: Decodable, Sendable {
+    public let speaking: Bool
+    public let speechId: String?
+    public let source: String?
+}
+
 public struct Confirmation: Decodable, Sendable {
     public let required: Bool
     public let kind: String

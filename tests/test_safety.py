@@ -47,7 +47,7 @@ from jarvis.audit import AuditLogger, redact_sensitive_text
 from jarvis.config import PROJECT_ROOT, env_bool, host_allowed
 from jarvis.injection import scan_untrusted_text
 from jarvis.planner import NATURAL_LANGUAGE_TOOL_SPECS, PlannedResult, Planner, email_request_status_text
-from jarvis.safety import classify_command, classify_shell_command, policy_summary
+from jarvis.safety import classify_codex_delegation, classify_command, classify_shell_command, policy_summary
 from jarvis.server import (
     MAX_VERIFICATION_AGE_SECONDS,
     STATIC_DIR,
@@ -9536,6 +9536,158 @@ class SafetyPolicyTests(unittest.TestCase):
                 self.assertFalse(assessment.requires_typed_confirmation)
 
 
+class CodexWriteDelegationSafetyTests(unittest.TestCase):
+    def test_write_capable_delegation_requires_typed_confirmation(self):
+        assessment = classify_codex_delegation("ask Codex to look at this project", write_capable=True)
+        self.assertEqual(assessment.risk_level, 4)
+        self.assertTrue(assessment.requires_typed_confirmation)
+        self.assertTrue(assessment.requires_confirmation)
+        self.assertFalse(assessment.blocked)
+        self.assertIn("Write-capable Codex delegation", " ".join(assessment.reasons))
+
+    def test_read_only_delegation_is_not_typed_confirmation(self):
+        assessment = classify_codex_delegation("ask Codex to review this project", write_capable=False)
+        self.assertLess(assessment.risk_level, 4)
+        self.assertFalse(assessment.requires_typed_confirmation)
+
+    def test_read_only_delegation_matches_plain_command_classification(self):
+        text = "ask Codex to review this project"
+        self.assertEqual(
+            classify_codex_delegation(text, write_capable=False).to_dict(),
+            classify_command(text).to_dict(),
+        )
+
+    def test_write_phrasing_is_classified_as_typed_confirmation(self):
+        for command in [
+            "have Codex fix this bug and save the file",
+            "let Codex actually implement this feature",
+            "tell codex to edit the file and apply the changes",
+            "have codex write the fix to the file",
+        ]:
+            with self.subTest(command=command):
+                assessment = classify_command(command)
+                self.assertEqual(assessment.risk_level, 4)
+                self.assertTrue(assessment.requires_typed_confirmation)
+                self.assertIn("workspace-write", " ".join(assessment.reasons))
+
+    def test_plain_ask_codex_phrasing_is_not_write_classified(self):
+        for command in [
+            "ask Codex to review this project",
+            "ask codex how to fix this bug",
+            "have codex look at the code and explain it",
+        ]:
+            with self.subTest(command=command):
+                assessment = classify_command(command)
+                self.assertLess(assessment.risk_level, 4)
+                self.assertFalse(assessment.requires_typed_confirmation)
+
+    def test_existing_read_only_codex_classification_unchanged(self):
+        for command in ["codex jobs", "codex job codex-1234abcd", "codex chat status", "codex activity"]:
+            with self.subTest(command=command):
+                assessment = classify_command(command)
+                self.assertEqual(assessment.risk_level, 1)
+                self.assertFalse(assessment.requires_typed_confirmation)
+
+    def test_blocked_text_stays_blocked_even_when_write_capable(self):
+        assessment = classify_codex_delegation("x" * 5000, write_capable=True)
+        self.assertTrue(assessment.blocked)
+
+
+class CodexWritePlanTests(unittest.TestCase):
+    def test_read_only_plan_is_unchanged_by_default(self):
+        plan = jarvis_tools.codex_delegate_plan("look at the repo")
+        self.assertEqual(plan["tool"], "codex.delegate")
+        self.assertEqual(plan["sandbox"], "read-only")
+        self.assertFalse(plan.get("write_capable"))
+        self.assertIn("read-only", plan["planned_command"])
+        self.assertNotIn("workspace-write", plan["planned_command"])
+
+    def test_write_capable_plan_uses_workspace_write_sandbox(self):
+        plan = jarvis_tools.codex_delegate_plan("fix the bug and save it", write_capable=True)
+        self.assertEqual(plan["tool"], "codex.delegate_write")
+        self.assertEqual(plan["sandbox"], "workspace-write")
+        self.assertTrue(plan["write_capable"])
+        self.assertIn("workspace-write", plan["planned_command"])
+        self.assertNotIn("read-only", plan["planned_command"])
+        # Jarvis's own typed-confirmation gate is the human-in-the-loop, so Codex approval stays off.
+        self.assertIn("never", plan["planned_command"])
+
+    def test_write_capable_plan_confines_workdir_to_project_root(self):
+        plan = jarvis_tools.codex_delegate_plan(
+            "edit the files", project_dir="/etc", write_capable=True
+        )
+        workdir = Path(plan["workdir"]).resolve()
+        self.assertTrue(workdir.is_relative_to(PROJECT_ROOT.resolve()))
+        self.assertEqual(workdir, PROJECT_ROOT.resolve())
+        self.assertIn(str(PROJECT_ROOT.resolve()), plan["planned_command"])
+
+    def test_write_capable_plan_keeps_valid_subdir_workdir(self):
+        plan = jarvis_tools.codex_delegate_plan(
+            "edit the files", project_dir=str(PROJECT_ROOT / "jarvis"), write_capable=True
+        )
+        workdir = Path(plan["workdir"]).resolve()
+        self.assertTrue(workdir.is_relative_to(PROJECT_ROOT.resolve()))
+
+    def test_write_run_disabled_returns_write_disabled(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", False):
+            result = jarvis_tools.run_codex_delegate_write("fix and save it")
+        self.assertEqual(result["tool"], "codex.delegate_write")
+        self.assertEqual(result["status"], "write_disabled")
+        self.assertFalse(result["executed"])
+        self.assertFalse(result["available"])
+
+    def test_write_job_disabled_returns_write_disabled(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", False):
+            result = jarvis_tools.start_codex_delegate_write_job("fix and save it")
+        self.assertEqual(result["tool"], "codex.job_write")
+        self.assertEqual(result["status"], "write_disabled")
+        self.assertFalse(result["executed"])
+
+    def test_write_run_gate_allows_normal_prompt_to_reach_execution(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "_run_codex_delegate_from_plan", return_value={"sentinel": True}
+        ) as run_from_plan:
+            result = jarvis_tools.run_codex_delegate_write("fix the bug and save the file")
+        self.assertTrue(run_from_plan.called)
+        self.assertEqual(result, {"sentinel": True})
+
+    def test_write_job_gate_allows_normal_prompt_to_reach_execution(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "start_codex_delegate_job", return_value={"sentinel": True}
+        ) as start_job:
+            result = jarvis_tools.start_codex_delegate_write_job("fix the bug and save the file")
+        self.assertTrue(start_job.called)
+        self.assertTrue(start_job.call_args.kwargs.get("write_capable"))
+        self.assertEqual(result, {"sentinel": True})
+
+    def test_write_run_gate_blocks_prompt_that_base_classifier_blocks(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "_run_codex_delegate_from_plan"
+        ) as run_from_plan:
+            result = jarvis_tools.run_codex_delegate_write("x" * 5000)
+        self.assertEqual(result["tool"], "codex.delegate_write")
+        self.assertEqual(result["status"], "blocked")
+        self.assertFalse(result["executed"])
+        self.assertFalse(run_from_plan.called)
+
+    def test_write_job_gate_blocks_prompt_that_base_classifier_blocks(self):
+        with patch.object(jarvis_tools, "CODEX_WRITE_ENABLED", True), patch.object(
+            jarvis_tools, "start_codex_delegate_job"
+        ) as start_job:
+            result = jarvis_tools.start_codex_delegate_write_job("x" * 5000)
+        self.assertEqual(result["tool"], "codex.job_write")
+        self.assertEqual(result["status"], "blocked")
+        self.assertFalse(result["executed"])
+        self.assertFalse(start_job.called)
+
+    def test_write_tools_registered_distinctly_from_read_only(self):
+        registry_ids = {tool["id"] for tool in tool_registry()["tools"]}
+        self.assertIn("codex.delegate", registry_ids)
+        self.assertIn("codex.job", registry_ids)
+        self.assertIn("codex.delegate_write", registry_ids)
+        self.assertIn("codex.job_write", registry_ids)
+
+
 class PlannerTests(unittest.TestCase):
     def test_status_executes(self):
         result = Planner().handle("status")
@@ -17086,10 +17238,13 @@ Pages occupied by compressor:             10.
         self.assertIn('APP_VERSION="${APP_VERSION:-0.1.501}"', script)
         self.assertIn('BUILD_NUMBER="${BUILD_NUMBER:-501}"', script)
         self.assertIn('REPLACE_APP="${REPLACE_APP:-1}"', script)
-        self.assertIn('ALLOW_NON_CANONICAL_JARVIS_BUNDLE="${ALLOW_NON_CANONICAL_JARVIS_BUNDLE:-0}"', script)
-        self.assertIn("Refusing to build a non-canonical Jarvis app", script)
-        self.assertIn("Refusing to create a numbered Jarvis bundle", script)
-        self.assertIn("The canonical build replaces output/Jarvis.app", script)
+        # The canonical-identity hard-refusal gate was removed so APP_NAME/BUNDLE_ID are
+        # cleanly overridable for a rebranded build. Defaults above still resolve to
+        # Jarvis / local.leo.jarvis, but nothing refuses or gates a different identity now.
+        self.assertNotIn("ALLOW_NON_CANONICAL_JARVIS_BUNDLE", script)
+        self.assertNotIn("Refusing to build a non-canonical Jarvis app", script)
+        self.assertNotIn("Refusing to create a numbered Jarvis bundle", script)
+        self.assertNotIn("The canonical build replaces output/Jarvis.app", script)
         self.assertIn('cleanup_numbered_app_bundles()', script)
         self.assertIn("find \"$OUTPUT_ROOT\" -maxdepth 1 -type d -name \"$APP_NAME-*.app\" -exec rm -rf {} +", script)
         self.assertIn('<key>CFBundleDisplayName</key>', script)
@@ -19404,7 +19559,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("shouldIgnoreBargeInDuringGrace", model_source)
         self.assertIn("shouldStopSpeechForBargeIn", model_source)
         self.assertIn('"speech_barge_in"', model_source)
-        self.assertIn("Stopped current Jarvis speech because Leo started speaking.", model_source)
+        self.assertIn("Stopped current Jarvis speech because the user started speaking.", model_source)
         self.assertIn("client.stopSpeaking()", model_source)
         self.assertIn("clearSpeechPlaybackWindow()", model_source)
         self.assertIn('transcript: "wait stop for a second"', self_test_source)
@@ -19412,6 +19567,188 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("A tiny listener fragment must not stop Jarvis speech.", self_test_source)
         self.assertIn("Recognized Jarvis echo must not stop Jarvis speech.", self_test_source)
         self.assertIn("Captured wake command echo must not stop Jarvis speech.", self_test_source)
+
+    def _reset_speech_state_globals(self):
+        jarvis_tools.PIPER_WORKER_PLAYING_ID = None
+        jarvis_tools.PIPER_WORKER_ACTIVE_ID = None
+        jarvis_tools.SPEECH_PROCESS = None
+        jarvis_tools.SPEECH_PROCESS_REASON = None
+
+    def test_current_speech_state_tracks_real_piper_playback(self):
+        self.addCleanup(self._reset_speech_state_globals)
+        self._reset_speech_state_globals()
+
+        self.assertEqual(
+            jarvis_tools.current_speech_state(),
+            {"speaking": False, "speech_id": None, "source": None},
+        )
+
+        # `accepted` is job-accepted (pre-synthesis); barge-in must not arm on it.
+        jarvis_tools._record_piper_worker_event({"event": "accepted", "id": "s1", "chunks": 2})
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+        # `first_audio` is the real "audio is playing now" signal.
+        jarvis_tools._record_piper_worker_event({"event": "first_audio", "id": "s1"})
+        state = jarvis_tools.current_speech_state()
+        self.assertTrue(state["speaking"])
+        self.assertEqual(state["speech_id"], "s1")
+        self.assertEqual(state["source"], "piper_warm_worker")
+
+        jarvis_tools._record_piper_worker_event({"event": "done", "id": "s1", "chunks_played": 2})
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+        # A stopped (barge-in interrupted) job also clears the playing signal.
+        jarvis_tools._record_piper_worker_event({"event": "accepted", "id": "s2"})
+        jarvis_tools._record_piper_worker_event({"event": "first_audio", "id": "s2"})
+        self.assertTrue(jarvis_tools.current_speech_state()["speaking"])
+        jarvis_tools._record_piper_worker_event({"event": "stopped", "id": "s2", "chunks_played": 1})
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+    def test_current_speech_state_falls_back_to_live_fallback_process(self):
+        self.addCleanup(self._reset_speech_state_globals)
+        self._reset_speech_state_globals()
+
+        class _FakeLiveProcess:
+            def poll(self):
+                return None
+
+        # One-shot Piper / macOS `say` fallback path: no first_audio event, so the
+        # live playback process is the best available signal.
+        jarvis_tools.SPEECH_PROCESS = _FakeLiveProcess()
+        jarvis_tools.SPEECH_PROCESS_REASON = "reply"
+        state = jarvis_tools.current_speech_state()
+        self.assertTrue(state["speaking"])
+        self.assertIsNone(state["speech_id"])
+        self.assertEqual(state["source"], "speech_process")
+
+        # A warm-worker handle must NOT be counted through the fallback branch even
+        # while its poll() is live (accepted-but-pre-first-audio) — otherwise barge-in
+        # would arm before real audio, defeating the precise signal.
+        handle = jarvis_tools._PiperWorkerSpeechHandle("s3")
+        jarvis_tools.PIPER_WORKER_ACTIVE_ID = "s3"
+        jarvis_tools.SPEECH_PROCESS = handle
+        self.assertIsNone(handle.poll())
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+    def test_speech_playing_endpoint_returns_state_json(self):
+        self.addCleanup(self._reset_speech_state_globals)
+        self._reset_speech_state_globals()
+        server = JarvisServer()
+
+        idle = server.speech_playing()
+        self.assertEqual(idle, {"speaking": False, "speech_id": None, "source": None})
+
+        jarvis_tools._record_piper_worker_event({"event": "accepted", "id": "s9"})
+        jarvis_tools._record_piper_worker_event({"event": "first_audio", "id": "s9"})
+        playing = server.speech_playing()
+        self.assertTrue(playing["speaking"])
+        self.assertEqual(playing["speech_id"], "s9")
+
+    def test_speech_playing_endpoint_registered_loopback_guarded(self):
+        server_source = (PROJECT_ROOT / "jarvis" / "server.py").read_text(encoding="utf-8")
+        # New GET route, wired through the shared loopback/Host-guarded read handler.
+        self.assertIn('if route.path == "/api/speech/playing":', server_source)
+        self.assertIn("STATE.speech_playing()", server_source)
+        self.assertIn("current_speech_state", server_source)
+        self.assertIn('"GET /api/speech/playing"', server_source)
+        # The read handler rejects non-loopback Host headers before dispatching.
+        self.assertIn('"error": "Host header must be loopback"', server_source)
+
+    def test_swift_barge_in_gates_on_real_playback_signal(self):
+        client_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisClient" / "JarvisClient.swift"
+        ).read_text(encoding="utf-8")
+        responses_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisClient" / "JarvisResponses.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Models" / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("func speechPlaying() async throws -> SpeechPlayingResponse", client_source)
+        self.assertIn('["api", "speech", "playing"]', client_source)
+        self.assertIn("struct SpeechPlayingResponse", responses_source)
+        self.assertIn("let speaking: Bool", responses_source)
+        # Barge-in arms on the real signal (speaking) and disarms on notSpeaking,
+        # falling back to the char-length estimate only when the signal is unknown.
+        self.assertIn("func isSpeechBargeInWindowArmed(", model_source)
+        self.assertIn("speechPlaybackConfirmed", model_source)
+        self.assertIn("client.speechPlaying()", model_source)
+        self.assertIn("startSpeechPlaybackPolling()", model_source)
+
+    def test_swift_barge_in_captures_and_routes_next_command(self):
+        listener_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Support" / "JarvisWakeListener.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Models" / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("func beginBargeInCommandCapture(", listener_source)
+        self.assertIn("func stripLeadingBargeInStopPhrase(", listener_source)
+        self.assertIn("bargeInCommandWindow", listener_source)
+        self.assertIn('"barge_in_stop_only"', listener_source)
+        self.assertIn('"barge_in_window_timeout"', listener_source)
+        # The interruption re-enters the existing awaitingCommand path, no re-wake.
+        self.assertIn("phase = .awaitingCommand", listener_source)
+        self.assertIn("wakeListener.beginBargeInCommandCapture()", model_source)
+
+    def test_swift_implicit_barge_in_is_off_by_default(self):
+        # docs/VOICE_LOOP_AUDIT.md section 2d: implicit/substantial-utterance barge-in
+        # has no acoustic echo cancellation, only text-level matching against what
+        # Jarvis is currently saying -- an imperfectly transcribed echo of Jarvis's
+        # own voice could false-trigger a stop, potentially in a loop. That risk has
+        # never been measured against a real microphone, so this tier must default to
+        # off (a setting-gated opt-in) while explicit stop-words stay always-on.
+        model_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Models" / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'private static let implicitBargeInEnabledDefaultsKey = "JarvisImplicitBargeInEnabled"',
+            model_source,
+        )
+        # UserDefaults.standard.bool(forKey:) reads an absent key as false -- the gate
+        # must read that key directly (not e.g. register(defaults:) with true) so an
+        # unset default is off.
+        self.assertIn(
+            "UserDefaults.standard.bool(forKey: implicitBargeInEnabledDefaultsKey)",
+            model_source,
+        )
+        self.assertNotIn(
+            'UserDefaults.standard.register(defaults: ["JarvisImplicitBargeInEnabled": true]',
+            model_source,
+        )
+        # The gated 2-argument overload: explicit stop-words checked before the flag
+        # guard, so they remain always-on regardless of the setting.
+        self.assertIn(
+            "static func looksLikeIntentionalSpeechBargeIn(_ transcript: String, implicitBargeInEnabled: Bool) -> Bool {",
+            model_source,
+        )
+        explicit_check = model_source.index("if looksLikeExplicitSpeechBargeIn(transcript) {")
+        flag_guard = model_source.index("guard implicitBargeInEnabled else {")
+        self.assertLess(
+            explicit_check,
+            flag_guard,
+            "explicit stop-words must be checked before the implicit-tier flag guard",
+        )
+
+    def test_swift_self_test_exercises_implicit_barge_in_gate_behavior(self):
+        # Real behavioral coverage (not just source-text matching): the CLI self-test
+        # harness calls the pure 2-argument overload directly with an implicit-only
+        # phrase (no explicit stop-word) under both flag values, proving the gate
+        # actually suppresses/allows the substantial-utterance heuristic rather than
+        # just asserting the guard exists in source.
+        self_test_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Support" / "JarvisMenuBarSelfTest.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "JarvisShellModel.looksLikeIntentionalSpeechBargeIn(",
+            self_test_source,
+        )
+        self.assertIn("implicitBargeInEnabled: false", self_test_source)
+        self.assertIn("implicitBargeInEnabled: true", self_test_source)
 
     def test_swift_smoke_tests_cover_current_loop_regressions(self):
         model_source = (
@@ -19692,8 +20029,19 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("handleStatusHelperStopMusic", app_source)
         self.assertIn("model.stopMusic()", app_source)
         self.assertIn("MainAppNotification.stopMusic.name", app_source)
-        self.assertIn('case stopMusic = "local.leo.jarvis.statusHelper.stopMusic"', app_source)
-        self.assertIn('case stopMusic = "local.leo.jarvis.statusHelper.stopMusic"', helper_source)
+        # Notification names are now built at runtime: the enum case holds only the
+        # unprefixed suffix and `name` prepends Bundle.main.bundleIdentifier (falling back to
+        # the legacy local.leo.jarvis so the default build's names are unchanged). Both the
+        # main app and the separate status-helper process must share the identical pattern or
+        # their cross-process notifications stop matching under a rebranded BUNDLE_ID.
+        self.assertIn('case stopMusic = "statusHelper.stopMusic"', app_source)
+        self.assertIn('case stopMusic = "statusHelper.stopMusic"', helper_source)
+        self.assertNotIn('case stopMusic = "local.leo.jarvis.statusHelper.stopMusic"', app_source)
+        self.assertNotIn('case stopMusic = "local.leo.jarvis.statusHelper.stopMusic"', helper_source)
+        self.assertIn("Bundle.main.bundleIdentifier", app_source)
+        self.assertIn("Bundle.main.bundleIdentifier", helper_source)
+        self.assertIn('fallbackBundleIdentifier = "local.leo.jarvis"', app_source)
+        self.assertIn('fallbackBundleIdentifier = "local.leo.jarvis"', helper_source)
         self.assertNotIn("Jarvis sent the music stop command.", model_source)
         self.assertIn("Music stop sent", model_source)
         self.assertIn("Audio unmute sent", model_source)
@@ -21659,7 +22007,7 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("I cannot start Hey Jarvis yet", service_source)
         self.assertIn("let preflight = JarvisPermissionService.wakeStartPreflight()", model_source)
         self.assertIn("wakeDetailText = preflight.detail", model_source)
-        self.assertIn('recordWakeEvent("listener_start_blocked"', model_source)
+        self.assertIn('recordWakeEvent(isAutoStart ? "listener_autostart_blocked" : "listener_start_blocked"', model_source)
         self.assertIn('detail: "Wake not started"', model_source)
         self.assertLess(
             model_source.index("let preflight = JarvisPermissionService.wakeStartPreflight()"),
@@ -24051,10 +24399,22 @@ class RuntimeSurfaceTests(unittest.TestCase):
         system_prompt = jarvis_tools._fast_chat_messages("summarize that email")[0]["content"]
 
         self.assertIn("spoken aloud", system_prompt)
-        self.assertIn("Write replies in English unless Leo asks otherwise", system_prompt)
+        self.assertIn("Write replies in English unless the user asks otherwise", system_prompt)
         self.assertIn("necessary non-English names or titles", system_prompt)
         self.assertIn("explain the rest in English", system_prompt)
         self.assertIn("raw speech dictation", system_prompt)
+
+    def test_fast_chat_system_prompt_omits_user_name_by_default(self):
+        system_prompt = jarvis_tools._fast_chat_system_prompt(None)
+        self.assertNotIn("Leo", system_prompt)
+        self.assertIn("You are Jarvis, a local Mac assistant prototype.", system_prompt)
+
+    def test_fast_chat_system_prompt_uses_configured_user_name(self):
+        with patch.object(jarvis_tools, "USER_NAME", "Leo"):
+            system_prompt = jarvis_tools._fast_chat_system_prompt(None)
+        self.assertIn("You are Jarvis, Leo's local Mac assistant prototype.", system_prompt)
+        self.assertIn("Leo is the user's real name", system_prompt)
+        self.assertIn("Write replies in English unless Leo asks otherwise", system_prompt)
 
     def test_fast_chat_system_prompt_bans_internal_visible_sections(self):
         system_prompt = jarvis_tools._fast_chat_messages("summarize that email")[0]["content"]

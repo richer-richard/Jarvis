@@ -72,16 +72,41 @@ final class JarvisShellModel: ObservableObject {
     private var bargeInGraceUntil: Date?
     private var lastBargeInTranscript: String = ""
     private var lastBargeInAt: Date?
+    private var speechPlaybackPollTask: Task<Void, Never>?
+    private var speechPlaybackConfirmed: SpeechPlaybackPollState = .unknown
+    private var speechPlaybackObserved = false
+    private var speechPlaybackStartedAt: Date?
     private var browserStatusPinned = false
     var onSpeechMuteStateChanged: (() -> Void)?
     var onSpeechPlaybackMayStart: (() -> Void)?
     var onSpeechPlaybackLikelyStarted: (() -> Void)?
     private static let busyReplyText = "I am still finishing the current task. Send that again in a moment."
+    private static let wakeListenerEnabledDefaultsKey = "JarvisWakeListenerEnabled"
     private static let speechMuteStatusPollNanoseconds: UInt64 = 2_000_000_000
     private static let teamsVisibleReadRetryAttempts = 4
     private static let teamsVisibleReadRetryDelayNanoseconds: UInt64 = 1_600_000_000
     private static let speechBargeInGraceSeconds: TimeInterval = 3.5
     private static let speechBargeInMinimumTokenCount = 4
+    private static let speechPlaybackPollNanoseconds: UInt64 = 300_000_000
+    /// Grace right after a reply's playback window opens during which a backend
+    /// `speaking: false` poll is NOT treated as authoritative disarm — it gives
+    /// Piper's `first_audio` event time to arrive before an early explicit "stop"
+    /// would otherwise be dropped. Generous enough to cover typical first-chunk
+    /// synthesis latency without noticeably lagging a real early interruption.
+    static let speechPlaybackFirstAudioGraceSeconds: TimeInterval = 1.2
+    /// Hard ceiling on a single playback poll loop. Even if the backend keeps
+    /// reporting `speaking: true` forever (e.g. a hung worker), polling force-exits
+    /// after this long so the 300ms loop can never run unbounded.
+    static let speechPlaybackMaxPollingSeconds: TimeInterval = 60
+
+    /// Last observed answer from the backend `/api/speech/playing` real-audio signal.
+    /// `.unknown` when polling has not returned yet or the endpoint is unreachable, in
+    /// which case barge-in arming falls back to the char-length estimate.
+    enum SpeechPlaybackPollState {
+        case unknown
+        case speaking
+        case notSpeaking
+    }
     private static let smokeTestPrompts = [
         "hello Jarvis",
         "tell me a short joke",
@@ -206,6 +231,7 @@ final class JarvisShellModel: ObservableObject {
 
     func stopWorkerMonitoring() {
         stopSpeechMuteStatusSync()
+        clearSpeechPlaybackWindow()
         wakeListener.stop()
         codexActivityTask?.cancel()
         codexActivityTask = nil
@@ -216,28 +242,60 @@ final class JarvisShellModel: ObservableObject {
     func toggleWakeListener() {
         if isWakeListening {
             recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
+            setWakeListenerPreferenceEnabled(false)
             hideSummonSurface()
+            clearSpeechPlaybackWindow()
             wakeListener.stop()
         } else {
-            let preflight = JarvisPermissionService.wakeStartPreflight()
-            guard preflight.allowed else {
-                isWakeListening = false
-                wakeModeText = "Wake Off"
-                wakeDetailText = preflight.detail
-                recordWakeEvent("listener_start_blocked", detail: preflight.detail)
-                messages.append(ChatMessage(role: .jarvis, text: preflight.message, detail: "Wake not started"))
-                return
-            }
-            wakeDetailText = preflight.detail
-            recordWakeEvent("listener_start_requested", detail: wakeDetailText)
-            wakeListener.start()
+            startWakeListenerRespectingPreflight(persistPreference: true)
         }
     }
 
     func stopWakeListener() {
         recordWakeEvent("listener_stop_requested", detail: wakeDetailText)
+        setWakeListenerPreferenceEnabled(false)
         hideSummonSurface()
+        clearSpeechPlaybackWindow()
         wakeListener.stop()
+    }
+
+    /// Starts the wake listener at launch only when the user has previously opted in.
+    /// Never forces the microphone/speech permission prompt on a first-ever launch:
+    /// the preference defaults to unset, so this is a no-op until the user starts it once.
+    func autoStartWakeListenerIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: Self.wakeListenerEnabledDefaultsKey) else {
+            return
+        }
+        startWakeListenerRespectingPreflight(persistPreference: false, isAutoStart: true)
+    }
+
+    @discardableResult
+    private func startWakeListenerRespectingPreflight(
+        persistPreference: Bool,
+        isAutoStart: Bool = false
+    ) -> Bool {
+        let preflight = JarvisPermissionService.wakeStartPreflight()
+        guard preflight.allowed else {
+            isWakeListening = false
+            wakeModeText = "Wake Off"
+            wakeDetailText = preflight.detail
+            recordWakeEvent(isAutoStart ? "listener_autostart_blocked" : "listener_start_blocked", detail: preflight.detail)
+            if !isAutoStart {
+                messages.append(ChatMessage(role: .jarvis, text: preflight.message, detail: "Wake not started"))
+            }
+            return false
+        }
+        wakeDetailText = preflight.detail
+        recordWakeEvent(isAutoStart ? "listener_autostart_requested" : "listener_start_requested", detail: wakeDetailText)
+        if persistPreference {
+            setWakeListenerPreferenceEnabled(true)
+        }
+        wakeListener.start()
+        return true
+    }
+
+    private func setWakeListenerPreferenceEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.wakeListenerEnabledDefaultsKey)
     }
 
     func toggleSpeechMuted() {
@@ -671,7 +729,110 @@ final class JarvisShellModel: ObservableObject {
         }
         latestSpeechPreview = cleanText
         latestSpeechLikelyActiveUntil = Date().addingTimeInterval(Self.estimatedSpeechPlaybackSeconds(for: cleanText))
+        startSpeechPlaybackPolling()
         onSpeechPlaybackLikelyStarted?()
+    }
+
+    private func startSpeechPlaybackPolling() {
+        guard speechPlaybackPollTask == nil else {
+            return
+        }
+        speechPlaybackConfirmed = .unknown
+        speechPlaybackObserved = false
+        speechPlaybackStartedAt = Date()
+        speechPlaybackPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+                let keepPolling = await self.pollSpeechPlaybackOnce()
+                if !keepPolling {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: Self.speechPlaybackPollNanoseconds)
+            }
+        }
+    }
+
+    private func stopSpeechPlaybackPolling() {
+        speechPlaybackPollTask?.cancel()
+        speechPlaybackPollTask = nil
+        speechPlaybackConfirmed = .unknown
+        speechPlaybackObserved = false
+        speechPlaybackStartedAt = nil
+    }
+
+    /// Poll the backend real-playback signal once. Returns whether polling should
+    /// continue. Stops once the server confirms playback finished (after it started)
+    /// or the estimate window elapsed without playback ever being observed.
+    private func pollSpeechPlaybackOnce() async -> Bool {
+        guard latestSpeechLikelyActiveUntil != nil else {
+            return false
+        }
+        do {
+            let response = try await client.speechPlaying()
+            if response.speaking {
+                speechPlaybackConfirmed = .speaking
+                speechPlaybackObserved = true
+            } else {
+                speechPlaybackConfirmed = .notSpeaking
+            }
+        } catch {
+            speechPlaybackConfirmed = .unknown
+        }
+        let decision = Self.speechPlaybackPollDecision(
+            pollState: speechPlaybackConfirmed,
+            observed: speechPlaybackObserved,
+            estimatedActiveUntil: latestSpeechLikelyActiveUntil,
+            pollingStartedAt: speechPlaybackStartedAt,
+            maxPollingSeconds: Self.speechPlaybackMaxPollingSeconds,
+            now: Date()
+        )
+        switch decision {
+        case .keepPolling:
+            return true
+        case .stopAndClear:
+            // Every stop path resets the window and the poll task (via
+            // clearSpeechPlaybackWindow -> stopSpeechPlaybackPolling) so the
+            // next reply can start a fresh loop. Previously the
+            // estimate-elapsed-without-observation exit returned without
+            // clearing, permanently pinning speechPlaybackPollTask non-nil and
+            // silently blocking all later polling for the session.
+            clearSpeechPlaybackWindow()
+            return false
+        }
+    }
+
+    /// Pure decision for whether the playback poll loop should keep running.
+    /// Stops (and clears) once the window is gone, the server confirms playback
+    /// finished after it started, the estimate window elapsed without playback
+    /// ever being observed, or the hard total-duration ceiling is hit.
+    enum SpeechPlaybackPollDecision: Equatable {
+        case keepPolling
+        case stopAndClear
+    }
+
+    static func speechPlaybackPollDecision(
+        pollState: SpeechPlaybackPollState,
+        observed: Bool,
+        estimatedActiveUntil: Date?,
+        pollingStartedAt: Date?,
+        maxPollingSeconds: TimeInterval,
+        now: Date
+    ) -> SpeechPlaybackPollDecision {
+        guard let estimatedActiveUntil else {
+            return .stopAndClear
+        }
+        if let pollingStartedAt, now.timeIntervalSince(pollingStartedAt) >= maxPollingSeconds {
+            return .stopAndClear
+        }
+        if observed, pollState == .notSpeaking {
+            return .stopAndClear
+        }
+        if !observed, now >= estimatedActiveUntil {
+            return .stopAndClear
+        }
+        return .keepPolling
     }
 
     private func prepareEmergencySpeechControls() {
@@ -681,6 +842,7 @@ final class JarvisShellModel: ObservableObject {
     private func clearSpeechPlaybackWindow() {
         latestSpeechLikelyActiveUntil = nil
         latestSpeechPreview = ""
+        stopSpeechPlaybackPolling()
     }
 
     private func handleSpeechBargeInIfNeeded(transcript: String) {
@@ -688,7 +850,13 @@ final class JarvisShellModel: ObservableObject {
         guard !cleanTranscript.isEmpty else {
             return
         }
-        guard let activeUntil = latestSpeechLikelyActiveUntil, Date() < activeUntil else {
+        guard Self.isSpeechBargeInWindowArmed(
+            pollState: speechPlaybackConfirmed,
+            estimatedActiveUntil: latestSpeechLikelyActiveUntil,
+            speechStartedAt: speechPlaybackStartedAt,
+            graceInterval: Self.speechPlaybackFirstAudioGraceSeconds,
+            now: Date()
+        ) else {
             return
         }
         if Self.shouldIgnoreBargeInDuringGrace(
@@ -717,9 +885,12 @@ final class JarvisShellModel: ObservableObject {
         clearSpeechPlaybackWindow()
         recordWakeEvent(
             "speech_barge_in",
-            detail: "Stopped current Jarvis speech because Leo started speaking.",
+            detail: "Stopped current Jarvis speech because the user started speaking.",
             transcript: cleanTranscript
         )
+        // Capture-and-route: keep listening so the continuation of the interrupting
+        // utterance becomes the next command without a second "Hey Jarvis".
+        wakeListener.beginBargeInCommandCapture()
         Task { [client] in
             _ = try? await client.stopSpeaking()
         }
@@ -1170,6 +1341,82 @@ final class JarvisShellModel: ObservableObject {
             return 0
         }
         return min(24, max(2, Double(trimmed.count) / 14.0 + 1.2))
+    }
+
+    /// Gate for arming barge-in. The backend real-playback signal is authoritative:
+    /// `.speaking` arms (even past the char-length estimate, so a late interruption is
+    /// not ignored) and `.notSpeaking` disarms (so a stop after playback ended is not
+    /// mistaken for an interruption). Only when the signal is `.unknown` — no poll yet
+    /// or the endpoint is unreachable — does it fall back to the estimate window.
+    ///
+    /// Exception: within `graceInterval` of a reply's playback window opening, a
+    /// `.notSpeaking` poll is not yet authoritative — Piper's `first_audio` event may
+    /// not have arrived, so the backend transiently reports silence. During that grace
+    /// it falls back to the same estimate check as `.unknown`, so an early explicit
+    /// "stop" spoken before first audio still arms (and stops) instead of being dropped.
+    static func isSpeechBargeInWindowArmed(
+        pollState: SpeechPlaybackPollState,
+        estimatedActiveUntil: Date?,
+        speechStartedAt: Date?,
+        graceInterval: TimeInterval,
+        now: Date
+    ) -> Bool {
+        switch pollState {
+        case .speaking:
+            return true
+        case .notSpeaking:
+            if let speechStartedAt, now < speechStartedAt.addingTimeInterval(graceInterval) {
+                return isWithinEstimateWindow(estimatedActiveUntil: estimatedActiveUntil, now: now)
+            }
+            return false
+        case .unknown:
+            return isWithinEstimateWindow(estimatedActiveUntil: estimatedActiveUntil, now: now)
+        }
+    }
+
+    private static func isWithinEstimateWindow(estimatedActiveUntil: Date?, now: Date) -> Bool {
+        guard let estimatedActiveUntil else {
+            return false
+        }
+        return now < estimatedActiveUntil
+    }
+
+    static func testIsSpeechBargeInWindowArmed(
+        pollState: SpeechPlaybackPollState,
+        estimatedActiveSeconds: TimeInterval?,
+        speechStartedSecondsAgo: TimeInterval? = nil,
+        graceInterval: TimeInterval = speechPlaybackFirstAudioGraceSeconds
+    ) -> Bool {
+        let now = Date(timeIntervalSince1970: 1000)
+        let estimatedActiveUntil = estimatedActiveSeconds.map { now.addingTimeInterval($0) }
+        let speechStartedAt = speechStartedSecondsAgo.map { now.addingTimeInterval(-$0) }
+        return isSpeechBargeInWindowArmed(
+            pollState: pollState,
+            estimatedActiveUntil: estimatedActiveUntil,
+            speechStartedAt: speechStartedAt,
+            graceInterval: graceInterval,
+            now: now
+        )
+    }
+
+    static func testSpeechPlaybackPollDecision(
+        pollState: SpeechPlaybackPollState,
+        observed: Bool,
+        estimatedActiveSeconds: TimeInterval?,
+        pollingStartedSecondsAgo: TimeInterval?,
+        maxPollingSeconds: TimeInterval = speechPlaybackMaxPollingSeconds
+    ) -> SpeechPlaybackPollDecision {
+        let now = Date(timeIntervalSince1970: 1000)
+        let estimatedActiveUntil = estimatedActiveSeconds.map { now.addingTimeInterval($0) }
+        let pollingStartedAt = pollingStartedSecondsAgo.map { now.addingTimeInterval(-$0) }
+        return speechPlaybackPollDecision(
+            pollState: pollState,
+            observed: observed,
+            estimatedActiveUntil: estimatedActiveUntil,
+            pollingStartedAt: pollingStartedAt,
+            maxPollingSeconds: maxPollingSeconds,
+            now: now
+        )
     }
 
     private func schedulePostTurnRefresh() {
@@ -1770,7 +2017,7 @@ final class JarvisShellModel: ObservableObject {
             "- Speech Recognition: \(speech?.state ?? "Unknown"). \(speech?.detail ?? "No speech-recognition status available.")",
             "- Keyboard wake/focus: \(shortcut).",
             "- Typed wake simulation: available for Hey Jarvis, OK Jarvis, and Okay Jarvis.",
-            "- Experimental Hey Jarvis microphone listener: \(isWakeListening ? "running" : "available but off").",
+            "- Hey Jarvis microphone listener (Apple Speech; auto-resumes your last choice on launch, not yet verified against live mic audio): \(isWakeListening ? "running" : "off").",
             "- Speech-to-text command transcription: available through the experimental listener; dictated text is treated as punctuation-poor input.",
             "- TTS: \(isSpeechMuted ? "muted from the app menu" : "automatic final spoken replies are enabled for supported routes, and explicit local `speak ...` / `say out loud ...` commands still exist").",
             "This did not record audio, transcribe audio, or request new permissions.",
@@ -3127,13 +3374,39 @@ final class JarvisShellModel: ObservableObject {
         return !looksLikeExplicitSpeechBargeIn(transcript)
     }
 
+    /// Setting key for the implicit/substantial-utterance barge-in tier. Absent key
+    /// reads as `false` via `UserDefaults.standard.bool(forKey:)`, so this tier is
+    /// OFF by default -- see the doc comment on the 2-argument overload below for why.
+    private static let implicitBargeInEnabledDefaultsKey = "JarvisImplicitBargeInEnabled"
+
     private static func looksLikeIntentionalSpeechBargeIn(_ transcript: String) -> Bool {
+        looksLikeIntentionalSpeechBargeIn(
+            transcript,
+            implicitBargeInEnabled: UserDefaults.standard.bool(forKey: implicitBargeInEnabledDefaultsKey)
+        )
+    }
+
+    /// Explicit stop-words ("stop", "shut up", "be quiet", ...) always fire, at any
+    /// time. The broader "substantial new utterance" heuristic (≥4 tokens, ≥14 chars,
+    /// ≥3 content words) only fires when `implicitBargeInEnabled` is true, which
+    /// defaults to false. Per docs/VOICE_LOOP_AUDIT.md section 2d: this tier's only
+    /// echo suppression is text-level matching against what Jarvis is currently
+    /// saying (`looksLikeCurrentJarvisSpeechEcho`) -- there is no acoustic echo
+    /// cancellation, so an imperfectly transcribed echo of Jarvis's own TTS voice
+    /// could fail to text-match and falsely trigger a stop, potentially in a loop.
+    /// That risk has never been measured against a real microphone. Flip
+    /// `JarvisImplicitBargeInEnabled` in UserDefaults only after a real live-mic
+    /// session confirms self-echo does not false-trigger this path.
+    static func looksLikeIntentionalSpeechBargeIn(_ transcript: String, implicitBargeInEnabled: Bool) -> Bool {
         let normalized = normalizeSpeechCheckText(transcript)
         guard !normalized.isEmpty else {
             return false
         }
         if looksLikeExplicitSpeechBargeIn(transcript) {
             return true
+        }
+        guard implicitBargeInEnabled else {
+            return false
         }
         let tokens = normalized.split(separator: " ").map(String.init)
         guard tokens.count >= speechBargeInMinimumTokenCount, normalized.count >= 14 else {

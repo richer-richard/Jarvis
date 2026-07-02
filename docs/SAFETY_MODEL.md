@@ -78,6 +78,32 @@ Approved strong-confirmation list:
 - Running `sudo`, changing system/security/network/VPN/browser/shell/Git/Codex settings, or installing/uninstalling software.
 - Running destructive shell patterns such as `rm -rf`, broad `mv`, broad `chmod`, broad `chown`, disk formatting, keychain changes, or scripts piped from the internet.
 - Payments, purchases, subscriptions, or financial/account changes.
+- Delegating a coding task to Codex with **write access** to the project folder (see Codex Delegation Tiers).
+
+## Codex Delegation Tiers
+
+Jarvis delegates coding and project work to the OpenAI Codex CLI (`codex exec`) as a specialist
+tool. There are two tiers, distinguished by sandbox and risk level:
+
+- **Read-only delegation** — tools `codex.delegate` (synchronous) and `codex.job` (async). Built by
+  `codex_delegate_plan(...)` with `--sandbox read-only`. Codex can read files in the resolved project
+  folder and answer, but can never create, edit, or overwrite a file or run a state-changing command.
+  These stay at their existing low read-only classification, exactly as before.
+- **Write-capable delegation** — tools `codex.delegate_write` (synchronous) and `codex.job_write`
+  (async). Built by `codex_delegate_plan(..., write_capable=True)` with `--sandbox workspace-write`, so
+  Codex may create, edit, and overwrite files. This is a **Level 4** action and always requires typed
+  confirmation (`JARVIS APPROVE`), consistent with the other approved typed-confirmation categories
+  (running commands with real side effects, system/settings changes).
+
+Both tiers keep `--ask-for-approval never`: Jarvis's own typed-confirmation gate is the
+human-in-the-loop approval layer, not Codex's internal one (this matches the headless automation
+combination OpenAI's docs describe). Both tiers resolve the target directory through `_safe_root()`,
+which forces any path that escapes the Jarvis workspace root back to that root, so a write-capable run
+can only ever touch files inside the project folder. The safety classifier also flags natural-language
+phrasing that clearly asks Codex to make and save real changes ("have Codex fix this and save it",
+"let Codex actually implement this") as Level 4, so a normal read-only "ask Codex" question never
+silently gains write access. Write-capable delegation is enabled by default (the project owner
+pre-approved it) and can be turned off with `JARVIS_CODEX_WRITE_ENABLED=0`.
 
 ## Required Safeguards
 

@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis is a local-first macOS assistant for Leo's Mac. The target experience is:
+Jarvis is a local-first macOS voice assistant that runs on your own Mac. The target experience is:
 
 - Wake phrase: "Hey Jarvis"
 - Speech input after wake
@@ -64,6 +64,67 @@ Avoid:
 - Reading browser cookies.
 - Copying hidden auth tokens out of another app.
 - Building around private OpenAI endpoints.
+
+## Setup
+
+Jarvis runs a local Python worker (models, safety policy, tools) behind a
+SwiftPM menu-bar app. First-time setup:
+
+1. **Configure the environment file.** Copy the template and edit what you need:
+
+   ```bash
+   cp .env.example ~/.jarvis.env
+   ```
+
+   `~/.jarvis.env` is loaded automatically by the worker at startup. Every
+   setting has a sensible default, so you only need to uncomment the keys you
+   want to change. If you want the Groq cloud fast-model path, set `GROQ_API_KEY`
+   (create one at <https://console.groq.com/keys>); the out-of-the-box backends
+   are all local Ollama, so this key is optional.
+
+2. **Install Ollama and pull the local models.** The default fast and middle
+   models run on [Ollama](https://ollama.com):
+
+   ```bash
+   # install Ollama from https://ollama.com/download, then:
+   ollama pull qwen3:0.6b          # JARVIS_FAST_MODEL default
+   ollama pull gpt-oss:120b-cloud  # JARVIS_MIDDLE_MODEL default (Ollama cloud model)
+   ```
+
+   Set `JARVIS_FAST_MODEL` / `JARVIS_MIDDLE_MODEL` in `~/.jarvis.env` if you
+   prefer different models.
+
+3. **(Optional) Authenticate the Codex CLI for delegation features.** Jarvis can
+   delegate broader coding/project work to the official Codex CLI. Install it and
+   sign in with your ChatGPT Plus/Pro/Team account — this is an interactive
+   subscription sign-in, **not** an API key:
+
+   ```bash
+   codex login
+   ```
+
+   This is the sanctioned pattern described under *Important Open Question*
+   above: Jarvis relies on the Codex CLI's own sign-in and never scrapes ChatGPT
+   web sessions, reads browser cookies, or copies auth tokens out of another app.
+   Skip this step if you do not want Codex delegation.
+
+4. **(Optional) Install a Piper voice for neural TTS.** By default Jarvis speaks
+   with the built-in macOS `say` voice. To use Piper instead
+   (`JARVIS_TTS_PROVIDER=piper`), download the `en_US-ryan-high` Piper voice
+   (the `.onnx` model plus its matching `.onnx.json`) from the Piper voices
+   collection and place both files where the worker expects them:
+
+   ```bash
+   mkdir -p runtime/tts_models/piper
+   # place en_US-ryan-high.onnx and en_US-ryan-high.onnx.json in that folder
+   ```
+
+   The default model path is
+   `runtime/tts_models/piper/en_US-ryan-high.onnx` (override with
+   `JARVIS_TTS_PIPER_MODEL`). Piper also needs espeak-ng data at
+   `~/.jarvis/tts/piper/espeak-ng-data` (`JARVIS_TTS_PIPER_ESPEAK_DATA`).
+
+See `.env.example` for the full, commented list of settings.
 
 ## Docs
 
@@ -191,6 +252,14 @@ Run the menu-bar shell manually:
 swift run --package-path swift-shell jarvis-menu-bar
 ```
 
+> **Wake-word permissions need the packaged app.** `swift run … jarvis-menu-bar`
+> launches the shell without an `Info.plist`, so macOS microphone and speech-
+> recognition permission prompts for the "Hey Jarvis" wake word will silently
+> fail from this dev-run path. Only the packaged `.app` built by
+> `swift-shell/scripts/build_app_bundle.sh` (below) carries the
+> `NSMicrophoneUsageDescription` / `NSSpeechRecognitionUsageDescription` keys
+> that make wake-word microphone and speech permissions actually work.
+
 Build a local ad-hoc-signed app bundle:
 
 ```bash
@@ -202,7 +271,7 @@ output/Jarvis.app/Contents/MacOS/jarvis-menu-bar --permission-self-test
 
 The normal local app is always `output/Jarvis.app`. Use the same bundle for
 extra self-tests so macOS permissions, Dock identity, and status reports all
-refer to the app Leo actually opens:
+refer to the app you actually open:
 
 ```bash
 swift-shell/scripts/build_app_bundle.sh

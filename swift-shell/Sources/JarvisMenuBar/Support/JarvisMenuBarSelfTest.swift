@@ -239,6 +239,99 @@ enum JarvisMenuBarSelfTest {
         guard JarvisShellModel.testShouldIgnoreBargeInDuringGrace(transcript: "hello") else {
             throw SelfTestError.failed("Short wake-listener fragments should still be ignored inside the wake grace period.")
         }
+        // Implicit/substantial-utterance barge-in (no explicit stop-word) must be
+        // suppressed when the setting is off, and allowed when explicitly turned on --
+        // proves the gate itself works, not just that the setting exists in source.
+        guard !JarvisShellModel.looksLikeIntentionalSpeechBargeIn(
+            "the weather today is quite nice actually",
+            implicitBargeInEnabled: false
+        ) else {
+            throw SelfTestError.failed("Implicit barge-in must be suppressed while the setting is off.")
+        }
+        guard JarvisShellModel.looksLikeIntentionalSpeechBargeIn(
+            "the weather today is quite nice actually",
+            implicitBargeInEnabled: true
+        ) else {
+            throw SelfTestError.failed("Implicit barge-in should fire for a substantial utterance once explicitly enabled.")
+        }
+        guard JarvisShellModel.looksLikeIntentionalSpeechBargeIn(
+            "wait stop for a second",
+            implicitBargeInEnabled: false
+        ) else {
+            throw SelfTestError.failed("Explicit stop-words must fire regardless of the implicit-barge-in setting.")
+        }
+        // Fix 2 (review finding #10): notSpeaking within the first-audio grace still
+        // arms via the estimate fallback; after the grace it disarms as before.
+        guard JarvisShellModel.testIsSpeechBargeInWindowArmed(
+            pollState: .notSpeaking,
+            estimatedActiveSeconds: 5,
+            speechStartedSecondsAgo: 0.5
+        ) else {
+            throw SelfTestError.failed("Early stop within first-audio grace must keep barge-in armed.")
+        }
+        guard !JarvisShellModel.testIsSpeechBargeInWindowArmed(
+            pollState: .notSpeaking,
+            estimatedActiveSeconds: 5,
+            speechStartedSecondsAgo: 2.0
+        ) else {
+            throw SelfTestError.failed("After the grace window a notSpeaking poll must disarm barge-in.")
+        }
+        // Fix 3a (review finding #13): the hard ceiling terminates an
+        // always-speaking-true polling loop instead of running forever.
+        guard JarvisShellModel.testSpeechPlaybackPollDecision(
+            pollState: .speaking,
+            observed: true,
+            estimatedActiveSeconds: 9999,
+            pollingStartedSecondsAgo: 61
+        ) == .stopAndClear else {
+            throw SelfTestError.failed("Playback polling must force-exit past the hard ceiling.")
+        }
+        guard JarvisShellModel.testSpeechPlaybackPollDecision(
+            pollState: .speaking,
+            observed: true,
+            estimatedActiveSeconds: 9999,
+            pollingStartedSecondsAgo: 10
+        ) == .keepPolling else {
+            throw SelfTestError.failed("Playback polling must continue while under the ceiling and still speaking.")
+        }
+        // Fix 1 (review finding #5): estimate-elapsed-without-observation must clear
+        // the window so a later reply's polling can restart, not stay stuck forever.
+        guard JarvisShellModel.testSpeechPlaybackPollDecision(
+            pollState: .unknown,
+            observed: false,
+            estimatedActiveSeconds: -1,
+            pollingStartedSecondsAgo: 5
+        ) == .stopAndClear else {
+            throw SelfTestError.failed("Estimate-elapsed-without-observation must clear the window so polling can restart.")
+        }
+        // Fix (review finding #6): barge-in firing during a wake-listener restart
+        // gap must start a live session, not open a deaf capture window.
+        let bargeInRestartProbe = JarvisWakeListener()
+        let restartResult = bargeInRestartProbe.testBargeInFromRestartingStartsSession()
+        guard restartResult.enteredAwaiting, restartResult.pendingRestartCleared else {
+            throw SelfTestError.failed("Barge-in from a restarting listener must enter awaitingCommand with the pending restart cleared.")
+        }
+        // Fix (review finding #9): a recognition-issue recovery during an open
+        // barge-in window must not leak the window flag/timer into the next cycle.
+        let bargeInRecoveryProbe = JarvisWakeListener()
+        let recoveryResult = bargeInRecoveryProbe.testRecoveryClearsBargeInWindow()
+        guard !recoveryResult.windowActive, recoveryResult.windowTaskCleared else {
+            throw SelfTestError.failed("Recovering from a recognition issue must clear any open barge-in window.")
+        }
+        // Fix (Gemini Code Assist finding on PR #3): the hard 9s barge-in window
+        // timeout must not cut off a command that's still actively being spoken —
+        // it should defer (re-arm a short grace check) instead of discarding it.
+        let bargeInDeferProbe = JarvisWakeListener()
+        let deferResult = bargeInDeferProbe.testExpireBargeInWindowDefersWhileCaptureTaskActive()
+        guard deferResult.windowActive, deferResult.phase == "Awake", deferResult.rearmed else {
+            throw SelfTestError.failed("Barge-in window expiry must defer, not discard, while a command is still being actively debounced.")
+        }
+        // The deferral above must still be bounded: a stuck capture can't hold the
+        // window open forever once the hard ceiling has elapsed.
+        let bargeInCeilingProbe = JarvisWakeListener()
+        guard bargeInCeilingProbe.testExpireBargeInWindowHonorsHardCeilingDespiteActiveCapture() else {
+            throw SelfTestError.failed("Barge-in window must still close once the hard ceiling elapses, even with an active capture task.")
+        }
         guard JarvisShellModel.shouldUseNativeHotKeyStatus("hotkey status") else {
             throw SelfTestError.failed("Hotkey status should use the native Swift hotkey snapshot.")
         }

@@ -47,6 +47,9 @@ final class JarvisWakeListener {
     private static let commandRestartDelaySeconds: TimeInterval = 1.2
     private static let postCommandRestartDelaySeconds: TimeInterval = 4.0
     private static let recoveryRestartDelaySeconds: TimeInterval = 5.0
+    private static let bargeInCommandWindowSeconds: TimeInterval = 9.0
+    private static let bargeInCommandWindowGraceSeconds: TimeInterval = 2.0
+    private static let bargeInCommandWindowHardCeilingSeconds: TimeInterval = 20.0
 
     var onStateChange: ((JarvisWakeListenerSnapshot) -> Void)?
     var onWakeDetected: ((String) -> Void)?
@@ -80,6 +83,9 @@ final class JarvisWakeListener {
     private var shouldKeepRunning = false
     private var restartTask: Task<Void, Never>?
     private var captureTask: Task<Void, Never>?
+    private var bargeInWindowTask: Task<Void, Never>?
+    private var bargeInCommandWindow = false
+    private var bargeInCommandWindowArmedAt: Date?
     private var pendingCommand: String = ""
     private var recognitionGeneration = 0
     private var recentRestartTimes: [Date] = []
@@ -152,6 +158,10 @@ final class JarvisWakeListener {
         restartTask = nil
         captureTask?.cancel()
         captureTask = nil
+        bargeInWindowTask?.cancel()
+        bargeInWindowTask = nil
+        bargeInCommandWindow = false
+        bargeInCommandWindowArmedAt = nil
         pendingCommand = ""
         recentRestartTimes = []
         stopRecognitionSession()
@@ -345,6 +355,13 @@ final class JarvisWakeListener {
             }
             command = wake.command
         }
+        if bargeInCommandWindow {
+            command = Self.stripLeadingBargeInStopPhrase(command)
+            guard !command.isEmpty else {
+                onCommandIgnored?("barge_in_stop_only", transcript, "")
+                return
+            }
+        }
         guard !Self.isWakeGreetingEcho(command) else {
             onCommandIgnored?("wake_greeting_echo", transcript, command)
             return
@@ -371,6 +388,10 @@ final class JarvisWakeListener {
         }
         captureTask?.cancel()
         captureTask = nil
+        bargeInCommandWindow = false
+        bargeInCommandWindowArmedAt = nil
+        bargeInWindowTask?.cancel()
+        bargeInWindowTask = nil
         pendingCommand = ""
         status = "Command captured"
         phase = .restarting
@@ -432,6 +453,13 @@ final class JarvisWakeListener {
         restartTask = nil
         captureTask?.cancel()
         captureTask = nil
+        // Clear any open barge-in window too (mirroring stop()/expireBargeInCommandWindow()):
+        // leaking the flag/timer into the next wake cycle would apply stop-phrase stripping
+        // to an unrelated command and let a stale timeout abort a legitimate capture.
+        bargeInCommandWindow = false
+        bargeInCommandWindowArmedAt = nil
+        bargeInWindowTask?.cancel()
+        bargeInWindowTask = nil
         pendingCommand = ""
         stopRecognitionSession()
         phase = .restarting
@@ -439,8 +467,102 @@ final class JarvisWakeListener {
         publish()
         scheduleRestart(after: delay ?? Self.recoveryRestartDelaySeconds, countsTowardStability: false)
     }
+
+    /// Open a short conversation window after a barge-in so the continuation of the
+    /// interrupting utterance is transcribed and submitted as the next command with no
+    /// second "Hey Jarvis". Reuses the awaitingCommand path (same debounce and
+    /// onCommandCaptured -> submit flow), keeping the current live session so mid-flight
+    /// audio is not lost; a leading explicit stop-phrase is stripped in
+    /// handleCommandCandidate. Time-boxed and fails safe back to waitingForWake.
+    func beginBargeInCommandCapture(timeoutSeconds: TimeInterval = JarvisWakeListener.bargeInCommandWindowSeconds) {
+        guard shouldKeepRunning else {
+            return
+        }
+        // Don't clobber an in-flight wake command capture already under way.
+        guard phase == .waitingForWake || phase == .restarting else {
+            return
+        }
+        // `.waitingForWake` already has a live recognition session we can reuse in place.
+        // `.restarting` does not: the session was torn down and only a delayed `restartTask`
+        // is pending, so opening the window as-is would capture no audio until that task
+        // happens to fire, silently losing the interrupting utterance. Cancel the pending
+        // restart and bring a fresh session up now so a live session is guaranteed by the
+        // time we start listening, exactly as when entering from `.waitingForWake`.
+        let needsFreshSession = phase == .restarting
+        if needsFreshSession {
+            restartTask?.cancel()
+            restartTask = nil
+        }
+        bargeInCommandWindow = true
+        bargeInCommandWindowArmedAt = Date()
+        pendingCommand = ""
+        captureTask?.cancel()
+        captureTask = nil
+        phase = .awaitingCommand
+        status = "Listening for your command"
+        if needsFreshSession {
+            startRecognitionSession()
+        }
+        publish()
+        armBargeInWindowTimeout(timeoutSeconds)
+    }
+
+    private func armBargeInWindowTimeout(_ seconds: TimeInterval) {
+        bargeInWindowTask?.cancel()
+        bargeInWindowTask = Task { @MainActor [weak self] in
+            let nanoseconds = UInt64(max(0.5, seconds) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard let self, self.bargeInCommandWindow else {
+                return
+            }
+            self.expireBargeInCommandWindow()
+        }
+    }
+
+    /// True once the window has been open at least `bargeInCommandWindowHardCeilingSeconds`
+    /// since `beginBargeInCommandCapture` armed it. A missing timestamp (e.g. the window
+    /// was armed directly via `armBargeInWindowTimeout` rather than through
+    /// `beginBargeInCommandCapture`) fails closed — treated as already past the ceiling —
+    /// so the window still closes rather than looping indefinitely.
+    private func hasExceededBargeInCommandWindowHardCeiling() -> Bool {
+        guard let armedAt = bargeInCommandWindowArmedAt else {
+            return true
+        }
+        return Date().timeIntervalSince(armedAt) >= Self.bargeInCommandWindowHardCeilingSeconds
+    }
+
+    private func expireBargeInCommandWindow() {
+        guard shouldKeepRunning, phase == .awaitingCommand, bargeInCommandWindow else {
+            bargeInCommandWindow = false
+            bargeInWindowTask = nil
+            bargeInCommandWindowArmedAt = nil
+            return
+        }
+        // A command candidate is still actively being spoken/debounced (captureTask
+        // is renewed on every partial transcript and fires ~950ms after the last
+        // one). Cutting it off here would discard a legitimate long command. Defer
+        // expiry with a short re-check instead of disarming the safety timeout
+        // outright — the hard ceiling below still bounds how long this can extend.
+        if captureTask != nil, !hasExceededBargeInCommandWindowHardCeiling() {
+            armBargeInWindowTimeout(Self.bargeInCommandWindowGraceSeconds)
+            return
+        }
+        bargeInCommandWindow = false
+        bargeInWindowTask = nil
+        bargeInCommandWindowArmedAt = nil
+        pendingCommand = ""
+        captureTask?.cancel()
+        captureTask = nil
+        onCommandIgnored?("barge_in_window_timeout", lastTranscript, "")
+        stopRecognitionSession()
+        phase = .restarting
+        status = "Listening for Hey Jarvis"
+        publish()
+        scheduleRestart(after: Self.commandRestartDelaySeconds, countsTowardStability: false)
+    }
     #else
     private func stopRecognitionSession() {}
+    func beginBargeInCommandCapture(timeoutSeconds: TimeInterval = JarvisWakeListener.bargeInCommandWindowSeconds) {}
     #endif
 
     private func publish() {
@@ -496,6 +618,36 @@ final class JarvisWakeListener {
         cleanCommand(command)
     }
 
+    static func testStripLeadingBargeInStopPhrase(_ command: String) -> String {
+        stripLeadingBargeInStopPhrase(command)
+    }
+
+    /// Pure mirror of the barge-in branch of `handleCommandCandidate`: the command a
+    /// barge-in transcript would route as the next command, or nil if the window ends
+    /// with nothing to submit (bare stop-word, repeated wake, greeting echo, too short).
+    static func testBargeInRoutedCommand(_ transcript: String) -> String? {
+        var command = normalized(transcript)
+        let wake = detectWake(transcript)
+        if wake.detected {
+            if wake.command.isEmpty {
+                return nil
+            }
+            command = wake.command
+        }
+        command = stripLeadingBargeInStopPhrase(command)
+        if command.isEmpty {
+            return nil
+        }
+        if isWakeGreetingEcho(command) {
+            return nil
+        }
+        if command.count < 2 {
+            return nil
+        }
+        let cleaned = cleanCommand(command)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
     static func testRestartStormDecision(priorRestartAges: [TimeInterval], now: Date) -> (count: Int, shouldPause: Bool) {
         let priorRestartTimes = priorRestartAges.map { now.addingTimeInterval(-$0) }
         let decision = restartStormDecision(priorRestartTimes: priorRestartTimes, now: now)
@@ -546,6 +698,121 @@ final class JarvisWakeListener {
         stop()
         try? await Task.sleep(nanoseconds: 180_000_000)
         return snapshot
+    }
+
+    /// Barge-in opens the awaitingCommand conversation window in place (no re-wake).
+    func testBeginBargeInCommandCaptureEnters() -> Bool {
+        shouldKeepRunning = true
+        phase = .waitingForWake
+        status = "Test listener running"
+        beginBargeInCommandCapture(timeoutSeconds: 60)
+        let entered = phase == .awaitingCommand && bargeInCommandWindow
+        stop()
+        return entered
+    }
+
+    /// The barge-in window times out safely back out of awaitingCommand when nothing
+    /// is captured. Returns (windowStillActive, phaseLabelAfterExpiry).
+    func testExpireBargeInWindow() -> (windowActive: Bool, phase: String) {
+        shouldKeepRunning = true
+        phase = .awaitingCommand
+        bargeInCommandWindow = true
+        status = "Test listener running"
+        expireBargeInCommandWindow()
+        let result = (bargeInCommandWindow, phase.label)
+        stop()
+        return result
+    }
+
+    /// Gemini Code Assist finding on PR #3: the hard window timeout must not cut off a
+    /// command that's still actively being spoken. When `captureTask` is active (a partial
+    /// transcript arrived recently and is debouncing), expiry must defer rather than discard.
+    /// Returns (windowStillActiveAfterFirstExpiry, phaseAfterFirstExpiry, rearmedTimeoutTask).
+    func testExpireBargeInWindowDefersWhileCaptureTaskActive() -> (windowActive: Bool, phase: String, rearmed: Bool) {
+        shouldKeepRunning = true
+        phase = .awaitingCommand
+        bargeInCommandWindow = true
+        bargeInCommandWindowArmedAt = Date()
+        status = "Test listener running"
+        captureTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+        expireBargeInCommandWindow()
+        let result = (bargeInCommandWindow, phase.label, bargeInWindowTask != nil)
+        captureTask?.cancel()
+        captureTask = nil
+        stop()
+        return result
+    }
+
+    /// Even with an active `captureTask`, the hard ceiling must eventually win so a stuck
+    /// recognition session can't hold the window open forever. Returns whether the window
+    /// closed once `bargeInCommandWindowArmedAt` is already past the ceiling.
+    func testExpireBargeInWindowHonorsHardCeilingDespiteActiveCapture() -> Bool {
+        shouldKeepRunning = true
+        phase = .awaitingCommand
+        bargeInCommandWindow = true
+        bargeInCommandWindowArmedAt = Date().addingTimeInterval(-Self.bargeInCommandWindowHardCeilingSeconds - 1)
+        status = "Test listener running"
+        captureTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+        expireBargeInCommandWindow()
+        let closed = !bargeInCommandWindow && phase == .restarting
+        captureTask?.cancel()
+        captureTask = nil
+        stop()
+        return closed
+    }
+
+    /// End-to-end (headless) capture-and-route: a barge-in utterance that contains a
+    /// command reaches onCommandCaptured with the stop-phrase stripped.
+    func testBargeInCommandCaptureRoutesUtterance(_ transcript: String) async -> String? {
+        shouldKeepRunning = true
+        phase = .waitingForWake
+        status = "Test listener running"
+        var captured: String?
+        let previous = onCommandCaptured
+        onCommandCaptured = { command, _ in captured = command }
+        beginBargeInCommandCapture(timeoutSeconds: 60)
+        handleCommandCandidate(transcript)
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        onCommandCaptured = previous
+        stop()
+        return captured
+    }
+
+    /// Barge-in entered mid-restart (`.restarting`, no live session, a delayed restart
+    /// pending) must cancel that pending restart and bring a fresh recognition session up in
+    /// place, so the interrupting utterance is captured instead of the window opening deaf.
+    /// Returns (enteredAwaiting, sessionLive, pendingRestartCleared).
+    func testBargeInFromRestartingStartsSession() -> (enteredAwaiting: Bool, sessionLive: Bool, pendingRestartCleared: Bool) {
+        shouldKeepRunning = true
+        phase = .restarting
+        status = "Test listener resetting"
+        // Stand in for the delayed restart that is always pending during `.restarting`.
+        scheduleRestart(after: 30, countsTowardStability: false)
+        beginBargeInCommandCapture(timeoutSeconds: 60)
+        let enteredAwaiting = phase == .awaitingCommand && bargeInCommandWindow
+        let sessionLive = recognitionTask != nil
+        let pendingRestartCleared = restartTask == nil
+        stop()
+        return (enteredAwaiting, sessionLive, pendingRestartCleared)
+    }
+
+    /// A recognition hiccup while a barge-in window is open must not leak the window flag or
+    /// its pending timeout into the next wake cycle. Returns (windowActive, windowTaskCleared,
+    /// phaseLabel) after simulating a recovery during an open window.
+    func testRecoveryClearsBargeInWindow() -> (windowActive: Bool, windowTaskCleared: Bool, phase: String) {
+        shouldKeepRunning = true
+        phase = .awaitingCommand
+        bargeInCommandWindow = true
+        status = "Test listener running"
+        armBargeInWindowTimeout(60)
+        recoverAfterRecognitionIssue(status: "Simulated recognition hiccup")
+        let result = (bargeInCommandWindow, bargeInWindowTask == nil, phase.label)
+        stop()
+        return result
     }
 
     #if canImport(Speech)
@@ -711,6 +978,60 @@ final class JarvisWakeListener {
 
     private static func isWakeGreetingEcho(_ value: String) -> Bool {
         ["yes", "yes sir", "yes sir yes sir"].contains(normalized(value))
+    }
+
+    // Pure interruption filler: stripped both when bare and when leading a real command.
+    // Longer phrases first so "stop talking" is trimmed before the bare "stop". These words
+    // are rarely someone's intended command verb, so stripping them as a prefix is safe.
+    private static let bargeInStopPrefixes = [
+        "stop talking",
+        "shut up",
+        "be quiet",
+        "hold on",
+        "one second",
+        "stop",
+        "quiet",
+    ]
+
+    // Words that signal "stop" only when said entirely alone. As a leading prefix they are
+    // almost always part of a genuine command ("cancel my 4pm meeting", "pause the timer",
+    // "wait for the results"), so they are matched exact-only and never prefix-stripped.
+    private static let bargeInStopExactPhrases = [
+        "cancel",
+        "pause",
+        "wait",
+    ]
+
+    /// Trim a leading explicit stop-phrase from a normalized barge-in command. Filler words
+    /// in `bargeInStopPrefixes` ("stop", "quiet", "shut up", ...) are stripped both when bare
+    /// (a lone "stop" yields "" so the window ends with nothing submitted) and when they lead
+    /// a real command ("stop what's the weather" -> "what s the weather"), because they are
+    /// rarely a user's intended command verb. Words in `bargeInStopExactPhrases` ("cancel",
+    /// "pause", "wait") only end the window when said entirely alone; as a leading prefix they
+    /// are left untouched, since "cancel my 4pm meeting" is a real command far more often than
+    /// pure interruption filler and must not be mangled into "my 4pm meeting". Input is
+    /// expected already normalized.
+    static func stripLeadingBargeInStopPhrase(_ command: String) -> String {
+        var result = command.trimmingCharacters(in: .whitespaces)
+        var changed = true
+        while changed {
+            changed = false
+            if bargeInStopExactPhrases.contains(result) {
+                return ""
+            }
+            for phrase in bargeInStopPrefixes {
+                if result == phrase {
+                    return ""
+                }
+                let prefix = phrase + " "
+                if result.hasPrefix(prefix) {
+                    result = String(result.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                    changed = true
+                    break
+                }
+            }
+        }
+        return result
     }
 
     private static func phraseSimilarity(_ left: String, _ right: String) -> Double {

@@ -10,7 +10,7 @@ from .audit import AuditLogger, redact_sensitive_text
 from .config import host_allowed
 from .injection import scan_untrusted_text
 from .planner import Planner
-from .safety import classify_command, classify_shell_command
+from .safety import classify_codex_delegation, classify_command, classify_shell_command
 from .tools import system_status, tool_registry
 from .wake import detect_wake_command, score_wake_transcript
 
@@ -180,6 +180,24 @@ def run_self_checks() -> dict[str, Any]:
         and codex_result["result"]["selected_tool"] == "codex.job"
         and codex_result["result"]["execution_mode"] == "async",
     )
+    codex_read_only_delegation = classify_codex_delegation("ask Codex to review this project", write_capable=False)
+    add(
+        "codex_read_only_delegation_not_typed_confirmation",
+        not codex_read_only_delegation.requires_typed_confirmation and codex_read_only_delegation.risk_level < 4,
+        codex_read_only_delegation.to_dict(),
+    )
+    codex_write_delegation = classify_codex_delegation("ask Codex to review this project", write_capable=True)
+    add(
+        "codex_write_delegation_requires_typed_confirmation",
+        codex_write_delegation.risk_level == 4 and codex_write_delegation.requires_typed_confirmation,
+        codex_write_delegation.to_dict(),
+    )
+    codex_write_phrasing = classify_command("have Codex fix this bug and save the file")
+    add(
+        "codex_write_phrasing_requires_typed_confirmation",
+        codex_write_phrasing.risk_level == 4 and codex_write_phrasing.requires_typed_confirmation,
+        codex_write_phrasing.to_dict(),
+    )
 
     registry = tool_registry()
     tool_ids = {tool["id"] for tool in registry["tools"]}
@@ -252,6 +270,8 @@ def run_self_checks() -> dict[str, Any]:
         "codex.activity",
         "codex.delegate",
         "codex.job",
+        "codex.delegate_write",
+        "codex.job_write",
         "control.pause",
         "control.resume",
         "policy.pause",

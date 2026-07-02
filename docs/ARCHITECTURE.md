@@ -29,14 +29,28 @@ Responsibilities:
 
 ### 2. Wake Listener
 
-The wake listener should run locally and continuously.
+The wake listener runs locally and continuously. A real implementation exists in
+`swift-shell/Sources/JarvisMenuBar/Support/JarvisWakeListener.swift`: it uses
+Apple's on-device `SFSpeechRecognizer` + `AVAudioEngine` to detect "Hey Jarvis"
+(plus "OK/Okay Jarvis"), with fuzzy phrase matching and command extraction. It
+has had real bug-fix iteration — restart-storm protection, idempotent start,
+silent-session recovery, and barge-in handling. The user's enable/disable choice
+is persisted in `UserDefaults` (`JarvisWakeListenerEnabled`) and auto-resumes on
+launch once opted in; a first-ever launch does not auto-start, so the microphone
+and speech-recognition permission prompts are never forced before the user opts
+in at least once.
 
-Candidate approaches:
+Verification gap: the listener has only ever been exercised through synthetic
+transcript / TTS-file tests (`scripts/smoke_wake_threshold.py`,
+`scripts/physical_audio_preflight.py`, and the `--wake-*-self-test` binary
+flags). It has **not** been verified against a real human voice through a real
+microphone. Treat live-microphone wake reliability as an open, unverified item.
 
-- Apple Speech stack for simple prototypes.
+Other candidate approaches considered (not currently used):
+
 - Picovoice Porcupine for production-grade wake-word detection.
 - openWakeWord for a Python-friendly local wake-word path.
-- Push-to-talk mode for the first prototype.
+- Push-to-talk mode as a simpler fallback.
 
 Privacy rule: do not stream always-on room audio to a cloud service. Only the
 post-wake command audio should be transcribed.
@@ -179,6 +193,10 @@ Start with:
 
 That validates the core loop while avoiding the riskiest parts.
 
-Wake-word support should be worked on early, but not faked. The first prototype
-can document and simulate command entry while the actual local wake listener is
-built separately.
+Wake-word support was worked on early and not faked. Alongside the text-only
+`voice.wake_simulation` route (for transcript tests), a real local wake listener
+now ships in `JarvisWakeListener.swift` (Apple Speech, on-device). It persists
+the user's enable/disable choice and auto-resumes on launch once opted in. The
+one honest caveat is that it still has not been verified against live microphone
+audio — only synthetic transcript / TTS-file tests — so live-mic reliability
+remains an open item.

@@ -168,7 +168,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": ["query", "from_your_pick", "limit"],
         "entity_details": {
             "query": "Song title, artist, or phrase to search for. Leave empty when from_your_pick is true.",
-            "from_your_pick": "True when Leo asks to play something from Your Pick or recommended songs.",
+            "from_your_pick": "True when the user asks to play something from Your Pick or recommended songs.",
             "limit": "Optional number of candidates to search or choose from, default 10.",
         },
         "examples": [
@@ -186,7 +186,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "localos.music_recommendations",
-        "description": "Read Leo's Local OS Music Player Your Pick recommended songs snapshot. Use only when the user asks for Recommended Songs, Your Pick, music picks, or local music recommendations. Do not use this for a named song request.",
+        "description": "Read the user's Local OS Music Player Your Pick recommended songs snapshot. Use only when the user asks for Recommended Songs, Your Pick, music picks, or local music recommendations. Do not use this for a named song request.",
         "entities": ["limit"],
         "entity_details": {
             "limit": "Optional number of recommended songs to return, default 10.",
@@ -197,7 +197,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "localos.music_choose_from_your_pick",
-        "description": "Choose one song from Leo's Local OS Music Player Your Pick candidate list. Use when the user asks Jarvis to play, choose, recommend, or pick something from Your Pick without naming a specific song.",
+        "description": "Choose one song from the user's Local OS Music Player Your Pick candidate list. Use when the user asks Jarvis to play, choose, recommend, or pick something from Your Pick without naming a specific song.",
         "entities": ["limit", "preference"],
         "entity_details": {
             "limit": "Optional number of Your Pick candidates to show the choosing model, default 10.",
@@ -209,7 +209,7 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "localos.music_search",
-        "description": "Search Leo's full Local OS Music library snapshot by title, artist, filename, or group. Use for find/search/look up requests; use localos.music_play for actual play, queue, start, or listen requests.",
+        "description": "Search the user's full Local OS Music library snapshot by title, artist, filename, or group. Use for find/search/look up requests; use localos.music_play for actual play, queue, start, or listen requests.",
         "entities": ["query", "limit"],
         "entity_details": {
             "query": "Song title, artist, or phrase to search for. For 'play Waving Through A Window', query should be 'Waving Through A Window'.",
@@ -237,10 +237,10 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "calendar.today_schedule",
-        "description": "Read Leo's Calendar schedule for today or a provided date without creating, changing, accepting, or deleting events.",
+        "description": "Read the user's Calendar schedule for today or a provided date without creating, changing, accepting, or deleting events.",
         "entities": ["date_iso"],
         "entity_details": {
-            "date_iso": "Optional YYYY-MM-DD date. Leave empty for today in Leo's local timezone.",
+            "date_iso": "Optional YYYY-MM-DD date. Leave empty for today in the user's local timezone.",
         },
         "examples": [
             'Checking your calendar now. \\tool({"tool":"calendar.today_schedule","entities":{}})',
@@ -248,10 +248,10 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "models.test_plan",
-        "description": "Plan a safe model test without loading heavy models on this 16 GB Mac. Use when Leo asks Jarvis to test, try, compare, or benchmark an AI model.",
+        "description": "Plan a safe model test without loading heavy models on this 16 GB Mac. Use when the user asks Jarvis to test, try, compare, or benchmark an AI model.",
         "entities": ["model_name"],
         "entity_details": {
-            "model_name": "The model Leo named, such as Gemma 3 4B, GPT OSS 20B, Gemma4 E4B, or Qwen.",
+            "model_name": "The model the user named, such as Gemma 3 4B, GPT OSS 20B, Gemma4 E4B, or Qwen.",
         },
         "examples": [
             'Planning that model test now. \\tool({"tool":"models.test_plan","entities":{"model_name":"Gemma 3 4B"}})',
@@ -410,8 +410,8 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
         "entities": ["product_query", "target_currency", "source_country"],
         "entity_details": {
             "product_query": "Product name to price, such as Magic Keyboard. Keep the user's intended product name.",
-            "target_currency": "Currency to convert into. Use CNY when Leo says yuan or RMB.",
-            "source_country": "Country/store for the source price. Use US unless Leo specifies another country.",
+            "target_currency": "Currency to convert into. Use CNY when the user says yuan or RMB.",
+            "source_country": "Country/store for the source price. Use US unless the user specifies another country.",
         },
         "examples": [
             'Checking the price now. \\tool({"tool":"commerce.price_convert","entities":{"product_query":"Magic Keyboard","target_currency":"CNY","source_country":"US"}})',
@@ -585,17 +585,17 @@ NATURAL_LANGUAGE_TOOL_SPECS = [
     },
     {
         "tool": "contacts.lookup",
-        "description": "Look up a locally remembered contact alias, such as what Leo means by a teacher nickname. Does not read email content.",
+        "description": "Look up a locally remembered contact alias, such as what the user means by a teacher nickname. Does not read email content.",
         "entities": ["alias"],
     },
     {
         "tool": "contacts.remember",
-        "description": "Store a local contact alias Leo explicitly gives, such as 'remember Ms. Sharpay means Ms. Zhang'.",
+        "description": "Store a local contact alias the user explicitly gives, such as 'remember Ms. Sharpay means Ms. Zhang'.",
         "entities": ["alias", "display_name"],
     },
     {
         "tool": "contacts.infer",
-        "description": "Try to infer a contact alias from recent local Mail sender metadata without reading email bodies. Use when Leo asks who a sender alias probably is. Default scan_limit is 50 so live turns stay responsive.",
+        "description": "Try to infer a contact alias from recent local Mail sender metadata without reading email bodies. Use when the user asks who a sender alias probably is. Default scan_limit is 50 so live turns stay responsive.",
         "entities": ["alias", "scan_limit"],
     },
     {

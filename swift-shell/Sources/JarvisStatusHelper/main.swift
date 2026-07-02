@@ -82,12 +82,25 @@ struct JarvisStatusHelperApp {
             fputs("Jarvis status helper self-test failed: Control-click should open the emergency menu.\n", stderr)
             Foundation.exit(1)
         }
-        guard MainAppNotification.openPanel.rawValue == "local.leo.jarvis.statusHelper.openPanel",
-              MainAppNotification.runStatus.rawValue == "local.leo.jarvis.statusHelper.runStatus",
-              MainAppNotification.toggleWakeListener.rawValue == "local.leo.jarvis.statusHelper.toggleWakeListener",
-              MainAppNotification.stopMusic.rawValue == "local.leo.jarvis.statusHelper.stopMusic",
-              MainAppNotification.speechMuteChanged.rawValue == "local.leo.jarvis.statusHelper.speechMuteChanged",
-              MainAppNotification.quit.rawValue == "local.leo.jarvis.statusHelper.quit" else {
+        // Independent of Bundle.main: pin the fallback identifier to its literal
+        // value. The notification-name checks below cannot catch a drift in this
+        // constant because both operands derive from the same runtime value -- when
+        // Bundle.main.bundleIdentifier is nil (e.g. `swift run`) both sides resolve
+        // to this same fallback, so the prefix comparison is tautological. This
+        // literal assertion is the only part of the self-test that would fail if
+        // someone changed fallbackBundleIdentifier here (or in JarvisMenuBarApp's
+        // matching copy) and forgot to update the other.
+        guard MainAppNotification.fallbackBundleIdentifier == "local.leo.jarvis" else {
+            fputs("Jarvis status helper self-test failed: fallback bundle identifier drifted from local.leo.jarvis; JarvisMenuBarApp.swift's matching copy must be kept in sync.\n", stderr)
+            Foundation.exit(1)
+        }
+        let notificationPrefix = Bundle.main.bundleIdentifier ?? MainAppNotification.fallbackBundleIdentifier
+        guard MainAppNotification.openPanel.name.rawValue == "\(notificationPrefix).statusHelper.openPanel",
+              MainAppNotification.runStatus.name.rawValue == "\(notificationPrefix).statusHelper.runStatus",
+              MainAppNotification.toggleWakeListener.name.rawValue == "\(notificationPrefix).statusHelper.toggleWakeListener",
+              MainAppNotification.stopMusic.name.rawValue == "\(notificationPrefix).statusHelper.stopMusic",
+              MainAppNotification.speechMuteChanged.name.rawValue == "\(notificationPrefix).statusHelper.speechMuteChanged",
+              MainAppNotification.quit.name.rawValue == "\(notificationPrefix).statusHelper.quit" else {
             fputs("Jarvis status helper self-test failed: notification names changed.\n", stderr)
             Foundation.exit(1)
         }
@@ -119,9 +132,29 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.warnIfBundleIdentityCannotRouteNotifications()
         configureStatusItem()
         refreshSpeechMuteTitle()
         startParentMonitor()
+    }
+
+    // Real-world (not --self-test) sanity check for the invariant documented on
+    // MainAppNotification: this helper must run from inside the main app's
+    // Contents/MacOS/ so Bundle.main resolves to that .app and reports its
+    // CFBundleIdentifier. If we are bundled in an .app yet have no bundle
+    // identifier, every cross-process notification silently falls back to
+    // `local.leo.jarvis` and may not match a rebranded main app -- surface that
+    // here instead of failing invisibly.
+    private static func warnIfBundleIdentityCannotRouteNotifications() {
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            return
+        }
+        if Bundle.main.bundleIdentifier == nil {
+            fputs(
+                "Jarvis status helper warning: running from an .app bundle but Bundle.main.bundleIdentifier is nil; cross-process notifications will fall back to \(MainAppNotification.fallbackBundleIdentifier) and may not reach the main app.\n",
+                stderr
+            )
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -386,14 +419,45 @@ final class JarvisStatusHelperDelegate: NSObject, NSApplicationDelegate, NSMenuD
 }
 
 private enum MainAppNotification: String {
-    case openPanel = "local.leo.jarvis.statusHelper.openPanel"
-    case runStatus = "local.leo.jarvis.statusHelper.runStatus"
-    case toggleWakeListener = "local.leo.jarvis.statusHelper.toggleWakeListener"
-    case stopMusic = "local.leo.jarvis.statusHelper.stopMusic"
-    case speechMuteChanged = "local.leo.jarvis.statusHelper.speechMuteChanged"
-    case quit = "local.leo.jarvis.statusHelper.quit"
+    case openPanel = "statusHelper.openPanel"
+    case runStatus = "statusHelper.runStatus"
+    case toggleWakeListener = "statusHelper.toggleWakeListener"
+    case stopMusic = "statusHelper.stopMusic"
+    case speechMuteChanged = "statusHelper.speechMuteChanged"
+    case quit = "statusHelper.quit"
+
+    // SYNC WITH: JarvisMenuBar/App/JarvisMenuBarApp.swift, which keeps its OWN
+    // identical copy of this enum. The main app and this status helper are two
+    // separate executable targets, so neither can import the other's private
+    // enum -- the duplication is deliberate. The two copies MUST stay identical:
+    // same case rawValues, same `fallbackBundleIdentifier` literal, and same
+    // `name` computation. If they diverge, the two processes derive different
+    // DistributedNotificationCenter names and silently stop talking to each
+    // other. Nothing verifies this match across the process boundary at build or
+    // run time (the --self-test above only checks this process's internal
+    // self-consistency plus the pinned fallback literal), so any edit here MUST
+    // be mirrored by hand in JarvisMenuBarApp.swift's copy, and vice versa.
+    //
+    // Keep the legacy bundle id as the fallback so `swift run` (no bundle, nil
+    // bundleIdentifier) and the default `local.leo.jarvis` build produce the exact
+    // same notification names as before, while a rebranded BUNDLE_ID keeps the main
+    // app and this separate status-helper process routed to matching names.
+    //
+    // IMPORTANT: this only works because this helper binary is launched from
+    // inside the app bundle's own Contents/MacOS/ (see build_app_bundle.sh and
+    // JarvisMenuBarApp.swift's startStatusHelper()), which makes `Bundle.main`
+    // here resolve to the ENCLOSING .app and report the app's own
+    // CFBundleIdentifier. If this helper is ever moved elsewhere (its own
+    // Contents/Helpers/ location, its own Info.plist, an XPC service, etc.),
+    // `Bundle.main.bundleIdentifier` here would silently stop matching the main
+    // app's, and every cross-process notification below would silently stop
+    // firing -- with no compile error and no test catching it (the --self-test
+    // below only checks internal self-consistency, not a match against the
+    // running main app). Keep this helper inside the main app's Contents/MacOS/.
+    fileprivate static let fallbackBundleIdentifier = "local.leo.jarvis"
 
     var name: Notification.Name {
-        Notification.Name(rawValue)
+        let prefix = Bundle.main.bundleIdentifier ?? Self.fallbackBundleIdentifier
+        return Notification.Name("\(prefix).\(rawValue)")
     }
 }
