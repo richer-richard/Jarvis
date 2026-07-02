@@ -168,6 +168,11 @@ PIPER_WORKER_LOAD_SECONDS: float | None = None
 PIPER_WORKER_STARTED_AT: float | None = None
 PIPER_WORKER_LAST_EVENT: dict[str, Any] | None = None
 PIPER_WORKER_ACTIVE_ID: str | None = None
+# Real "audio is playing right now" signal: set when the worker emits `first_audio`
+# and cleared on `done`/`stopped`/`error`. Distinct from PIPER_WORKER_ACTIVE_ID,
+# which flips true at `accepted` (before synthesis) — barge-in needs the tighter
+# playback-started signal so it neither arms before sound nor disarms mid-utterance.
+PIPER_WORKER_PLAYING_ID: str | None = None
 PIPER_WORKER_SPEECH_EVENTS: dict[str, dict[str, Any]] = {}
 PIPER_WORKER_EVENT_LOG: list[dict[str, Any]] = []
 PIPER_WORKER_EVENT_LOG_LIMIT = 30
@@ -2129,7 +2134,8 @@ class _PiperWorkerSpeechHandle:
 
 
 def _record_piper_worker_event(event: dict[str, Any]) -> None:
-    global PIPER_WORKER_READY, PIPER_WORKER_LOAD_SECONDS, PIPER_WORKER_LAST_EVENT, PIPER_WORKER_ACTIVE_ID
+    global PIPER_WORKER_READY, PIPER_WORKER_LOAD_SECONDS, PIPER_WORKER_LAST_EVENT
+    global PIPER_WORKER_ACTIVE_ID, PIPER_WORKER_PLAYING_ID
     event_name = str(event.get("event") or "")
     speech_id = str(event.get("id") or "")
     with PIPER_WORKER_LOCK:
@@ -2147,17 +2153,24 @@ def _record_piper_worker_event(event: dict[str, Any]) -> None:
                 PIPER_WORKER_LOAD_SECONDS = None
         elif event_name == "accepted" and speech_id:
             PIPER_WORKER_ACTIVE_ID = speech_id
+        elif event_name == "first_audio" and speech_id:
+            PIPER_WORKER_PLAYING_ID = speech_id
         elif event_name in {"done", "stopped", "error"} and speech_id:
             PIPER_WORKER_SPEECH_EVENTS[speech_id] = event
             if PIPER_WORKER_ACTIVE_ID == speech_id:
                 PIPER_WORKER_ACTIVE_ID = None
+            if PIPER_WORKER_PLAYING_ID == speech_id:
+                PIPER_WORKER_PLAYING_ID = None
         elif event_name == "stop_ack" and event.get("stopped"):
             PIPER_WORKER_SPEECH_EVENTS[speech_id] = event
             if not speech_id or PIPER_WORKER_ACTIVE_ID == speech_id:
                 PIPER_WORKER_ACTIVE_ID = None
+            if not speech_id or PIPER_WORKER_PLAYING_ID == speech_id:
+                PIPER_WORKER_PLAYING_ID = None
         elif event_name == "fatal":
             PIPER_WORKER_READY = False
             PIPER_WORKER_ACTIVE_ID = None
+            PIPER_WORKER_PLAYING_ID = None
 
 
 def _read_piper_worker_stdout(process: subprocess.Popen[str]) -> None:
@@ -2176,11 +2189,12 @@ def _read_piper_worker_stdout(process: subprocess.Popen[str]) -> None:
             if isinstance(event, dict):
                 _record_piper_worker_event(event)
     finally:
-        global PIPER_WORKER_PROCESS, PIPER_WORKER_READY, PIPER_WORKER_ACTIVE_ID
+        global PIPER_WORKER_PROCESS, PIPER_WORKER_READY, PIPER_WORKER_ACTIVE_ID, PIPER_WORKER_PLAYING_ID
         with PIPER_WORKER_LOCK:
             if PIPER_WORKER_PROCESS is process:
                 PIPER_WORKER_READY = False
                 PIPER_WORKER_ACTIVE_ID = None
+                PIPER_WORKER_PLAYING_ID = None
 
 
 def _ensure_piper_worker_locked(readiness: dict[str, Any], *, wait_ready: bool = False) -> dict[str, Any]:
@@ -2274,6 +2288,35 @@ def _piper_worker_status() -> dict[str, Any]:
         }
 
 
+def current_speech_state() -> dict[str, Any]:
+    """Real 'is Jarvis speaking right now' signal for barge-in arming.
+
+    Reports True once the warm worker emits `first_audio` (audio actually started)
+    and stays True until `done`/`stopped`, so the Swift barge-in window opens and
+    closes on real playback rather than the char-length timer estimate. When the
+    one-shot Piper or macOS `say` fallback is the active path (no `first_audio`
+    event), it falls back to the live playback process instead.
+    """
+    with PIPER_WORKER_LOCK:
+        playing_id = PIPER_WORKER_PLAYING_ID
+    if playing_id:
+        return {"speaking": True, "speech_id": playing_id, "source": "piper_warm_worker"}
+    with SPEECH_LOCK:
+        process = SPEECH_PROCESS
+        # Warm-worker playback is represented by a _PiperWorkerSpeechHandle whose
+        # poll() goes live at `accepted` (before audio); ignore it here so the
+        # precise first_audio signal above stays authoritative for that path.
+        fallback_active = (
+            process is not None
+            and not isinstance(process, _PiperWorkerSpeechHandle)
+            and getattr(process, "poll", lambda: 0)() is None
+        )
+        reason = SPEECH_PROCESS_REASON if fallback_active else None
+    if fallback_active:
+        return {"speaking": True, "speech_id": None, "source": "speech_process", "reason": reason}
+    return {"speaking": False, "speech_id": None, "source": None}
+
+
 def prewarm_tts_async(*, reason: str = "startup") -> dict[str, Any]:
     if not TTS_AUTOMATIC_ENABLED or _normalize_tts_provider(TTS_PROVIDER) != "piper":
         return {"started": False, "status": "not_needed", "reason": reason}
@@ -2336,7 +2379,7 @@ def _stop_active_speech_locked(timeout_seconds: float = 0.45) -> dict[str, Any]:
 
 def _stop_piper_worker_audio_locked() -> dict[str, Any]:
     """Best-effort stop for warm-worker audio, even if the parent handle is stale."""
-    global PIPER_WORKER_PROCESS, PIPER_WORKER_READY, PIPER_WORKER_ACTIVE_ID
+    global PIPER_WORKER_PROCESS, PIPER_WORKER_READY, PIPER_WORKER_ACTIVE_ID, PIPER_WORKER_PLAYING_ID
     with PIPER_WORKER_LOCK:
         process = PIPER_WORKER_PROCESS
         running = process is not None and process.poll() is None
@@ -2348,6 +2391,8 @@ def _stop_piper_worker_audio_locked() -> dict[str, Any]:
         with PIPER_WORKER_LOCK:
             if active_id is None or PIPER_WORKER_ACTIVE_ID == active_id:
                 PIPER_WORKER_ACTIVE_ID = None
+            if active_id is None or PIPER_WORKER_PLAYING_ID == active_id:
+                PIPER_WORKER_PLAYING_ID = None
         return {
             "piper_worker_running": True,
             "piper_worker_stop_sent": True,
@@ -2382,6 +2427,8 @@ def _stop_piper_worker_audio_locked() -> dict[str, Any]:
                 PIPER_WORKER_READY = False
             if active_id is None or PIPER_WORKER_ACTIVE_ID == active_id:
                 PIPER_WORKER_ACTIVE_ID = None
+            if active_id is None or PIPER_WORKER_PLAYING_ID == active_id:
+                PIPER_WORKER_PLAYING_ID = None
     return status
 
 

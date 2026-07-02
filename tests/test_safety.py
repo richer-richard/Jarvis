@@ -18927,6 +18927,131 @@ class RuntimeSurfaceTests(unittest.TestCase):
         self.assertIn("Recognized Jarvis echo must not stop Jarvis speech.", self_test_source)
         self.assertIn("Captured wake command echo must not stop Jarvis speech.", self_test_source)
 
+    def _reset_speech_state_globals(self):
+        jarvis_tools.PIPER_WORKER_PLAYING_ID = None
+        jarvis_tools.PIPER_WORKER_ACTIVE_ID = None
+        jarvis_tools.SPEECH_PROCESS = None
+        jarvis_tools.SPEECH_PROCESS_REASON = None
+
+    def test_current_speech_state_tracks_real_piper_playback(self):
+        self.addCleanup(self._reset_speech_state_globals)
+        self._reset_speech_state_globals()
+
+        self.assertEqual(
+            jarvis_tools.current_speech_state(),
+            {"speaking": False, "speech_id": None, "source": None},
+        )
+
+        # `accepted` is job-accepted (pre-synthesis); barge-in must not arm on it.
+        jarvis_tools._record_piper_worker_event({"event": "accepted", "id": "s1", "chunks": 2})
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+        # `first_audio` is the real "audio is playing now" signal.
+        jarvis_tools._record_piper_worker_event({"event": "first_audio", "id": "s1"})
+        state = jarvis_tools.current_speech_state()
+        self.assertTrue(state["speaking"])
+        self.assertEqual(state["speech_id"], "s1")
+        self.assertEqual(state["source"], "piper_warm_worker")
+
+        jarvis_tools._record_piper_worker_event({"event": "done", "id": "s1", "chunks_played": 2})
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+        # A stopped (barge-in interrupted) job also clears the playing signal.
+        jarvis_tools._record_piper_worker_event({"event": "accepted", "id": "s2"})
+        jarvis_tools._record_piper_worker_event({"event": "first_audio", "id": "s2"})
+        self.assertTrue(jarvis_tools.current_speech_state()["speaking"])
+        jarvis_tools._record_piper_worker_event({"event": "stopped", "id": "s2", "chunks_played": 1})
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+    def test_current_speech_state_falls_back_to_live_fallback_process(self):
+        self.addCleanup(self._reset_speech_state_globals)
+        self._reset_speech_state_globals()
+
+        class _FakeLiveProcess:
+            def poll(self):
+                return None
+
+        # One-shot Piper / macOS `say` fallback path: no first_audio event, so the
+        # live playback process is the best available signal.
+        jarvis_tools.SPEECH_PROCESS = _FakeLiveProcess()
+        jarvis_tools.SPEECH_PROCESS_REASON = "reply"
+        state = jarvis_tools.current_speech_state()
+        self.assertTrue(state["speaking"])
+        self.assertIsNone(state["speech_id"])
+        self.assertEqual(state["source"], "speech_process")
+
+        # A warm-worker handle must NOT be counted through the fallback branch even
+        # while its poll() is live (accepted-but-pre-first-audio) — otherwise barge-in
+        # would arm before real audio, defeating the precise signal.
+        handle = jarvis_tools._PiperWorkerSpeechHandle("s3")
+        jarvis_tools.PIPER_WORKER_ACTIVE_ID = "s3"
+        jarvis_tools.SPEECH_PROCESS = handle
+        self.assertIsNone(handle.poll())
+        self.assertFalse(jarvis_tools.current_speech_state()["speaking"])
+
+    def test_speech_playing_endpoint_returns_state_json(self):
+        self.addCleanup(self._reset_speech_state_globals)
+        self._reset_speech_state_globals()
+        server = JarvisServer()
+
+        idle = server.speech_playing()
+        self.assertEqual(idle, {"speaking": False, "speech_id": None, "source": None})
+
+        jarvis_tools._record_piper_worker_event({"event": "accepted", "id": "s9"})
+        jarvis_tools._record_piper_worker_event({"event": "first_audio", "id": "s9"})
+        playing = server.speech_playing()
+        self.assertTrue(playing["speaking"])
+        self.assertEqual(playing["speech_id"], "s9")
+
+    def test_speech_playing_endpoint_registered_loopback_guarded(self):
+        server_source = (PROJECT_ROOT / "jarvis" / "server.py").read_text(encoding="utf-8")
+        # New GET route, wired through the shared loopback/Host-guarded read handler.
+        self.assertIn('if route.path == "/api/speech/playing":', server_source)
+        self.assertIn("STATE.speech_playing()", server_source)
+        self.assertIn("current_speech_state", server_source)
+        self.assertIn('"GET /api/speech/playing"', server_source)
+        # The read handler rejects non-loopback Host headers before dispatching.
+        self.assertIn('"error": "Host header must be loopback"', server_source)
+
+    def test_swift_barge_in_gates_on_real_playback_signal(self):
+        client_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisClient" / "JarvisClient.swift"
+        ).read_text(encoding="utf-8")
+        responses_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisClient" / "JarvisResponses.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Models" / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("func speechPlaying() async throws -> SpeechPlayingResponse", client_source)
+        self.assertIn('["api", "speech", "playing"]', client_source)
+        self.assertIn("struct SpeechPlayingResponse", responses_source)
+        self.assertIn("let speaking: Bool", responses_source)
+        # Barge-in arms on the real signal (speaking) and disarms on notSpeaking,
+        # falling back to the char-length estimate only when the signal is unknown.
+        self.assertIn("func isSpeechBargeInWindowArmed(", model_source)
+        self.assertIn("speechPlaybackConfirmed", model_source)
+        self.assertIn("client.speechPlaying()", model_source)
+        self.assertIn("startSpeechPlaybackPolling()", model_source)
+
+    def test_swift_barge_in_captures_and_routes_next_command(self):
+        listener_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Support" / "JarvisWakeListener.swift"
+        ).read_text(encoding="utf-8")
+        model_source = (
+            PROJECT_ROOT / "swift-shell" / "Sources" / "JarvisMenuBar" / "Models" / "JarvisShellModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("func beginBargeInCommandCapture(", listener_source)
+        self.assertIn("func stripLeadingBargeInStopPhrase(", listener_source)
+        self.assertIn("bargeInCommandWindow", listener_source)
+        self.assertIn('"barge_in_stop_only"', listener_source)
+        self.assertIn('"barge_in_window_timeout"', listener_source)
+        # The interruption re-enters the existing awaitingCommand path, no re-wake.
+        self.assertIn("phase = .awaitingCommand", listener_source)
+        self.assertIn("wakeListener.beginBargeInCommandCapture()", model_source)
+
     def test_swift_smoke_tests_cover_current_loop_regressions(self):
         model_source = (
             PROJECT_ROOT

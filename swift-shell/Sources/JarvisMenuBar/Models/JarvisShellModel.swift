@@ -72,6 +72,9 @@ final class JarvisShellModel: ObservableObject {
     private var bargeInGraceUntil: Date?
     private var lastBargeInTranscript: String = ""
     private var lastBargeInAt: Date?
+    private var speechPlaybackPollTask: Task<Void, Never>?
+    private var speechPlaybackConfirmed: SpeechPlaybackPollState = .unknown
+    private var speechPlaybackObserved = false
     private var browserStatusPinned = false
     var onSpeechMuteStateChanged: (() -> Void)?
     var onSpeechPlaybackMayStart: (() -> Void)?
@@ -83,6 +86,16 @@ final class JarvisShellModel: ObservableObject {
     private static let teamsVisibleReadRetryDelayNanoseconds: UInt64 = 1_600_000_000
     private static let speechBargeInGraceSeconds: TimeInterval = 3.5
     private static let speechBargeInMinimumTokenCount = 4
+    private static let speechPlaybackPollNanoseconds: UInt64 = 300_000_000
+
+    /// Last observed answer from the backend `/api/speech/playing` real-audio signal.
+    /// `.unknown` when polling has not returned yet or the endpoint is unreachable, in
+    /// which case barge-in arming falls back to the char-length estimate.
+    enum SpeechPlaybackPollState {
+        case unknown
+        case speaking
+        case notSpeaking
+    }
     private static let smokeTestPrompts = [
         "hello Jarvis",
         "tell me a short joke",
@@ -702,7 +715,63 @@ final class JarvisShellModel: ObservableObject {
         }
         latestSpeechPreview = cleanText
         latestSpeechLikelyActiveUntil = Date().addingTimeInterval(Self.estimatedSpeechPlaybackSeconds(for: cleanText))
+        startSpeechPlaybackPolling()
         onSpeechPlaybackLikelyStarted?()
+    }
+
+    private func startSpeechPlaybackPolling() {
+        guard speechPlaybackPollTask == nil else {
+            return
+        }
+        speechPlaybackConfirmed = .unknown
+        speechPlaybackObserved = false
+        speechPlaybackPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+                let keepPolling = await self.pollSpeechPlaybackOnce()
+                if !keepPolling {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: Self.speechPlaybackPollNanoseconds)
+            }
+        }
+    }
+
+    private func stopSpeechPlaybackPolling() {
+        speechPlaybackPollTask?.cancel()
+        speechPlaybackPollTask = nil
+        speechPlaybackConfirmed = .unknown
+        speechPlaybackObserved = false
+    }
+
+    /// Poll the backend real-playback signal once. Returns whether polling should
+    /// continue. Stops once the server confirms playback finished (after it started)
+    /// or the estimate window elapsed without playback ever being observed.
+    private func pollSpeechPlaybackOnce() async -> Bool {
+        guard latestSpeechLikelyActiveUntil != nil else {
+            return false
+        }
+        do {
+            let response = try await client.speechPlaying()
+            if response.speaking {
+                speechPlaybackConfirmed = .speaking
+                speechPlaybackObserved = true
+            } else {
+                speechPlaybackConfirmed = .notSpeaking
+            }
+        } catch {
+            speechPlaybackConfirmed = .unknown
+        }
+        if speechPlaybackObserved, speechPlaybackConfirmed == .notSpeaking {
+            clearSpeechPlaybackWindow()
+            return false
+        }
+        if let activeUntil = latestSpeechLikelyActiveUntil, Date() >= activeUntil, !speechPlaybackObserved {
+            return false
+        }
+        return true
     }
 
     private func prepareEmergencySpeechControls() {
@@ -712,6 +781,7 @@ final class JarvisShellModel: ObservableObject {
     private func clearSpeechPlaybackWindow() {
         latestSpeechLikelyActiveUntil = nil
         latestSpeechPreview = ""
+        stopSpeechPlaybackPolling()
     }
 
     private func handleSpeechBargeInIfNeeded(transcript: String) {
@@ -719,7 +789,11 @@ final class JarvisShellModel: ObservableObject {
         guard !cleanTranscript.isEmpty else {
             return
         }
-        guard let activeUntil = latestSpeechLikelyActiveUntil, Date() < activeUntil else {
+        guard Self.isSpeechBargeInWindowArmed(
+            pollState: speechPlaybackConfirmed,
+            estimatedActiveUntil: latestSpeechLikelyActiveUntil,
+            now: Date()
+        ) else {
             return
         }
         if Self.shouldIgnoreBargeInDuringGrace(
@@ -751,6 +825,9 @@ final class JarvisShellModel: ObservableObject {
             detail: "Stopped current Jarvis speech because the user started speaking.",
             transcript: cleanTranscript
         )
+        // Capture-and-route: keep listening so the continuation of the interrupting
+        // utterance becomes the next command without a second "Hey Jarvis".
+        wakeListener.beginBargeInCommandCapture()
         Task { [client] in
             _ = try? await client.stopSpeaking()
         }
@@ -1201,6 +1278,42 @@ final class JarvisShellModel: ObservableObject {
             return 0
         }
         return min(24, max(2, Double(trimmed.count) / 14.0 + 1.2))
+    }
+
+    /// Gate for arming barge-in. The backend real-playback signal is authoritative:
+    /// `.speaking` arms (even past the char-length estimate, so a late interruption is
+    /// not ignored) and `.notSpeaking` disarms (so a stop after playback ended is not
+    /// mistaken for an interruption). Only when the signal is `.unknown` — no poll yet
+    /// or the endpoint is unreachable — does it fall back to the estimate window.
+    static func isSpeechBargeInWindowArmed(
+        pollState: SpeechPlaybackPollState,
+        estimatedActiveUntil: Date?,
+        now: Date
+    ) -> Bool {
+        switch pollState {
+        case .speaking:
+            return true
+        case .notSpeaking:
+            return false
+        case .unknown:
+            guard let estimatedActiveUntil else {
+                return false
+            }
+            return now < estimatedActiveUntil
+        }
+    }
+
+    static func testIsSpeechBargeInWindowArmed(
+        pollState: SpeechPlaybackPollState,
+        estimatedActiveSeconds: TimeInterval?
+    ) -> Bool {
+        let now = Date(timeIntervalSince1970: 1000)
+        let estimatedActiveUntil = estimatedActiveSeconds.map { now.addingTimeInterval($0) }
+        return isSpeechBargeInWindowArmed(
+            pollState: pollState,
+            estimatedActiveUntil: estimatedActiveUntil,
+            now: now
+        )
     }
 
     private func schedulePostTurnRefresh() {
