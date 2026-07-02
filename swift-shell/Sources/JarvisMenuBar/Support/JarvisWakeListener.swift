@@ -48,6 +48,8 @@ final class JarvisWakeListener {
     private static let postCommandRestartDelaySeconds: TimeInterval = 4.0
     private static let recoveryRestartDelaySeconds: TimeInterval = 5.0
     private static let bargeInCommandWindowSeconds: TimeInterval = 9.0
+    private static let bargeInCommandWindowGraceSeconds: TimeInterval = 2.0
+    private static let bargeInCommandWindowHardCeilingSeconds: TimeInterval = 20.0
 
     var onStateChange: ((JarvisWakeListenerSnapshot) -> Void)?
     var onWakeDetected: ((String) -> Void)?
@@ -83,6 +85,7 @@ final class JarvisWakeListener {
     private var captureTask: Task<Void, Never>?
     private var bargeInWindowTask: Task<Void, Never>?
     private var bargeInCommandWindow = false
+    private var bargeInCommandWindowArmedAt: Date?
     private var pendingCommand: String = ""
     private var recognitionGeneration = 0
     private var recentRestartTimes: [Date] = []
@@ -158,6 +161,7 @@ final class JarvisWakeListener {
         bargeInWindowTask?.cancel()
         bargeInWindowTask = nil
         bargeInCommandWindow = false
+        bargeInCommandWindowArmedAt = nil
         pendingCommand = ""
         recentRestartTimes = []
         stopRecognitionSession()
@@ -385,6 +389,7 @@ final class JarvisWakeListener {
         captureTask?.cancel()
         captureTask = nil
         bargeInCommandWindow = false
+        bargeInCommandWindowArmedAt = nil
         bargeInWindowTask?.cancel()
         bargeInWindowTask = nil
         pendingCommand = ""
@@ -452,6 +457,7 @@ final class JarvisWakeListener {
         // leaking the flag/timer into the next wake cycle would apply stop-phrase stripping
         // to an unrelated command and let a stale timeout abort a legitimate capture.
         bargeInCommandWindow = false
+        bargeInCommandWindowArmedAt = nil
         bargeInWindowTask?.cancel()
         bargeInWindowTask = nil
         pendingCommand = ""
@@ -488,6 +494,7 @@ final class JarvisWakeListener {
             restartTask = nil
         }
         bargeInCommandWindow = true
+        bargeInCommandWindowArmedAt = Date()
         pendingCommand = ""
         captureTask?.cancel()
         captureTask = nil
@@ -512,12 +519,37 @@ final class JarvisWakeListener {
         }
     }
 
+    /// True once the window has been open at least `bargeInCommandWindowHardCeilingSeconds`
+    /// since `beginBargeInCommandCapture` armed it. A missing timestamp (e.g. the window
+    /// was armed directly via `armBargeInWindowTimeout` rather than through
+    /// `beginBargeInCommandCapture`) fails closed — treated as already past the ceiling —
+    /// so the window still closes rather than looping indefinitely.
+    private func hasExceededBargeInCommandWindowHardCeiling() -> Bool {
+        guard let armedAt = bargeInCommandWindowArmedAt else {
+            return true
+        }
+        return Date().timeIntervalSince(armedAt) >= Self.bargeInCommandWindowHardCeilingSeconds
+    }
+
     private func expireBargeInCommandWindow() {
-        bargeInCommandWindow = false
-        bargeInWindowTask = nil
-        guard shouldKeepRunning, phase == .awaitingCommand else {
+        guard shouldKeepRunning, phase == .awaitingCommand, bargeInCommandWindow else {
+            bargeInCommandWindow = false
+            bargeInWindowTask = nil
+            bargeInCommandWindowArmedAt = nil
             return
         }
+        // A command candidate is still actively being spoken/debounced (captureTask
+        // is renewed on every partial transcript and fires ~950ms after the last
+        // one). Cutting it off here would discard a legitimate long command. Defer
+        // expiry with a short re-check instead of disarming the safety timeout
+        // outright — the hard ceiling below still bounds how long this can extend.
+        if captureTask != nil, !hasExceededBargeInCommandWindowHardCeiling() {
+            armBargeInWindowTimeout(Self.bargeInCommandWindowGraceSeconds)
+            return
+        }
+        bargeInCommandWindow = false
+        bargeInWindowTask = nil
+        bargeInCommandWindowArmedAt = nil
         pendingCommand = ""
         captureTask?.cancel()
         captureTask = nil
@@ -690,6 +722,47 @@ final class JarvisWakeListener {
         let result = (bargeInCommandWindow, phase.label)
         stop()
         return result
+    }
+
+    /// Gemini Code Assist finding on PR #3: the hard window timeout must not cut off a
+    /// command that's still actively being spoken. When `captureTask` is active (a partial
+    /// transcript arrived recently and is debouncing), expiry must defer rather than discard.
+    /// Returns (windowStillActiveAfterFirstExpiry, phaseAfterFirstExpiry, rearmedTimeoutTask).
+    func testExpireBargeInWindowDefersWhileCaptureTaskActive() -> (windowActive: Bool, phase: String, rearmed: Bool) {
+        shouldKeepRunning = true
+        phase = .awaitingCommand
+        bargeInCommandWindow = true
+        bargeInCommandWindowArmedAt = Date()
+        status = "Test listener running"
+        captureTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+        expireBargeInCommandWindow()
+        let result = (bargeInCommandWindow, phase.label, bargeInWindowTask != nil)
+        captureTask?.cancel()
+        captureTask = nil
+        stop()
+        return result
+    }
+
+    /// Even with an active `captureTask`, the hard ceiling must eventually win so a stuck
+    /// recognition session can't hold the window open forever. Returns whether the window
+    /// closed once `bargeInCommandWindowArmedAt` is already past the ceiling.
+    func testExpireBargeInWindowHonorsHardCeilingDespiteActiveCapture() -> Bool {
+        shouldKeepRunning = true
+        phase = .awaitingCommand
+        bargeInCommandWindow = true
+        bargeInCommandWindowArmedAt = Date().addingTimeInterval(-Self.bargeInCommandWindowHardCeilingSeconds - 1)
+        status = "Test listener running"
+        captureTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+        expireBargeInCommandWindow()
+        let closed = !bargeInCommandWindow && phase == .restarting
+        captureTask?.cancel()
+        captureTask = nil
+        stop()
+        return closed
     }
 
     /// End-to-end (headless) capture-and-route: a barge-in utterance that contains a
